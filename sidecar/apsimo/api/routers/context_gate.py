@@ -3,7 +3,7 @@
 POST /v1/context/prepare — decide whether content fits a model's useful
 context window whole, and if not, chunk + retrieve (query-focused) or
 coverage-sample (holistic) down to budget. See
-:mod:`colony_sidecar.contextgate` for the underlying machinery.
+:mod:`apsimo.contextgate` for the underlying machinery.
 
 Auth rides the global ApiKeyMiddleware like every other router.
 """

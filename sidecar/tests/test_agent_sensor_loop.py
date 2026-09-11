@@ -372,7 +372,7 @@ class TestSensorRegistration:
         # COLONY_WORKER_NODE_ID, never from code or defaults.
         import pathlib
 
-        src = pathlib.Path(__file__).resolve().parents[1] / "colony_sidecar"
+        src = pathlib.Path(__file__).resolve().parents[1] / "apsimo"
         offenders = [
             str(path)
             for path in src.rglob("*.py")
@@ -385,7 +385,7 @@ class TestSensorRegistration:
         # "notify the owner" framing anywhere in the pipeline.
         import pathlib
 
-        src = pathlib.Path(__file__).resolve().parents[1] / "colony_sidecar"
+        src = pathlib.Path(__file__).resolve().parents[1] / "apsimo"
         offenders = []
         for path in src.rglob("*.py"):
             text = path.read_text(errors="ignore")

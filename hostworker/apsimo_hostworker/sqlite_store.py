@@ -1,4 +1,4 @@
-"""Reference :class:`~colony_hostworker.store.ActionStore` on local SQLite.
+"""Reference :class:`~apsimo_hostworker.store.ActionStore` on local SQLite.
 
 This is the governed-action SUBSET only: actions, immutable receipts and
 events, dead letters, leases, the owner-authorized dispatch transaction, and
@@ -14,8 +14,8 @@ receipts, events, and action identity immutable even against buggy code in
 this very module.
 
 Every transactional invariant this store upholds is specified in
-:mod:`colony_hostworker.store` (I1-I11) and exercised by
-:mod:`colony_hostworker.conformance`.
+:mod:`apsimo_hostworker.store` (I1-I11) and exercised by
+:mod:`apsimo_hostworker.conformance`.
 """
 
 from __future__ import annotations

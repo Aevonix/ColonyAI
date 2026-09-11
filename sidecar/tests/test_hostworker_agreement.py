@@ -1,8 +1,8 @@
-"""Cross-implementation agreement: endpoint vs colony_hostworker.
+"""Cross-implementation agreement: endpoint vs apsimo_hostworker.
 
 DELIBERATE REDUNDANCY — DO NOT "UNIFY" THESE IMPLEMENTATIONS.
 
-``colony_sidecar.governed_actions`` (the endpoint) and ``colony_hostworker``
+``apsimo.governed_actions`` (the endpoint) and ``apsimo_hostworker``
 (the stateless host-worker core) each keep their OWN independent validator and
 digest implementation for the same wire contract.  That redundancy already
 caught a real incompatibility (the ASCII/UTF-8 canonical-JSON digest split),
@@ -13,7 +13,7 @@ battery of systematic mutations through BOTH implementations and fails if
 they ever disagree on a digest, an acceptance, or a rejection.
 
 It also enforces the independence itself: the sidecar package must not import
-``colony_hostworker`` and ``colony_hostworker`` must not import the sidecar
+``apsimo_hostworker`` and ``apsimo_hostworker`` must not import the sidecar
 (or any server framework).
 """
 
@@ -67,7 +67,7 @@ def plugin_module():
 
 def test_hostworker_package_is_present():
     assert _HOSTWORKER_DIR.is_dir(), (
-        "colony_hostworker distribution missing at %s" % _HOSTWORKER_DIR
+        "apsimo_hostworker distribution missing at %s" % _HOSTWORKER_DIR
     )
     assert _VECTORS_PATH.is_file(), "shared golden vectors missing"
 
@@ -608,8 +608,8 @@ def test_tampered_execution_request_rejected_by_endpoint(vectors):
 # ---------------------------------------------------------------- independence
 
 
-def test_sidecar_never_imports_colony_hostworker():
-    """The endpoint keeps its own validator; importing colony_hostworker from
+def test_sidecar_never_imports_apsimo_hostworker():
+    """The endpoint keeps its own validator; importing apsimo_hostworker from
     the sidecar would collapse the deliberate redundancy this suite protects.
     See the module docstring before "fixing" a failure here."""
 
@@ -620,21 +620,21 @@ def test_sidecar_never_imports_colony_hostworker():
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 if any(
-                    alias.name.split(".")[0] == "colony_hostworker"
+                    alias.name.split(".")[0] == "apsimo_hostworker"
                     for alias in node.names
                 ):
                     offenders.append(source_file)
             elif isinstance(node, ast.ImportFrom):
-                if (node.module or "").split(".")[0] == "colony_hostworker":
+                if (node.module or "").split(".")[0] == "apsimo_hostworker":
                     offenders.append(source_file)
     assert not offenders, (
-        "colony_sidecar must never import colony_hostworker: %s" % offenders
+        "apsimo must never import apsimo_hostworker: %s" % offenders
     )
 
 
 def test_hostworker_never_imports_the_sidecar_or_a_server():
-    package_root = _HOSTWORKER_DIR / "colony_hostworker"
-    forbidden = {"colony_sidecar", "fastapi", "httpx", "pydantic", "uvicorn"}
+    package_root = _HOSTWORKER_DIR / "apsimo_hostworker"
+    forbidden = {"apsimo", "fastapi", "httpx", "pydantic", "uvicorn"}
     offenders = []
     for source_file in package_root.rglob("*.py"):
         tree = ast.parse(source_file.read_text(encoding="utf-8"))
@@ -651,7 +651,7 @@ def test_hostworker_never_imports_the_sidecar_or_a_server():
                 ] in forbidden:
                     offenders.append(source_file)
     assert not offenders, (
-        "colony_hostworker must stay stdlib-only: %s" % offenders
+        "apsimo_hostworker must stay stdlib-only: %s" % offenders
     )
 
 

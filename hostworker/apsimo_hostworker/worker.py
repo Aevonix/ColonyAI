@@ -1,9 +1,9 @@
 """One-mutation-at-most governed action worker.
 
 The worker is deliberately transport neutral: it drives any
-:class:`~colony_hostworker.store.ActionStore` and any dispatcher exposing
+:class:`~apsimo_hostworker.store.ActionStore` and any dispatcher exposing
 ``execute`` (one PUT) and ``observe`` (side-effect-free GET), such as
-:class:`~colony_hostworker.client.GovernedActionClient`.
+:class:`~apsimo_hostworker.client.GovernedActionClient`.
 
 The state machine, unchanged from the deployed reference implementation:
 
@@ -13,7 +13,7 @@ The state machine, unchanged from the deployed reference implementation:
     reconciliation -> read-only verification -> complete.
 
 Invariants the worker upholds (its half of the one-mutation guarantee; the
-store's half is specified in :mod:`colony_hostworker.store`):
+store's half is specified in :mod:`apsimo_hostworker.store`):
 
 * a mutation is NEVER retried after dispatch — any doubt after the PUT is
   resolved exclusively through the bounded GET-only observation contract;
@@ -417,7 +417,7 @@ class GovernedActionWorker:
         Same validator as the pre-check, but executed against the durable
         projections re-read inside the dispatch transaction and the store's
         clock, with point-of-use expiry enforced by
-        :func:`~colony_hostworker.gate.assert_dispatchable`.
+        :func:`~apsimo_hostworker.gate.assert_dispatchable`.
         """
 
         def revalidate(action, receipts, now):

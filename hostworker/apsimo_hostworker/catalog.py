@@ -8,7 +8,7 @@ metadata, and whether a standing bounded grant may ever authorize it
 ``colony_autonomy_enable`` and ``colony_autonomy_disable`` are marked
 ``non_grantable`` by owner decision: autonomy posture must always be a
 per-message owner approval and can never ride on a standing grant, however the
-grant was issued.  The gate core (:mod:`colony_hostworker.gate`) fails closed
+grant was issued.  The gate core (:mod:`apsimo_hostworker.gate`) fails closed
 on the grant path for any non-grantable — or unknown — tool regardless of host
 configuration.
 
@@ -16,7 +16,7 @@ The validators here are behavior-identical ports of the two existing
 independent validators (ColonyAI's endpoint ``_validate_args`` and the private
 worker's intent ``_validate_args``); the repo-internal agreement test pins
 that equivalence against ColonyAI's endpoint, which deliberately keeps its own
-copy (see the design rule in :mod:`colony_hostworker.contract`).
+copy (see the design rule in :mod:`apsimo_hostworker.contract`).
 """
 
 from __future__ import annotations

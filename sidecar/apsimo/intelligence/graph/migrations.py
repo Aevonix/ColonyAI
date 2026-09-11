@@ -4,7 +4,7 @@ Applies Neo4j constraints and indexes required by the Colony graph memory
 system. Designed to be idempotent and safe to re-run.
 
 Vectors are maintained in a local LanceDB store in this implementation
-(see colony_sidecar/vector/), so these migrations create no vector index.
+(see apsimo/vector/), so these migrations create no vector index.
 """
 
 from __future__ import annotations

@@ -380,7 +380,7 @@ def main() -> None:
             except ValueError:
                 ws_max_size = 1 * 1024 * 1024
             uvicorn.run(
-                "colony_sidecar.server:app",
+                "apsimo.server:app",
                 host=host,
                 port=port,
                 log_level=os.environ.get("LOG_LEVEL", "info").lower(),
@@ -1379,12 +1379,12 @@ def _find_orphan_processes() -> list[int]:
     """Find orphaned colony sidecar processes (parent died).
     
     Returns list of PIDs that are:
-    - Running uvicorn/colony_sidecar
+    - Running uvicorn/apsimo
     - Have parent PID 1 (init) or parent doesn't exist
     """
     orphans = []
     try:
-        # Find all python processes running uvicorn or colony_sidecar
+        # Find all python processes running uvicorn or apsimo
         result = subprocess.run(
             ["ps", "aux"],
             capture_output=True, text=True, timeout=10
@@ -1394,7 +1394,7 @@ def _find_orphan_processes() -> list[int]:
         
         for line in result.stdout.splitlines():
             # Look for colony sidecar processes
-            if "uvicorn" in line and "colony_sidecar" in line:
+            if "uvicorn" in line and any(module in line for module in ("apsimo", "colony_sidecar")):
                 parts = line.split()
                 if len(parts) >= 2:
                     try:
@@ -1709,7 +1709,7 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
 
     proc = subprocess.Popen(
         [sys.executable, "-m", "uvicorn",
-         "colony_sidecar.server:app",
+         "apsimo.server:app",
          "--host", host,
          "--port", str(port)],
         stdout=open(log_path, "w"),

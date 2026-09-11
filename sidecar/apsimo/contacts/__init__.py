@@ -5,9 +5,9 @@ All contacts are Person nodes in the world model.
 
 Quick start::
 
-    from colony_sidecar.contacts import ContactStore
-    from colony_sidecar.contacts.store import SQLiteContactStore
-    from colony_sidecar.contacts.config import ContactsConfig
+    from apsimo.contacts import ContactStore
+    from apsimo.contacts.store import SQLiteContactStore
+    from apsimo.contacts.config import ContactsConfig
 
     config = ContactsConfig(sqlite_path=":memory:")
     async with SQLiteContactStore(config) as store:

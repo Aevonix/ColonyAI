@@ -6,7 +6,7 @@ authorized yet. The destructive half lives in the action registry's risk
 tiers; this module answers the other half — *who* an OUTBOUND action
 reaches, and whether that person is an authorized contact.
 
-An OUTBOUND :class:`~colony_sidecar.initiatives.action_registry.ActionSpec`
+An OUTBOUND :class:`~apsimo.initiatives.action_registry.ActionSpec`
 names the param holding its recipient via ``target_param``. The recipient
 value is resolved against the contact store:
 

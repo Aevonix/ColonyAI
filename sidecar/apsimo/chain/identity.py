@@ -94,7 +94,7 @@ GENESIS_MANIFEST_FILE = "genesis.json"
 def bundled_genesis_manifest_path() -> Optional[Path]:
     """Locate the Genesis manifest shipped with the source code.
 
-    The manifest lives inside the package (``colony_sidecar/genesis.json``)
+    The manifest lives inside the package (``apsimo/genesis.json``)
     so pip installs and source checkouts both carry it. The sidecar root is
     still checked for checkouts that keep the older layout.
     """

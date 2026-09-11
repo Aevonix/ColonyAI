@@ -1,7 +1,7 @@
 """Executable store-adapter conformance suite.
 
 Every case exercises one or more of the numbered invariants in
-:mod:`colony_hostworker.store` through the public store API only, using a
+:mod:`apsimo_hostworker.store` through the public store API only, using a
 fresh harness per case.  The adversarial cases are constructed so that a
 store which "merely implements the method signatures" — one that trusts the
 caller's pre-check, caches receipts read at lease time, skips the
@@ -11,12 +11,12 @@ a second mutation or honoring dead authority in production.
 
 A host must pass this suite with its own harness before running live:
 
-    from colony_hostworker.conformance import assert_store_conformance
+    from apsimo_hostworker.conformance import assert_store_conformance
     assert_store_conformance(my_harness_factory)
 
 or, for the bundled reference store::
 
-    python -m colony_hostworker.conformance
+    python -m apsimo_hostworker.conformance
 """
 
 from __future__ import annotations

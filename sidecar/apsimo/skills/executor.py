@@ -368,7 +368,7 @@ class SkillExecutor:
         proc = await asyncio.create_subprocess_exec(
             sys.executable,
             "-m",
-            "colony_sidecar.skills.sandbox_runner",
+            "apsimo.skills.sandbox_runner",
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,

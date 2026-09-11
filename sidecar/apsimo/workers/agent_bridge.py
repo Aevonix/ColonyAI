@@ -473,7 +473,7 @@ class SkillsSyncer:
                 logger.debug("Skills sync: no skills found")
                 return False
         except ImportError:
-            logger.debug("Skills sync: colony_sidecar.workers.skills_sync not importable, skipping")
+            logger.debug("Skills sync: apsimo.workers.skills_sync not importable, skipping")
             return False
         except Exception as exc:
             logger.warning("Skills sync failed: %s", exc)

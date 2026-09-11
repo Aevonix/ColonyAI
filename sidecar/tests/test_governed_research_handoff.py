@@ -570,7 +570,7 @@ async def test_governed_capabilities_narrow_initial_plan_replan_and_dispatch(
         )]
 
     monkeypatch.setattr(
-        "colony_sidecar.projects.planner.plan_project", directed_plan
+        "apsimo.projects.planner.plan_project", directed_plan
     )
     assert await engine._plan_pending("live") == 0
     planned = engine.store.get_project(project.id)

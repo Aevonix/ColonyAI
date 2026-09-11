@@ -3,7 +3,7 @@
 Two classes of tests here:
 
 1. **Runner-direct tests** (`test_runner_*`) shell out to
-   ``python -m colony_sidecar.skills.sandbox_runner`` with a crafted
+   ``python -m apsimo.skills.sandbox_runner`` with a crafted
    stdin payload and assert on the JSON emitted to stdout. These pin
    the real process-boundary behaviour on Linux.
 
@@ -32,7 +32,7 @@ import pytest
 def _run_sandbox(payload: dict, *, timeout: float = 10.0) -> subprocess.CompletedProcess:
     """Execute the runner as a subprocess and return the completed process."""
     return subprocess.run(
-        [sys.executable, "-m", "colony_sidecar.skills.sandbox_runner"],
+        [sys.executable, "-m", "apsimo.skills.sandbox_runner"],
         input=json.dumps(payload).encode("utf-8"),
         capture_output=True,
         timeout=timeout,
@@ -158,7 +158,7 @@ def test_runner_blocks_memory_balloon():
 
 def test_runner_invalid_stdin_reports_failure():
     result = subprocess.run(
-        [sys.executable, "-m", "colony_sidecar.skills.sandbox_runner"],
+        [sys.executable, "-m", "apsimo.skills.sandbox_runner"],
         input=b"not json at all",
         capture_output=True,
         timeout=5.0,

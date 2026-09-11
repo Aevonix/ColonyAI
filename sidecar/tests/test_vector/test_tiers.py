@@ -1,4 +1,4 @@
-"""Tests for colony_sidecar.vector.tiers — tier definitions and selection."""
+"""Tests for apsimo.vector.tiers — tier definitions and selection."""
 import pytest
 from apsimo.vector.tiers import TIERS, TierConfig, ModelSpec, get_tier, get_tier_by_memory
 

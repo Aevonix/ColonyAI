@@ -2,7 +2,7 @@
 
 The broken stores below each violate exactly one documented invariant the
 way a plausible buggy adapter would; the suite must flag every one.  If a
-new invariant is added to :mod:`colony_hostworker.store`, add both a case
+new invariant is added to :mod:`apsimo_hostworker.store`, add both a case
 and a broken store here.
 """
 

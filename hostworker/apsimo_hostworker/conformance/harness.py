@@ -1,10 +1,10 @@
 """Harness contract and fixtures for the store conformance suite.
 
-A host proves its :class:`~colony_hostworker.store.ActionStore` adapter by
+A host proves its :class:`~apsimo_hostworker.store.ActionStore` adapter by
 implementing :class:`StoreHarness` — the store under test plus the two
 ingress operations the suite needs (proposing an action, attaching a gate
 receipt) and a controllable clock — and passing a factory for it to
-:func:`colony_hostworker.conformance.run_store_conformance`.
+:func:`apsimo_hostworker.conformance.run_store_conformance`.
 
 The clock MUST be the same clock the store judges time with (invariant
 I11): several cases advance it to prove point-of-use expiry, lease theft,
@@ -12,7 +12,7 @@ and observation deadlines.
 
 Everything here is stdlib-only; the suite runs without pytest so it can be
 executed inside a host's own deployment checks
-(``python -m colony_hostworker.conformance``).
+(``python -m apsimo_hostworker.conformance``).
 """
 
 from __future__ import annotations
@@ -50,7 +50,7 @@ class ManualClock:
 class StoreHarness(Protocol):
     """One store under test plus the ingress the suite drives it with.
 
-    ``store`` must implement :class:`~colony_hostworker.store.ActionStore`.
+    ``store`` must implement :class:`~apsimo_hostworker.store.ActionStore`.
     ``propose`` and ``add_gate`` are the host's ingress equivalents (however
     they are implemented in production); ``add_gate`` returns
     ``(action, gate_receipt)``.  ``now``/``advance`` control the SAME clock

@@ -1,4 +1,4 @@
-"""Tests for colony_sidecar.vector.embedder — embedding providers and factory."""
+"""Tests for apsimo.vector.embedder — embedding providers and factory."""
 import pytest
 from apsimo.vector.embedder import (
     CUDAEmbeddingProvider,

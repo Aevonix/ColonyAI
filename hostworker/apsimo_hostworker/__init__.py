@@ -3,12 +3,12 @@
 Phase A of the host-worker extraction: the wire contract, the governed tool
 catalog, ``HermesToolActionIntentV1`` validation, and the approval-gate
 invariant core.  Phase B: the loopback execution client, the dispatch
-admission, the :class:`~colony_hostworker.store.ActionStore` protocol with
+admission, the :class:`~apsimo_hostworker.store.ActionStore` protocol with
 its documented transactional invariants, the reference SQLite store, the
 one-mutation worker, and the executable store conformance suite
-(:mod:`colony_hostworker.conformance`).  This distribution must never
-import FastAPI or ``colony_sidecar`` — see the design rule in
-:mod:`colony_hostworker.contract`.
+(:mod:`apsimo_hostworker.conformance`).  This distribution must never
+import FastAPI or ``apsimo`` — see the design rule in
+:mod:`apsimo_hostworker.contract`.
 """
 
 from __future__ import annotations

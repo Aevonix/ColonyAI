@@ -234,7 +234,7 @@ async def test_badge_turn_keeps_source_learning_without_mood_inference_or_inject
         monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
     else:
         monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED', raising=False)
-    monkeypatch.setattr('colony_sidecar.identity.get_owner_contact_id', lambda: 'contact-a')
+    monkeypatch.setattr('apsimo.identity.get_owner_contact_id', lambda: 'contact-a')
     async def forbidden(*args, **kwargs):
         raise AssertionError('Ordinary badge recall must not infer a mood')
     monkeypatch.setattr(r.extractor, 'extract_affect', forbidden)

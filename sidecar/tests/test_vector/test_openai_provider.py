@@ -1,4 +1,4 @@
-"""Tests for colony_sidecar.vector.openai_provider — API embedding provider."""
+"""Tests for apsimo.vector.openai_provider — API embedding provider."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from apsimo.vector.config import EmbeddingConfig

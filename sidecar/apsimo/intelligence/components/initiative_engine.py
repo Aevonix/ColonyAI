@@ -1142,7 +1142,7 @@ class InitiativeEngine:
         counters (``recurrence_count`` and the older ``occurrences``).
         Both pattern_type values and both counters are accepted here.
         Note this is distinct from the SQLite PatternStore in
-        ``colony_sidecar/patterns/`` whose pattern_type values
+        ``apsimo/patterns/`` whose pattern_type values
         (entity_cooccurrence, relation_frequency, ...) never reach the
         graph.
         """

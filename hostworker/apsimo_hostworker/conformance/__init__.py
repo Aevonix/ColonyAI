@@ -3,12 +3,12 @@
 Any host must pass this suite with its own :class:`StoreHarness` before
 running its store live::
 
-    from colony_hostworker.conformance import assert_store_conformance
+    from apsimo_hostworker.conformance import assert_store_conformance
     assert_store_conformance(my_harness_factory)
 
 The bundled reference store can be checked from the command line::
 
-    python -m colony_hostworker.conformance
+    python -m apsimo_hostworker.conformance
 """
 
 from __future__ import annotations

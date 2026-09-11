@@ -51,7 +51,7 @@ def build_llm_extract_fn(
     llm_router :
         An object with an ``async complete(messages, ...)`` method that
         returns an object with a ``.content`` attribute (the ``LLMRouter``
-        from ``colony_sidecar.router.router``).
+        from ``apsimo.router.router``).
     max_input_chars :
         Truncate the text to this many characters before sending to the LLM.
     max_response_tokens :

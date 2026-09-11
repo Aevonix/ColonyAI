@@ -5,7 +5,7 @@ The Queen (Sovereign) schedules; Workers (Vassals) execute.
 
 Public API::
 
-    from colony_sidecar.task_queue import (
+    from apsimo.task_queue import (
         Job, JobType, JobStatus, JobPriority,
         JobCapabilityRequirement, JobResult,
         WorkerCapabilities, QueueManager, WorkerNode,

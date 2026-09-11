@@ -1,7 +1,7 @@
 """``colony feeds`` — manage spec-driven feed instances.
 
 Also runnable without an installed package (any python3 with PyYAML):
-    PYTHONPATH=<repo>/sidecar python3 -m colony_sidecar.feeds.cli <cmd> ...
+    PYTHONPATH=<repo>/sidecar python3 -m apsimo.feeds.cli <cmd> ...
 """
 
 from __future__ import annotations
@@ -81,4 +81,4 @@ def main(argv: list[str] | None = None, prog: str = "colony feeds") -> None:
 
 
 if __name__ == "__main__":
-    main(prog="python3 -m colony_sidecar.feeds.cli")
+    main(prog="python3 -m apsimo.feeds.cli")

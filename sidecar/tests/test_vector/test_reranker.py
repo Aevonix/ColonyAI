@@ -1,4 +1,4 @@
-"""Tests for colony_sidecar.vector.reranker — reranker providers and factory."""
+"""Tests for apsimo.vector.reranker — reranker providers and factory."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from apsimo.vector.reranker import (

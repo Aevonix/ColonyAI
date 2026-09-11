@@ -1,4 +1,4 @@
-"""Tests for colony_sidecar.router.tiers — provider presets and host config builds."""
+"""Tests for apsimo.router.tiers — provider presets and host config builds."""
 
 from __future__ import annotations
 

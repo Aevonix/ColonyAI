@@ -93,7 +93,7 @@ WORKER_CRON_REMEDY = (
     "install the cron: re-run 'colony init' (Step 10e installs it), or add "
     "'*/5 * * * * colony-queue-worker' to your crontab — the console script "
     "ships with the pip package (or use "
-    "'python -m colony_sidecar.workers.queue_worker')"
+    "'python -m apsimo.workers.queue_worker')"
 )
 
 #: The launchd footgun: `launchctl kickstart` restarts the process with

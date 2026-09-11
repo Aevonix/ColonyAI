@@ -1,4 +1,4 @@
-"""Unit tests for colony_sidecar.util.temporal (v0.21.0)."""
+"""Unit tests for apsimo.util.temporal (v0.21.0)."""
 
 import os
 from datetime import datetime, timedelta, timezone

@@ -96,7 +96,7 @@ def test_delivery_boundary_error_refuses_by_default(monkeypatch, caplog):
 
     loop = _loop(_ExplodingDirectives())
     delivery = _FakeDelivery()
-    with caplog.at_level(logging.WARNING, logger="colony_sidecar.autonomy.loop"):
+    with caplog.at_level(logging.WARNING, logger="apsimo.autonomy.loop"):
         ok = asyncio.run(loop._route_reachout_delivery(_payload(), delivery))
 
     assert ok is False
@@ -144,7 +144,7 @@ def test_directed_boundary_error_refuses_by_default(monkeypatch, caplog):
     monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
 
     svc = _service(_ExplodingDirectives())
-    with caplog.at_level(logging.WARNING, logger="colony_sidecar.directed.service"):
+    with caplog.at_level(logging.WARNING, logger="apsimo.directed.service"):
         task = asyncio.run(svc.intake("summarize recent changes"))
 
     assert task.status == "refused"

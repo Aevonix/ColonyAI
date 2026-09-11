@@ -1580,7 +1580,7 @@ def test_legacy_effect_pollers_are_inert_and_installer_cannot_enable_them():
         source = script.read_text(encoding="utf-8")
         assert "LEGACY_EFFECT_WORKER_DISABLED = True" in source
         assert "urlopen(" not in source
-        assert "colony_sidecar.workers.queue_worker" not in source
+        assert "apsimo.workers.queue_worker" not in source
         result = subprocess.run(
             [sys.executable, str(script)], text=True, capture_output=True,
             timeout=5, check=False,

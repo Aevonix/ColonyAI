@@ -3,13 +3,13 @@
 These are the agent-side halves of the Colony autonomy circuit, packaged
 so pip installs ship them as console scripts:
 
-- ``colony-agent-bridge``  (:mod:`colony_sidecar.workers.agent_bridge`)
+- ``colony-agent-bridge``  (:mod:`apsimo.workers.agent_bridge`)
   unified daemon that replaces the three cron scripts below with one
   long-running process: initiative polling + job dispatch + skills sync
   + circuit health monitoring. Preferred for new installs.
-- ``colony-queue-worker``  (:mod:`colony_sidecar.workers.queue_worker`)
+- ``colony-queue-worker``  (:mod:`apsimo.workers.queue_worker`)
   claims approved ``agent_action`` jobs and hands them to the agent.
-- ``colony-skills-sync``   (:mod:`colony_sidecar.workers.skills_sync`)
+- ``colony-skills-sync``   (:mod:`apsimo.workers.skills_sync`)
   reports the agent's installed skill index to Colony.
 
 All modules are deliberately stdlib-only: they must run from cron on

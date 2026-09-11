@@ -123,7 +123,7 @@ def test_field_sets_are_pinned():
 
 
 def test_package_is_stdlib_only_and_server_free():
-    """The distribution must never import FastAPI or colony_sidecar.
+    """The distribution must never import FastAPI or apsimo.
 
     This is one half of the deliberate-redundancy rule documented in
     contract.py; the other half (the endpoint never importing this package)
@@ -135,9 +135,9 @@ def test_package_is_stdlib_only_and_server_free():
     import apsimo_hostworker.gate  # noqa: F401
     import apsimo_hostworker.intent  # noqa: F401
 
-    for forbidden in ("fastapi", "colony_sidecar", "httpx", "pydantic"):
+    for forbidden in ("fastapi", "apsimo", "httpx", "pydantic"):
         assert forbidden not in sys.modules, (
-            "colony_hostworker must stay stdlib-only but imported %s"
+            "apsimo_hostworker must stay stdlib-only but imported %s"
             % forbidden
         )
 

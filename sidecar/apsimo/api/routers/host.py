@@ -4551,7 +4551,7 @@ async def _process_turn_sync(
         except Exception:
             logger.debug("journal conversation.turn failed", exc_info=True)
     # Mining: verbatim turn capture + escalation detection (best-effort; the
-    # miner mode gates everything internally, see colony_sidecar/mining/).
+    # miner mode gates everything internally, see apsimo/mining/).
     try:
         from apsimo.api.routers.mining import get_mining_engine as _get_miner
         _miner = _get_miner()

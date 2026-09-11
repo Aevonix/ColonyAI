@@ -409,7 +409,7 @@ async def test_denied_standing_normalizes_an_outreach_recommendation(
         }
 
     monkeypatch.setattr(
-        "colony_sidecar.contacts.comms.evaluate_outreach", recommend
+        "apsimo.contacts.comms.evaluate_outreach", recommend
     )
     app = _app(keyring, ContactGrantRegistry(None))
     async with AsyncClient(

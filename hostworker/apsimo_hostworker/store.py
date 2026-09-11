@@ -3,7 +3,7 @@
 This module is the CONTRACT.  The numbered invariants below are not
 descriptions of the reference implementation — they are the obligations any
 conforming store must uphold, each one enforced by a named case in
-:mod:`colony_hostworker.conformance`.  A store that satisfies the method
+:mod:`apsimo_hostworker.conformance`.  A store that satisfies the method
 signatures but violates an invariant WILL dispatch a second mutation, honor
 a dead approval, or resurrect a consumed authorization under crash or
 concurrency; the conformance suite exists to catch exactly that before a
@@ -20,7 +20,7 @@ Vocabulary
 * *lease* — an exclusive, expiring claim (``owner``, ``lease_expires_at``)
   required for every mutating call.
 * *gate* — the receipt of ``kind == "gate"`` holding the owner-approval
-  evidence validated by :func:`colony_hostworker.gate.validate_owner_gate`.
+  evidence validated by :func:`apsimo_hostworker.gate.validate_owner_gate`.
 * *recovery contract* — the immutable receipt of ``kind ==
   "dispatch_recovery"`` that converts a dispatched action from "ambiguous,
   fail on lease expiry" into "reconcile by bounded GET-only observation".
@@ -61,7 +61,7 @@ I4. IN-TRANSACTION GATE RE-VALIDATION.  ``begin_owner_authorized_dispatch``
     implementation therefore CANNOT forget to re-validate, and the evidence
     validated is what is committed — not what the caller looked at earlier.
     If the validator raises, returns anything but a
-    :class:`~colony_hostworker.gate.GateAuthorization`, returns one marked
+    :class:`~apsimo_hostworker.gate.GateAuthorization`, returns one marked
     ``expired``, or returns one whose ``receipt_key`` / ``approval_id`` /
     ``decision_id`` differ from the caller's expectations, the transaction
     aborts with no state change and no receipt written.
@@ -303,7 +303,7 @@ class ActionStore(Protocol):
            ``receipt_key`` equals ``gate_receipt_key``;
         4. re-read the durable receipts and CALL ``gate_validator(action,
            receipts, now)`` with the store's clock; require a non-expired
-           :class:`~colony_hostworker.gate.GateAuthorization` whose
+           :class:`~apsimo_hostworker.gate.GateAuthorization` whose
            ``receipt_key``, ``approval_id``, and ``decision_id`` equal the
            expected values (the store additionally re-checks the structural
            gate bindings itself — two layers, both inside the transaction);

@@ -304,7 +304,7 @@ class InferenceHandler(JobHandler):
     ) -> list[dict]:
         """Shrink oversized message content to the target tier's useful window.
 
-        Uses the context gate (:mod:`colony_sidecar.contextgate`): when the
+        Uses the context gate (:mod:`apsimo.contextgate`): when the
         assembled messages exceed the tier's ``useful_context_tokens`` the
         largest message content is chunked and retrieved/sampled down to
         budget. No-op when the gate is off, the budget is unknown, or the

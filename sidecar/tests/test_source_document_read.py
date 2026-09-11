@@ -170,7 +170,7 @@ def test_canonical_handle_cannot_borrow_another_owner_and_erase_respects_shared_
 
 
 def test_derivative_change_racing_readback_is_withheld(original, monkeypatch):
-    module = importlib.import_module('colony_sidecar.turns.source_read')
+    module = importlib.import_module('apsimo.turns.source_read')
     previous = module._document_page
     changed = False
     def racing(*args, **kwargs):

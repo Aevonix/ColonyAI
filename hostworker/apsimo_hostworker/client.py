@@ -11,12 +11,12 @@ The endpoint contract this client relies on is part of the safety boundary:
 * ``GET /v1/host/actions/{action_id}`` is side-effect-free and returns the
   endpoint's stable digest-bound projection of the action.
 
-The client is loopback-only (see :func:`colony_hostworker._private_io.\
+The client is loopback-only (see :func:`apsimo_hostworker._private_io.\
 loopback_origin`), uses a redirect-refusing opener so the bearer credential
 can never be replayed to another origin, and decodes responses through the
 bounded strict JSON reader.  It validates only the request document's outer
 identity; semantic validation of responses belongs to the worker
-(:func:`colony_hostworker.worker.validate_execution_result`).
+(:func:`apsimo_hostworker.worker.validate_execution_result`).
 """
 
 from __future__ import annotations

@@ -8,9 +8,9 @@ can validate the contract without importing a server.
 
 CRITICAL DESIGN RULE — INDEPENDENT VALIDATORS, DO NOT "UNIFY"
 =============================================================
-ColonyAI's endpoint (``sidecar/colony_sidecar/governed_actions.py``) MUST KEEP
+ColonyAI's endpoint (``sidecar/apsimo/governed_actions.py``) MUST KEEP
 ITS OWN INDEPENDENT VALIDATOR.  Do NOT refactor the endpoint to import
-``colony_hostworker``.  The two implementations are deliberately separate and
+``apsimo_hostworker``.  The two implementations are deliberately separate and
 cross-check each other; that redundancy has already caught a real
 incompatibility (the ASCII/UTF-8 canonical-JSON digest split documented
 below).  A repo-internal test (``sidecar/tests/test_hostworker_agreement.py``)

@@ -5,7 +5,7 @@ Expected cost savings: 30–40% vs always using the largest model.
 
 Usage::
 
-    from colony_sidecar.router import LLMRouter, ModelTier
+    from apsimo.router import LLMRouter, ModelTier
 
     router = LLMRouter()
     response = await router.complete(messages, context={"task": "summarise"})

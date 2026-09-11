@@ -23,18 +23,18 @@ def isolated(tmp_path, code):
     return result.stdout
 
 
-@pytest.mark.parametrize('entry', ('colony_sidecar.api.routers.host', 'colony_sidecar.server'))
+@pytest.mark.parametrize('entry', ('apsimo.api.routers.host', 'apsimo.server'))
 def test_actual_api_and_server_import_do_not_load_legacy_planner(tmp_path, entry):
     isolated(tmp_path, f'''
 import importlib
 entry = importlib.import_module({entry!r})
 assert entry is not None
-from colony_sidecar.goals import Goal, GoalStore, GoalNotFoundError
-assert Goal.__module__ == 'colony_sidecar.goals.models'
-assert GoalStore.__module__ == 'colony_sidecar.goals.store'
-assert GoalNotFoundError.__module__ == 'colony_sidecar.goals.store'
+from apsimo.goals import Goal, GoalStore, GoalNotFoundError
+assert Goal.__module__ == 'apsimo.goals.models'
+assert GoalStore.__module__ == 'apsimo.goals.store'
+assert GoalNotFoundError.__module__ == 'apsimo.goals.store'
 for name in {PLANNERS!r}:
-    assert 'colony_sidecar.goals.' + name not in sys.modules, name
+    assert 'apsimo.goals.' + name not in sys.modules, name
 ''')
     assert not (tmp_path / 'state' / 'colony-goals.db').exists()
 
@@ -43,10 +43,10 @@ def test_explicit_legacy_exports_retain_identity_and_durable_behavior(tmp_path):
     isolated(tmp_path, '''
 import importlib
 from pathlib import Path
-import colony_sidecar.goals as goals
+import apsimo.goals as goals
 assert set(goals.__all__) <= set(dir(goals))
 for name, module in goals._PLANNER_EXPORTS.items():
-    assert getattr(goals, name) is getattr(importlib.import_module('colony_sidecar.goals.' + module), name)
+    assert getattr(goals, name) is getattr(importlib.import_module('apsimo.goals.' + module), name)
 try:
     goals.NotARealGoalExport
 except AttributeError:

@@ -22,7 +22,7 @@ it with whatever LLM/embedding stack it already has.
 
 Usage::
 
-    from colony_sidecar.contextgate import prepare_context
+    from apsimo.contextgate import prepare_context
 
     prepared = await prepare_context(
         content=big_document,

@@ -60,12 +60,12 @@ class SkillRegistry:
     def _load_builtin_skills(self) -> None:
         """Load all built-in executor skills."""
         builtin_skills = [
-            "colony_sidecar.skills.executors.subsystem_health",
-            "colony_sidecar.skills.executors.data_quality",
-            "colony_sidecar.skills.executors.operational_hygiene",
-            "colony_sidecar.skills.executors.capability_gap",
-            "colony_sidecar.skills.executors.knowledge_acquisition",
-            "colony_sidecar.skills.executors.behavioral_correction",
+            "apsimo.skills.executors.subsystem_health",
+            "apsimo.skills.executors.data_quality",
+            "apsimo.skills.executors.operational_hygiene",
+            "apsimo.skills.executors.capability_gap",
+            "apsimo.skills.executors.knowledge_acquisition",
+            "apsimo.skills.executors.behavioral_correction",
         ]
 
         for module_path in builtin_skills:

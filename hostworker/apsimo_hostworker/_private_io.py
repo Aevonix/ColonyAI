@@ -2,8 +2,8 @@
 
 Everything here is stdlib-only, side-effect-free beyond reading the named
 file, and deliberately paranoid: these primitives sit under the credential
-loader (:mod:`colony_hostworker.client`) and the dispatch-admission check
-(:mod:`colony_hostworker.admission`), where a symlink race, a
+loader (:mod:`apsimo_hostworker.client`) and the dispatch-admission check
+(:mod:`apsimo_hostworker.admission`), where a symlink race, a
 group-readable secret, or an over-large document must fail closed rather
 than degrade.
 

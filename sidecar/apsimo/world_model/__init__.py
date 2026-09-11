@@ -6,7 +6,7 @@ traversal. Backed by SQLite (default) or Neo4j.
 
 Quick start::
 
-    from colony_sidecar.world_model import WorldModelStore, WorldModelConfig
+    from apsimo.world_model import WorldModelStore, WorldModelConfig
 
     config = WorldModelConfig(backend="sqlite", sqlite_path=":memory:")
     async with WorldModelStore(config) as store:

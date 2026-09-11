@@ -96,7 +96,7 @@ def test_legacy_init_preserves_world_history_and_does_not_request_seed(check, tm
     monkeypatch.setattr(setup.time, 'sleep', lambda *args: None)
     commands = []
     def run(command, **kwargs):
-        assert command[1:4] in (['-m', 'pip', 'install'], ['-m', 'colony_sidecar', 'start'], ['-m', 'colony_sidecar', 'doctor'])
+        assert command[1:4] in (['-m', 'pip', 'install'], ['-m', 'apsimo', 'start'], ['-m', 'apsimo', 'doctor'])
         commands.append(command)
         return SimpleNamespace(returncode=0, stdout='', stderr='')
     monkeypatch.setattr(setup.subprocess, 'run', run)

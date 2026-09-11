@@ -113,7 +113,7 @@ def correct(ledger, *, operation_id, performed_by, old_contact_id, contact_id,
         try:
             from apsimo.self_model.appraisals import invalidate_source_attribution
         except ModuleNotFoundError as exc:
-            if exc.name != 'colony_sidecar.self_model.appraisals':
+            if exc.name != 'apsimo.self_model.appraisals':
                 raise
         else:
             invalidate_source_attribution(conn, affected, old_contact_id, contact_id)

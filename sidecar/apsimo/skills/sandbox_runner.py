@@ -1,6 +1,6 @@
 """Standalone skill-execution runner.
 
-Invoked as ``python -m colony_sidecar.skills.sandbox_runner``. Reads a
+Invoked as ``python -m apsimo.skills.sandbox_runner``. Reads a
 single JSON object from stdin describing the skill source, inputs, and
 resource limits; executes the skill's ``run`` function inside a process
 that has been hardened with ``resource.setrlimit``; emits a single JSON

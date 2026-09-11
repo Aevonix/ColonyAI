@@ -25,7 +25,7 @@ from apsimo.skills.security.scanner import ASTScanner
 
 @pytest.mark.asyncio
 async def test_email_reply_without_imap_provider_returns_unavailable(monkeypatch):
-    """If colony_sidecar.email.providers is missing, the condition checker
+    """If apsimo.email.providers is missing, the condition checker
     must return a well-formed 'not met' result instead of raising."""
 
     import builtins
@@ -33,7 +33,7 @@ async def test_email_reply_without_imap_provider_returns_unavailable(monkeypatch
     real_import = builtins.__import__
 
     def fake_import(name, *args, **kwargs):
-        if name == "colony_sidecar.email.providers":
+        if name == "apsimo.email.providers":
             raise ImportError("email module not installed")
         return real_import(name, *args, **kwargs)
 
@@ -254,7 +254,7 @@ def test_setup_wizard_has_no_shared_default_password():
     from pathlib import Path
 
     repo = Path(__file__).resolve().parents[2]
-    setup_src = (repo / "sidecar/colony_sidecar/setup.py").read_text()
+    setup_src = (repo / "sidecar/apsimo/setup.py").read_text()
     compose_src = (repo / "docker-compose.yml").read_text()
     assert "colony-local-dev" not in setup_src
     assert "colony-local-dev" not in compose_src

@@ -13,7 +13,7 @@ Six pipeline stages:
 
 Usage::
 
-    from colony_sidecar.research import ResearchPipeline, ArtifactFormat
+    from apsimo.research import ResearchPipeline, ArtifactFormat
 
     pipeline = ResearchPipeline()
     result = await pipeline.run(

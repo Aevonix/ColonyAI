@@ -143,7 +143,7 @@ async def test_corrupt_telemetry_reset_is_visible_and_flaggable(
     (tmp_path / "telemetry.json").write_text("{not json")
 
     s = TelemetryStore()
-    with caplog.at_level(logging.WARNING, logger="colony_sidecar.telemetry"):
+    with caplog.at_level(logging.WARNING, logger="apsimo.telemetry"):
         s.load()
     assert s.state == "unknown"
     assert any("unreadable" in r.getMessage() for r in caplog.records)

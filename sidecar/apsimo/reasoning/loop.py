@@ -80,7 +80,7 @@ class ReasoningLoop:
     ----------
     model :
         An object with an ``async complete(messages, *, tools, force_tier, context)``
-        method — typically an :class:`~colony_sidecar.router.router.LLMRouter`.
+        method — typically an :class:`~apsimo.router.router.LLMRouter`.
     tools :
         A :class:`ToolExecutor` that can dispatch tool calls.
     config :
