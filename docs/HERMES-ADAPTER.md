@@ -614,7 +614,9 @@ wrapper completes or blocks only the worker's current
 claimed task through native lifecycle handlers. It accepts text, not files,
 metadata, task identifiers or new work. Scratch artifact references in report
 text are rejected because Hermes otherwise infers attachments from them.
-The native goal judge and automatic heartbeat remain native.
+Finite reviews use ordinary native completion and automatic heartbeat. They do
+not start recursive goal-judge continuations: report usefulness is measured
+separately, and judge acceptance does not establish factual quality.
 
 Source 0 returns the registered observation. For operational log reviews,
 sources 1 through 5 select that observation's `largest_files` list, restricted
