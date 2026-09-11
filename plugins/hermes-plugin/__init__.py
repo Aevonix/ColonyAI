@@ -2531,7 +2531,7 @@ def register(ctx: Any) -> None:
             return None
         if supplied_input is not None:
             supplied_input.completed(scope, stable_turn_id, supplied_sources)
-        if receipt.get("state") == "pending":
+        if receipt.get("state") == "pending" or receipt.get("survivor_state") == "pending":
             try:
                 def deliver_turn(
                     stored: Mapping[str, Any], *, timeout_seconds: float,

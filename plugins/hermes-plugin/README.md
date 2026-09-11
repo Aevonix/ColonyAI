@@ -115,6 +115,13 @@ performs local preparation before the drain budget begins, then applies the same
 caller-thread callback contract and bounded drain. It performs no network I/O
 except through the supplied deadline-aware delivery callback.
 
+When source erasure removes only part of a newly captured turn, the original
+receipt remains `erased`. Its `survivor_turn_id` and `survivor_state` identify
+the separate durable replacement containing only retained evidence. A pending
+survivor triggers the same bounded post-turn or checkpoint drain immediately;
+it does not require another user message. Failed delivery remains pending for
+the existing recovery path. Complete erasure creates no survivor or delivery.
+
 The outbox has an intentionally small POSIX trust contract. Its absolute path
 may not contain symlink components; the immediate directory must be owned by
 the current effective user with exact mode `0700`; and an existing database

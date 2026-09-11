@@ -72,7 +72,7 @@ class CompletedReports:
             if references:
                 payload['assistant_source_refs'] = references
             receipt = self.outbox.enqueue(source_id, payload)
-            if receipt['state'] == 'pending':
+            if receipt['state'] == 'pending' or receipt.get('survivor_state') == 'pending':
                 self.outbox.drain(lambda stored, timeout_seconds: self.client.sync_turn(
                     **stored, outbox=self.outbox, timeout_seconds=timeout_seconds),
                     limit=self.drain_limit, timeout_seconds=self.drain_seconds)

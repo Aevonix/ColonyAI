@@ -199,6 +199,39 @@ assert "base64," not in image_rows[0]["payload"].get("summary", "")
 TurnOutbox(path).drain(deliver, timeout_seconds=1)
 assert any(body.get("user_message", {}).get("content") == parts for _, body in wire)
 
+# A repeated erased question must not strand its new safe assistant answer.
+# Exercise real native plugin hooks and the actual source-survivor serializer;
+# only HTTP responses are controlled, with no model or external service.
+from colony_hermes.client import source_message_hash
+from urllib.parse import quote
+question = "Can you recover the workshop details I asked you to forget?"
+safe_reply = "Those details are unavailable. Please provide them again."
+event = {"sequence": 1, "turn_id": "erased-answer", "session_id": "session-survivor",
+         "message_hashes": [source_message_hash("session-survivor", {"role": "user", "content": question})]}
+page = {"contact_id": "test-owner", "head": 1, "through": 1, "events": [event], "complete": True}
+outbox.apply_erasure_page("test-owner", page)
+evidence.ColonyClient.get = lambda *a, **kw: httpx.Response(
+    200, json=page, request=httpx.Request("GET", "http://test"))
+wire_before = len(wire)
+plugins.invoke_hook("pre_llm_call", session_id="session-survivor", task_id="task-survivor",
+    turn_id="new-answer", platform="cli", sender_id="", user_message=question)
+def finish_survivor():
+    plugins.invoke_hook("post_llm_call", session_id="session-survivor", task_id="task-survivor",
+        turn_id="new-answer", platform="cli", user_message=question,
+        assistant_response=safe_reply, conversation_history=[], model="processor-a")
+finish_survivor()
+survivor, = [row for row in outbox.snapshot() if row["payload"].get("session_id") == "session-survivor"]
+assert survivor["state"] == "delivered" and survivor["attempts"] == 1
+assert outbox.lookup("new-answer") is None
+route, body = wire[-1]
+assert len(wire) == wire_before + 1
+assert route == "/v2/host/turns/source-survivors/" + quote(survivor["turn_id"], safe="")
+assert body["assistant_message"]["content"] == safe_reply
+assert "user_message" not in body and "summary" not in body
+finish_survivor()
+assert len(wire) == wire_before + 1
+assert outbox.lookup(survivor["turn_id"])["state"] == "delivered"
+
 # A local persistence failure reaches the real compression host and leaves
 # its caller's transcript unchanged, without invoking the compressor.
 def failed_enqueue(*args, **kwargs):
