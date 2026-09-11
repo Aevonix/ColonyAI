@@ -56,10 +56,15 @@ binding = manifest['adapter_binding']
 roots = (binding['sources'] if binding['mode'] == 'native-installed' else
          {name: str(get_hermes_home()/'colony'/'adapter'/name) for name in ('colony_hermes', 'colony_memory')})
 assert Path(colony_hermes.__file__).resolve().parent == Path(roots['colony_hermes'])
-from run_agent import AIAgent
-agent = AIAgent(api_key='local-no-key', base_url=sys.argv[1], provider='openai',
-    model='fixture', max_iterations=2, quiet_mode=True, platform='cli', enabled_toolsets=[],
-    skip_context_files=False)
+from cli import _build_cli_from_args, _configure_quiet_agent, _finalize_single_query
+# Resolve the wizard-written profile through real CLI startup. Supplying a
+# provider/base URL directly to AIAgent bypasses native provider validation.
+cli = _build_cli_from_args(None, 'terminal', None, None, None, None, 2, None,
+    False, False, None, False, False, False, None)
+assert cli._ensure_runtime_credentials()
+assert cli._init_agent()
+agent = cli.agent
+_configure_quiet_agent(agent)
 providers = [p for p in agent._memory_manager._providers if type(p).__name__ == 'ColonyMemoryProvider']
 assert len(providers) == 1, 'Native memory provider absent or duplicated'
 assert Path(inspect.getfile(type(providers[0]))).resolve().parent == Path(roots['colony_memory'])
@@ -70,7 +75,7 @@ if len(sys.argv)>3 and sys.argv[3]=='defer-capture':
     ColonyClient.sync_turn = lambda *args, **kwargs: False
 result = agent.run_conversation(sys.argv[2])
 print(json.dumps({'answer': result['final_response'], 'session_id': agent.session_id}))
-agent.close()
+_finalize_single_query(cli)
 '''
 CAPTURE_RECEIPT = r'''
 import json, os, time
