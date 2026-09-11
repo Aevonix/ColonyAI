@@ -1,6 +1,13 @@
 # Changelog
 
-## v1.3.3 - Hermes 0.21.2 compatibility
+## v1.3.3 - native history erasure and Hermes 0.21.2 compatibility
+
+Native session-history results are checked against scoped canonical erasures
+before reaching the model. Exact source ancestry covers retained text and
+structured messages, derived tool spans and later same-turn erasure. Unrelated
+traceable turns remain readable; untraceable titles and previews are omitted.
+This is logical recall filtering, not physical deletion of native history,
+backups or raw files. Untracked historical material has no invented source links.
 
 Attachment accepts Hermes 0.21.2 while retaining the earlier supported versions.
 Native merged user inputs retain their current source attribution and historical
