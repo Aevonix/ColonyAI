@@ -29,6 +29,18 @@ directories. Existing instance directories and service state locations stay in
 place. Unconfigured library use keeps its historical `~/.colony/data` fallback;
 guided setup selects an explicit private instance directory.
 
+Managed directory refresh keeps an existing `plugins/colony-memory` directory
+and its `memory.provider: colony-memory` selection. Hermes locates these memory
+providers by physical directory name. The selected implementation is
+`apsimo_memory`; general plugin manifests and model-facing general tools use
+Apsimo names. Fresh directory installations and installed entry points select
+`apsimo-memory` directly.
+
+The memory provider's four read/context tools retain their `colony_*` names
+(`check_commitments`, `get_affect`, `get_facts`, and `timeline`). Its prompt names
+those actual tools. They are separate from the general adapter's canonical
+`apsimo_*` tool catalog.
+
 The hostworker action catalog keeps its serialized `colony_*` operation names.
 These are compatibility protocol identifiers used by digests and pending work,
 not the preferred names advertised to the model. Existing MCP resource URIs

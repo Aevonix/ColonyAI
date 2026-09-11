@@ -181,3 +181,80 @@ def test_explicit_native_plugin_selection_without_settings_namespace(artifacts, 
         COLONY_GUARD_CHAT_MODE='off')
     run_python('-I', '-B', '-c', SELECTION_PROBE, artifacts[3],
         os.environ.get('HERMES_TEST_SOURCE', ''), selected, cwd=tmp_path, env=env)
+
+
+REFRESH_PROBE = r'''
+import json,os,socket,sys
+from pathlib import Path
+from types import SimpleNamespace
+sys.path.insert(0,sys.argv[1])
+if sys.argv[2]:sys.path.insert(0,sys.argv[2])
+import yaml
+from apsimo import setup_hermes
+home=Path(os.environ['HERMES_HOME']);home.mkdir()
+Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
+state=home/'colony';adapter=state/'adapter'
+resources=setup_hermes._adapter_resources(sys.argv[3])
+# Exact managed old directory topology, backed by the real candidate packages.
+for module,name in [('colony_hermes','colony'),('colony_memory','colony-memory')]:
+ resources[module+'/plugin.yaml']=('name: '+name+'\nversion: 1.2.1\nentry_point: __init__.py\n').encode()
+for name,raw in resources.items():
+ path=adapter/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
+for name,module in [('colony','colony_hermes'),('colony-memory','colony_memory')]:
+ path=home/'plugins'/name;path.mkdir(parents=True)
+ (path/'__init__.py').write_text(setup_hermes._forwarder(adapter,module,module=='colony_memory'))
+ (path/'plugin.yaml').write_bytes(resources[module+'/plugin.yaml'])
+config={'plugins':{'enabled':['colony'],'colony':{'instance_dir':str(state),
+ 'turn_outbox_path':str(home/'turn-outbox.db'),'enabled_read_tools':[]}},
+ 'memory':{'provider':'colony-memory','memory_enabled':False,'user_profile_enabled':False},
+ 'tools':{'tool_search':{'enabled':False}}}
+(home/'config.yaml').write_text(yaml.safe_dump(config))
+manifest={'version':1,'profile':'local','hermes_home':str(home),'hermes_python':sys.executable,
+ 'adapter_binding':{'mode':'private-directory'},'adapter_sha256':setup_hermes._resource_digest(resources)}
+(state/'instance.json').write_text(json.dumps(manifest))
+def no_network(*args,**kwargs):raise AssertionError('Refresh and native loading must stay offline')
+socket.socket.connect=no_network;socket.create_connection=no_network
+setup_hermes.refresh_adapter(state,SimpleNamespace(adapter_wheel=sys.argv[3],hermes_python=sys.executable))
+config=yaml.safe_load((home/'config.yaml').read_text())
+assert config['plugins']['enabled']==['apsimo']
+assert config['memory']['provider']=='colony-memory'
+assert not (home/'plugins/apsimo-memory').exists()
+from hermes_cli.plugins import get_plugin_manager
+from plugins.memory import find_provider_dir,load_memory_provider
+manager=get_plugin_manager();manager.discover_and_load()
+assert manager._plugins['apsimo'].enabled,manager.list_plugins()
+assert not manager._plugins['apsimo'].error,manager.list_plugins()
+assert len(manager._hooks['pre_llm_call'])==1
+assert find_provider_dir(config['memory']['provider'])==home/'plugins/colony-memory'
+provider=load_memory_provider(config['memory']['provider'],register_skills=False)
+assert provider is not None
+assert type(provider).__module__=='apsimo_memory.provider'
+assert {schema['name'] for schema in provider.get_tool_schemas()}=={
+ 'colony_check_commitments','colony_get_affect','colony_get_facts','colony_timeline'}
+import apsimo_memory.provider,colony_memory.provider
+assert apsimo_memory.provider is colony_memory.provider
+assert all(name.startswith('apsimo_') for name in manager._plugins['apsimo'].tools_registered)
+print(json.dumps({'retained_directory_provider':'colony-memory','implementation':type(provider).__module__,
+ 'general_plugin':'apsimo','native_loads':1,'network':0,'model_calls':0}))
+manager.unload()
+'''
+
+
+def test_refreshed_legacy_directory_loads_canonical_native_provider(artifacts, tmp_path):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Install the qualified native Hermes release')
+    from conftest import ROOT
+    from test_setup import _native_interpreter
+    import subprocess
+    native_python = _native_interpreter(tmp_path, artifacts[1], 'absent')
+    env = {key:os.environ[key] for key in ('PATH','LANG','TMPDIR') if key in os.environ}
+    env.update(HOME=str(tmp_path/'user'),HERMES_HOME=str(tmp_path/'profile'),
+        HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),HERMES_DISABLE_TELEMETRY='1',
+        HERMES_DISABLE_LAZY_INSTALLS='1',PYTHON_DOTENV_DISABLED='1',
+        COLONY_SKIP_DOTENV='1',COLONY_STATE_DIR=str(tmp_path/'state'),
+        LITELLM_LOCAL_MODEL_COST_MAP='True',COLONY_GENERAL_PLUGIN_ACTIVE='1',
+        COLONY_MEMORY_WORKER_TOOLS='0',COLONY_MEMORY_TURN_WRITER='disabled')
+    result = subprocess.run([str(native_python),'-I','-B','-c',REFRESH_PROBE,str(ROOT/'sidecar'),
+        os.environ.get('HERMES_TEST_SOURCE',''),str(artifacts[1])],cwd=tmp_path,env=env,
+        text=True,capture_output=True,timeout=120)
+    assert result.returncode == 0, result.stdout + result.stderr

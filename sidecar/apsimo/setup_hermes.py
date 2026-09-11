@@ -434,6 +434,7 @@ def refresh_adapter(state, args):
     updates = []
     adapter = state/'adapter'; staged = backup = None
     old_resources = None
+    retained_memory_name = None
     if binding['mode'] == 'private-directory':
         old_resources = _copied_resources(adapter)
         if _resource_digest(old_resources) != manifest['adapter_sha256']:
@@ -458,8 +459,9 @@ def refresh_adapter(state, args):
                 raise ValueError('The selected profile adapter manifest changed; reconcile it before refreshing')
             canonical = 'apsimo_memory' if memory else 'apsimo_hermes'
             updates.append((target, target.read_bytes(), resources[canonical+'/plugin.yaml']))
+            return directory.name
         retain_forwarder(home)
-        retain_forwarder(home, memory=True)
+        retained_memory_name = retain_forwarder(home, memory=True)
         lane = manifest.get('local_work') or {}
         if lane.get('executor') == 'kanban':
             from .setup_local_work import native_root
@@ -482,6 +484,11 @@ def refresh_adapter(state, args):
         if config_path != config_paths[0] and plugin_settings(config).get('instance_dir') != str(state):
             raise ValueError('The recorded draft worker belongs to another instance')
         renamed = _canonicalize_hermes_binding(config)
+        if config_path == config_paths[0] and retained_memory_name:
+            # Hermes finds directory memory providers by directory name, unlike
+            # general plugins which select their manifest name. Keep this alias
+            # while its physical directory is retained; its code is canonical.
+            config['memory']['provider'] = retained_memory_name
         aligned = _align_hermes_memory_spill(config)
         if renamed or aligned:
             updates.append((config_path, config_before, yaml.safe_dump(config, sort_keys=False,

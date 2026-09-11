@@ -824,7 +824,7 @@ def test_explicit_rename_keeps_old_state_forwarders_credentials_and_work(args, m
     assert 'colony' not in after['plugins']
     assert after['plugins']['apsimo']['instance_dir'] == str(state)
     assert after['plugins']['entries'] == {'apsimo':{'allow_tool_override':True}}
-    assert after['memory'] == {'provider':'apsimo-memory','config':{'api_key':'${COLONY_NATIVE_API_KEY}'}}
+    assert after['memory'] == {'provider':'colony-memory','config':{'api_key':'${COLONY_NATIVE_API_KEY}'}}
     assert after['model'] == root_config['model']
     assert after['platform_toolsets']['cli'] == ['apsimo','kanban']
     assert yaml.safe_load((home/'plugins/colony/plugin.yaml').read_text())['name'] == 'apsimo'
