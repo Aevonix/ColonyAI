@@ -640,7 +640,10 @@ class ExpectationStore:
                     raise ValueError("unknown forecast")
                 if any((r["subject_person_id"], r["viewer_scope"], r["shareability"]) != scope for r in rows):
                     raise ValueError("outcome scope mismatch")
-                if observed < json.loads(rows[0]["detail"])["origin_at"]:
+                # A late-arriving pre-origin reply may be retained only as
+                # unknown, never as prospective outcome credit.
+                if (observed < json.loads(rows[0]["detail"])["origin_at"]
+                        and not (status == "unresolved" and reason == "unknown")):
                     raise ValueError("outcome precedes task/reply origin")
                 self._conn.execute("INSERT INTO forecast_outcomes VALUES (?,?,?,?,?,?)", (forecast_id, previous_revision + 1, receipt_ref, digest, _canonical(payload), recorded))
                 for row in rows:
@@ -685,6 +688,9 @@ class ExpectationStore:
         receipts = []
         for row in rows:
             observation = json.loads(row["payload"])
+            from .reply_forecasts import evidence_current
+            if not evidence_current(self._row(row), observation):
+                continue
             if evidence_is_current is not None and not evidence_is_current(self._row(row), observation):
                 continue
             origin = json.loads(row["detail"])["origin_at"]
@@ -723,6 +729,9 @@ class ExpectationStore:
         for row in rows:
             observation = json.loads(row["payload"]) if row["payload"] else None
             state = "pending" if not observation else "censored" if observation["status"] == "censored" else "resolved" if row["outcome"] in {"hit", "miss"} else "unresolved"
+            from .reply_forecasts import evidence_current
+            if not evidence_current(self._row(row), observation):
+                state = "unresolved"
             counts[state] += 1
             counts["eligible"] += int(state == "resolved")
             detail = json.loads(row["detail"])
@@ -732,20 +741,26 @@ class ExpectationStore:
             item[state] += 1
         return {**counts, "unit": "original_forecast", "groups": list(groups.values())}
 
+    def _current_predictions(self, rows):
+        # Only the declared-reply adapter adds a current-evidence predicate.
+        # Raw get()/forecast_history() remain available for historical audit.
+        from .reply_forecasts import evidence_current
+        return [p for row in rows if evidence_current(p := self._row(row))]
+
     def due(self, now: Optional[float] = None) -> List[Prediction]:
         now = now or _now()
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM predictions WHERE outcome='pending' AND "
                 "horizon <= ? ORDER BY horizon ASC LIMIT 200", (now,)).fetchall()
-        return [self._row(r) for r in rows]
+        return self._current_predictions(rows)
 
     def pending(self, limit: int = 100) -> List[Prediction]:
         with self._lock:
             rows = self._conn.execute(
                 "SELECT * FROM predictions WHERE outcome='pending' "
                 + _CURRENT_FORECAST_SQL + "ORDER BY horizon ASC LIMIT ?", (limit,)).fetchall()
-        return [self._row(r) for r in rows]
+        return self._current_predictions(rows)
 
     def for_subjects(
         self, subjects: Iterable[str], *, limit: int = 100,
@@ -773,7 +788,7 @@ class ExpectationStore:
                 "ORDER BY created_at ASC,prediction_id ASC LIMIT ?",
                 (*normalized, bound),
             ).fetchall()
-        return [self._row(row) for row in rows]
+        return self._current_predictions(rows)
 
     def get(self, prediction_id: str) -> Optional[Prediction]:
         with self._lock:
@@ -937,7 +952,7 @@ class ExpectationStore:
             params.append(domain)
         with self._lock:
             rows = self._conn.execute(q, params).fetchall()
-        return [self._row(r) for r in rows]
+        return self._current_predictions(rows)
 
     def domains(self) -> List[str]:
         with self._lock:
@@ -971,7 +986,7 @@ class ExpectationStore:
                 + _CURRENT_FORECAST_SQL + "ORDER BY created_at DESC LIMIT ?",
                 (person, viewer, *allowed, max(1, min(200, int(limit)))),
             ).fetchall()
-        return [self._row(row) for row in rows]
+        return self._current_predictions(rows)
 
     def resolved_projected_since(
         self,
@@ -992,7 +1007,7 @@ class ExpectationStore:
                 "ORDER BY resolved_at ASC",
                 (person, viewer, float(since)),
             ).fetchall()
-        return [self._row(row) for row in rows]
+        return self._current_predictions(rows)
 
     def projected_for_viewer(
         self,
@@ -1017,7 +1032,7 @@ class ExpectationStore:
                 + _CURRENT_FORECAST_SQL + "ORDER BY created_at DESC LIMIT ?",
                 (viewer, *allowed, max(1, min(200, int(limit)))),
             ).fetchall()
-        return [self._row(row) for row in rows]
+        return self._current_predictions(rows)
 
     def resolved_for_viewer_since(
         self, since: float, *, viewer_scope: str,
@@ -1033,7 +1048,7 @@ class ExpectationStore:
                 "ORDER BY resolved_at ASC",
                 (viewer, float(since)),
             ).fetchall()
-        return [self._row(row) for row in rows]
+        return self._current_predictions(rows)
 
 
 class ExpectationEngine:

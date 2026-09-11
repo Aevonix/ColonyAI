@@ -136,6 +136,8 @@ async def handoff(body: Handoff, request: Request):
 async def record_coverage(body: Coverage, request: Request):
     principal = producer(request)
     guarded(lambda: store().observe_coverage(producer=principal, **body.model_dump()))
+    from colony_sidecar.self_model import reply_forecasts
+    reply_forecasts.safe(reply_forecasts.reconcile_existing, producer=principal, coverage=body.model_dump())
     return {'recorded': True, 'effect_authorized': False}
 
 
@@ -164,6 +166,8 @@ def settle_receipt(ingress, row):
         ingress.erase_sources([source_id])
         return
     if row['state'] == 'completed':
+        from colony_sidecar.self_model import reply_forecasts
+        reply_forecasts.safe(reply_forecasts.reconcile_existing, receipt=row)
         return
     with closing(ledger._connect()) as db:
         receipt = db.execute('SELECT state,response_json FROM turn_ingestion WHERE turn_id=?', (source_id,)).fetchone()
@@ -180,6 +184,8 @@ def settle_receipt(ingress, row):
     if refs:
         ingress.complete(native_turn=native,
             source_versions={r['source_id']: r['source_version'] for r in refs}, outcome='captured')
+        from colony_sidecar.self_model import reply_forecasts
+        reply_forecasts.safe(reply_forecasts.reconcile_existing, receipt=row)
 
 
 def complete_source(body, result):

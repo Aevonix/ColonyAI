@@ -213,10 +213,22 @@ class TransportIngress:
                               (producer, account_id, epoch, connected_since, observed_at,
                                watermark, int(connected), unavailable, sequence_floor))
 
-    def coverage(self, *, producer, account_id, contact_id, since, now=None, max_age=5):
+    def coverage(self, *, producer, account_id, contact_id, since, now=None, max_age=5,
+                 until=None, observation=None):
+        """Read current coverage or recheck a retained internal observation.
+
+        A fixed horizon excludes later activity from that earlier interval.
+        Rechecking a stored observation still queries current intake/erasure
+        records; it never treats a retained coverage hash as timeless proof.
+        """
         now = time.time() if now is None else now
-        row = self.conn.execute('SELECT * FROM transport_ingress_coverage WHERE producer=? AND account_id=?',
-                                (producer, account_id)).fetchone()
+        row = observation if observation is not None else self.conn.execute(
+            'SELECT * FROM transport_ingress_coverage WHERE producer=? AND account_id=?',
+            (producer, account_id)).fetchone()
+        if observation is not None and (row['producer'] != producer or row['account_id'] != account_id):
+            raise ValueError('coverage_observation_scope_mismatch')
+        if until is not None and not since <= until <= now:
+            raise ValueError('invalid_coverage_interval')
         reasons = []
         if not row or not row['connected'] or row['connected_since'] is None or row['connected_since'] > since:
             reasons.append('connection_interval_unknown')
@@ -230,7 +242,8 @@ class TransportIngress:
                 reasons.append('intake_gap')
         activity = self.conn.execute('SELECT receipt_id,state,metadata_json FROM transport_ingress '
             'WHERE producer=? AND account_id=? AND occurred_at>=? AND '
-            '(contact_id=? OR contact_id IS NULL)', (producer, account_id, since, contact_id)).fetchall()
+            '(contact_id=? OR contact_id IS NULL)'+(' AND occurred_at<=?' if until is not None else ''),
+            (producer, account_id, since, contact_id, *([until] if until is not None else []))).fetchall()
         activity = [item for item in activity if not json.loads(item['metadata_json']).get('from_owner')]
         if activity:
             reasons.append('recipient_activity_requires_review')

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 import sqlite3
 import uuid
 from datetime import datetime, timezone
@@ -37,6 +38,7 @@ class CommsLog:
     """SQLite ledger of communications with each contact, across all channels."""
 
     def __init__(self, db_path: str) -> None:
+        self._db_path = str(db_path)
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -72,6 +74,16 @@ class CommsLog:
         self._conn.commit()
         from .transport_ingress import ensure_schema
         ensure_schema(self._conn)
+
+    def read_connection(self):
+        """An independent read connection for projections running on a worker thread.
+
+        The caller closes it. The transport writer's thread-bound connection
+        and transaction ownership remain unchanged.
+        """
+        db = sqlite3.connect(Path(self._db_path).resolve().as_uri()+'?mode=ro', uri=True)
+        db.row_factory = sqlite3.Row
+        return db
 
     def log_receipt(self, *, event_id, contact_id, channel, direction, external_ref,
                     receipt_ref, occurred_at, status, reply_to_ref='', outbound_ref=''):
@@ -179,7 +191,7 @@ class CommsLog:
         return [dict(row) for row in rows]
 
     def match_reply(self, *, contact_id: str, outbound_ref: str, since_iso: str,
-                    until_iso: Optional[str] = None) -> Dict[str, Any]:
+                    until_iso: Optional[str] = None, connection=None) -> Dict[str, Any]:
         """Exact receipt-backed reply references for a previously resolved contact.
 
         A reply link proves which message was addressed, not whether its requested
@@ -189,7 +201,7 @@ class CommsLog:
         start, end = _parse(since_iso), _parse(until_iso) if until_iso else _now()
         if not contact_id or not outbound_ref or start is None or end is None or end < start:
             raise ValueError('invalid_reply_window')
-        rows = self._conn.execute('''SELECT channel,ts,external_ref,reply_to_ref,reaction,receipt_ref
+        rows = (connection or self._conn).execute('''SELECT channel,ts,external_ref,reply_to_ref,reaction,receipt_ref
             FROM communications WHERE contact_id=? AND direction='in' AND reply_to_ref=?
             AND external_ref IS NOT NULL AND external_ref!=''
             AND receipt_ref IS NOT NULL AND receipt_ref!='' ORDER BY ts LIMIT 500''',
