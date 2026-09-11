@@ -9,6 +9,9 @@ traceable turns remain readable; untraceable titles and previews are omitted.
 This is logical recall filtering, not physical deletion of native history,
 backups or raw files. Untracked historical material has no invented source links.
 
+Native repeat-read warnings retain the authenticated history receipt; altered
+or unrecognized source wrappers are withheld without gaining provenance.
+
 Attachment accepts Hermes 0.21.2 while retaining the earlier supported versions.
 Native merged user inputs retain their current source attribution and historical
 erasure checks whether Hermes merges clean text or enriched API content.

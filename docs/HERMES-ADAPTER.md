@@ -249,7 +249,9 @@ releases are unqualified until the native-loader checks pass against them.
 Hermes is installed separately; this package does not select or upgrade it.
 
 The additional native provider-call memory boundary is qualified on Hermes
-0.21.1 with NeMo Relay 0.8.3 and 0.21.2 with NeMo Relay 0.8.4. Install it with
+0.21.1 with NeMo Relay 0.8.3 and the Linux 0.21.2 qualification environment
+with NeMo Relay 0.8.4. Upstream frozen environments can select another version;
+qualify that actual interpreter before switching a deployment. Install it with
 `python -m pip install 'apsimo-hermes[native-memory]'`; the supported Hermes
 release also declares this Relay dependency. CI installs that extra explicitly.
 Older Hermes attachment support does not imply this additional erasure coverage.
