@@ -132,7 +132,9 @@ def value(store, row):
     home, boards, _ = observed_boards()
     if home is None or 'default' not in boards:
         raise ValueError('selected_native_followup_board_required')
+    from colony_sidecar.self_model import reply_forecasts
     return {**row, 'id': row['wait_id'], 'status': {'done':'completed', 'archived':'cancelled', 'cancelled':'cancelled', 'failed':'failed'}[row['native_terminal_status']] if row.get('native_terminal_observed') else 'cancelled' if row['state'] in {'cancelled', 'expired'} else 'assigned' if row['native_task_id'] else 'pending',
+            'reply_forecast': reply_forecasts.safe(reply_forecasts.project, row['wait_id']),
             'review': review_contract(row), 'execution': {'native_board': 'default', 'worker_profile': 'default',
             'source_home_id': hashlib.sha256(str(home).encode()).hexdigest()},
             'effect_authorized': False}

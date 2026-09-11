@@ -244,7 +244,7 @@ class TemporalFollowups:
         with self.transaction() as db:
             row = self._get(db, wait_id)
             if row['state'] not in TERMINAL:
-                row.update(state='cancelled', resolution_ref=evidence_ref)
+                row.update(state='cancelled', resolution_ref=evidence_ref, cancelled_at=self.clock())
                 return self._save(db, row)
             return row
 
@@ -289,10 +289,19 @@ class TemporalFollowups:
             return 'outside_availability'
         return 'due'
 
-    def list_for_context(self, *, contact_id, limit=30, now=None):
+    def list_for_context(self, *, contact_id, limit=30, now=None, outbound_refs=None):
         point = self.clock() if now is None else epoch(now)
+        where, params = 'contact_id=?', [contact_id]
+        if outbound_refs is not None:
+            refs = tuple(dict.fromkeys(outbound_refs))
+            if not refs:
+                return []
+            # Select the receipt's exact waits before applying the context cap.
+            where += " AND json_extract(payload,'$.outbound_ref') IN (" + ','.join('?' for _ in refs) + ')'
+            params.extend(refs)
+        params.append(min(100, max(1, int(limit))))
         with self.transaction() as db:
-            values = db.execute('SELECT * FROM temporal_followups WHERE contact_id=? ORDER BY updated_at DESC LIMIT ?', (contact_id, min(100, max(1, int(limit))))).fetchall()
+            values = db.execute('SELECT * FROM temporal_followups WHERE '+where+' ORDER BY updated_at DESC LIMIT ?', params).fetchall()
             result = []
             for value in values:
                 row = self._refresh(db, self._row(value), point)
@@ -381,7 +390,8 @@ class TemporalFollowups:
                 if (row['followup_action_digest'], row['followup_receipt_ref']) != (action_digest, receipt_ref):
                     raise ValueError('followup receipt conflict')
                 return row
-            row.update(followup_action_digest=action_digest, followup_receipt_ref=receipt_ref)
+            row.update(followup_action_digest=action_digest, followup_receipt_ref=receipt_ref,
+                       followup_observed_at=self.clock())
             return self._save(db, row)
 
     def invalidate_sources(self, source_refs, *, evidence_ref):

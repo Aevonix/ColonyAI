@@ -232,8 +232,8 @@ class FixtureProcessor:
   item={'kind':'appraisal','dimension':'frustration','topic':'export task',
         'text':'I am frustrated with the reported stalled export.', 'reason':'Another diagnostic could help.',
         'support':[{'handle':evidence['handle'],'quote':evidence['text']}], 'contrary':[],
-        'intensity':'moderate','hint':'try_different_approach','repairs':None}
-  return SimpleNamespace(content=json.dumps({'observations':[item]}),raw=None,model_id='fixture-processor',binding='fixture',config_revision='fixture-r1',model_revision=None)
+        'intensity':'moderate','hint':'try_different_approach'}
+  return SimpleNamespace(content=json.dumps({'observations':[item],'incident_decisions':[]}),raw=None,model_id='fixture-processor',binding='fixture',config_revision='fixture-r1',model_revision=None)
 appraisal=appraisals.AppraisalStore(ledger,owner_id=owner.contact_id)
 assert asyncio.run(appraisal.process_one(FixtureProcessor()))
 selected=tool('contact-owner','colony_judgments',{'operation':'inspect','subject_contact_id':colleague.contact_id})

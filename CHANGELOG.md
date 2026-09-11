@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.1.8 - linked incident repairs and attributable timing observations
+
+Appraisal extraction now decides separately whether each supplied prior incident
+is unchanged, uncertain or resolved. A cited resolution settles that exact
+incident in the existing store without creating a new temporary mood. Missing
+decisions and duplicate same-topic appraisals are rejected; resolution is never
+required. Existing records remain readable and the extraction uses one call.
+
+Expected replies can retain prospective observations against a declared wait
+horizon, using exact durable dispatch, reply and source receipts. The initial
+probability is an uncalibrated fixed baseline. Clock passage alone does not
+establish absence, and these observations do not select or send follow-ups.
+
+Current-work context labels execution phases with unknown liveness as last
+observed and places them after recorded task outcomes. Native host tasks bind recalled context
+to their actual request text when their persisted display text differs, allowing
+the existing source-evidence framing to replace Hermes's authoritative-memory
+note without changing recalled quotations.
+
+These changes improve accounting and request construction. Grounded answers,
+useful relationship adaptation and learned reply timing still require measured
+ordinary-use outcomes; passing the integration checks does not establish them.
+
 ## v1.1.7 - comparable execution forecasts and visible source tools
 
 New execution forecasts use a separate versioned cohort. Normal context growth

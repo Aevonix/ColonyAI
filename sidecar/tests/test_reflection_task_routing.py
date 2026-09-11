@@ -19,7 +19,7 @@ async def test_reflection_task_override_drives_actual_operator_budget_and_dispat
         worker, table = state, 'appraisal_runs'
         appraisal_source(worker, 'incident', 'The export failed again after the same retry.')
         default, alternate = 'extraction', 'reasoning'
-        answer = {'observations': []}
+        answer = {'observations': [], 'incident_decisions': []}
     else:
         worker, _ = judgments
         table = 'self_judgment_runs'

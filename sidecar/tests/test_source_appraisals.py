@@ -26,13 +26,20 @@ def source(store, name, text, *, contact='person', scope='person'):
         module.enqueue(conn, name, contact, messages, scope=scope)
 
 
-def observation(payload, *, kind='appraisal', dimension='frustration', topic='export task', hint='try_different_approach', repairs=None):
+def observation(payload, *, kind='appraisal', dimension='frustration', topic='export task', hint='try_different_approach'):
     evidence = payload['evidence'][0]
     return {'kind': kind, 'dimension': dimension, 'topic': topic,
         'text': 'I am frustrated with the reported stalled export, not with the person.',
         'reason': 'The reported repeated failure makes a fresh diagnostic useful.',
         'support': [{'handle': evidence['handle'], 'quote': evidence['text']}],
-        'contrary': [], 'intensity': 'moderate', 'hint': hint, 'repairs': repairs}
+        'contrary': [], 'intensity': 'moderate', 'hint': hint}
+
+
+def resolved(payload, identifier):
+    evidence = next(e for e in payload['evidence'] if e['current'])
+    return {'record_id': identifier, 'outcome': 'resolved',
+        'reason': 'The contact reports that the diagnostic fixed this export.',
+        'support': [{'handle': evidence['handle'], 'quote': evidence['text']}], 'contrary': []}
 
 
 class Processor:
@@ -53,7 +60,10 @@ class Processor:
         if self.pause:
             await self.pause(payload)
         item = self.decide(payload)
-        return SimpleNamespace(content=json.dumps({'observations': [item] if item else []}), raw=None,
+        answer = item if isinstance(item, dict) and 'observations' in item else {
+            'observations': [item] if item else [],
+            'incident_decisions': [{'record_id': i, 'outcome': 'unchanged'} for i in payload['incident_ids']]}
+        return SimpleNamespace(content=json.dumps(answer), raw=None,
             model_id=self.name, binding='fixture', config_revision='r1', model_revision='weights-'+self.name)
 
 
@@ -173,7 +183,7 @@ async def test_incident_changes_relevant_decision_replay_does_not_reinforce_and_
     assert not await state.process_one(Processor())
     assert len(view(state, history=True)['records']) == 1
     source(state, 'repair', 'The new diagnostic fixed the export and the output opened correctly.')
-    repair = Processor(lambda p: observation(p, dimension='satisfaction', hint='none', repairs=first['id']))
+    repair = Processor(lambda p: {'observations': [], 'incident_decisions': [resolved(p, first['id'])]})
     assert await state.process_one(repair)
     assert view(state)['behavior_hints'] == []
     assert {r['status'] for r in view(state, history=True)['records']} == {'settled'}
@@ -406,14 +416,13 @@ async def test_machine_formatted_topic_remains_relevant_and_repair_has_no_residu
     assert not view(state, query='garden plants')['behavior_hints']
     source(state, 'repair', 'A larger buffer fixed the CSV export; its output was verified.')
     def repaired(payload):
-        return observation(payload, topic='csv_export_timeout', repairs=first['id'], hint='none') | {
-            'text': 'Relieved that the output was verified.', 'reason': 'The diagnostic repaired the task.'}
+        return {'observations': [], 'incident_decisions': [resolved(payload, first['id'])]}
     await state.process_one(Processor(repaired))
     assert view(state)['records'] == []
     history = view(state, history=True)['records']
     receipt = next(r for r in history if r['repairs'])
     assert receipt['status'] == 'settled' and receipt['dimension'] == 'satisfaction'
-    assert {d['source_id'] for d in receipt['sources']} == {'repair'}
+    assert {d['source_id'] for d in receipt['sources']} == {'incident', 'repair'}
 
 
 @pytest.mark.asyncio
@@ -421,7 +430,7 @@ async def test_single_json_fence_is_accepted_without_salvaging_prose(state):
     source(state, 'incident', 'The export timed out again despite the same retry.')
     job = state._claim(20)
     _, payload, _ = state._prepare(job)
-    raw = json.dumps({'observations': [observation(payload)]})
+    raw = json.dumps({'observations': [observation(payload)], 'incident_decisions': []})
     assert len(state._validate('```json\n' + raw + '\n```', payload)) == 1
     with pytest.raises(ValueError):
         state._validate('Here is an observation: ' + raw, payload)

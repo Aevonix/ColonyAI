@@ -157,3 +157,34 @@ def test_recent_sibling_burst_preserves_other_active_sources_before_history():
     assert not any(row.get('label') == 'old-download' for row in projected)
     assert len(projected) <= 8 and len(result['text']) <= 4000
     assert result['truncated'] and not result['complete']
+
+
+@pytest.mark.parametrize('same_session', [False, True])
+def test_terminal_task_outcome_precedes_unrelated_expired_execution(same_session):
+    stale = execution(2, age=500)
+    stale['platform'] = 'background_review'
+    view = {'items': [execution(1, session='observer'), stale], 'total': 2,
+        'native_kanban': {'available': True, 'items': [], 'total': 0,
+            'recent': [{'native_task_id': 'finished-repair', 'status': 'done',
+                        'liveness': 'native_terminal_record'}]}}
+    original = copy.deepcopy(view)
+    result = request_work_context(view, session_id=stale['session_id'] if same_session else 'observer', limit=2)
+    projected = rows(result)
+    assert any(row.get('native_task_id') == 'finished-repair' for row in projected)
+    assert not any(row.get('execution_id') == stale['execution_id'] for row in projected)
+    assert result['truncated'] and result['work_sources']['execution']['total'] == 2
+    assert view == original
+
+
+def test_expired_phase_is_historical_in_both_contexts_without_inventing_completion():
+    from colony_sidecar.turns.executions import format_view
+
+    stale = execution(2, age=500)
+    view = {'items': [stale], 'total': 1, 'truncated': False}
+    projected, = rows(request_work_context(view, session_id=stale['session_id']))
+    assert projected['liveness'] == 'unknown'
+    assert projected['last_observed_phase'] == stale['phase']
+    assert projected['last_observed_tool'] == stale['tool_name']
+    assert 'phase' not in projected and 'tool_name' not in projected
+    assert 'last observed phase tool' in format_view(view)
+    assert stale['phase'] == 'tool' and stale['liveness'] == 'unknown'
