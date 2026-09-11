@@ -48,29 +48,37 @@ def render(at):
  assert 'Archive shelf is cedar.' in row['content'],row
  assert row['content'].startswith(query),row
  return row['content']
-assert 'Previous message in this conversation:' not in render(100)
-assert 'Previous message in this conversation: 1h 00m ago.' in render(3700)
+assert 'Gap before current turn:' not in render(100)
+assert 'Gap before current turn: 1h 00m.' in render(3700)
 rapid=render(3707)
-assert rapid.count('Previous message in this conversation:')==1,rapid
-assert 'Previous message in this conversation: 7s ago.' in rapid and '1h 00m' not in rapid,rapid
+assert rapid.count('Gap before current turn:')==1,rapid
+assert 'Gap before current turn: 7s.' in rapid and '1h 00m' not in rapid,rapid
 assert requests.count('/v1/host/context/temporal')==2,requests
 # The selected native compressor sends this exact lifecycle dispatch for a
 # changed physical ID. The MemoryManager and provider remain the same objects.
 manager.on_session_switch('compressed',parent_session_id=agent.session_id,reset=False,reason='compression')
 agent.session_id='compressed'
-assert 'Previous message in this conversation: 3s ago.' in render(3710)
+assert 'Gap before current turn: 3s.' in render(3710)
 # Exercise the actual native CLI resume path, which passes reset=False and
 # the previous ID too. A parent ID alone must not preserve another chat's gap.
 cli=SimpleNamespace(agent=agent,conversation_history=[])
 _sync_agent_to_session(cli,'conversation-two',parent_session_id='compressed',reason='resume')
 assert provider._session_id==agent.session_id=='conversation-two'
-assert 'Previous message in this conversation:' not in render(3713)
-assert 'Previous message in this conversation: 1s ago.' in render(3714)
+assert 'Gap before current turn:' not in render(3713)
+assert 'Gap before current turn: 1s.' in render(3714)
 assert manager.get_provider('colony') is provider
 assert requests.count('/v1/host/context/temporal')==2,requests
+# Later requests may reuse or refresh this turn's prefetched context. The gap
+# remains its measured interval, never an assertion that the message is 1s old.
+now[0]=3774
+delayed=compose_user_api_content('Continue the archive review.',
+ manager.prefetch_all('Review the archive location.',session_id=agent.session_id),'')
+assert 'Gap before current turn: 1s.' in delayed,delayed
+assert 'Previous message in this conversation:' not in delayed,delayed
+assert requests.count('/v1/host/context/temporal')==3,requests
 print(json.dumps({'native_provider_reuse':True,'native_request_content':True,
  'compression_continuity':True,'native_resume_clears_other_conversation_gap':True,
- 'contact_clock_fetches':2,'model_calls':0,'network':0}))
+ 'delayed_request_reports_interval':True,'contact_clock_fetches':3,'model_calls':0,'network':0}))
 '''
 
 

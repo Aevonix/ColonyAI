@@ -1106,7 +1106,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         """Conversation timing belongs to this turn, not the contact clock cache."""
         gap = self._prev_turn_gap_secs
         if gap is not None and gap > 0:
-            block += f"\nPrevious message in this conversation: {_humanize_secs(gap)} ago."
+            block += f"\nGap before current turn: {_humanize_secs(gap)}."
         return block
 
     def _local_temporal_block(self, *, include_turn_gap=True):

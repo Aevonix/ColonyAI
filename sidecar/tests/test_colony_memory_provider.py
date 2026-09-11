@@ -639,13 +639,13 @@ def test_reused_provider_refreshes_turn_gap_without_refetching_contact_clock(
     p.on_turn_start(2, "Follow up on the request.")
     first = p._with_fresh_temporal_sync(
         "## Relevant Memories [priority 80]\nRemember the archive location.", contact_id="cid-base")
-    assert "Previous message in this conversation: 1h 00m ago." in first
+    assert "Gap before current turn: 1h 00m." in first
     now[0] += 7
     p.on_turn_start(3, "A quick clarification.")
     second = p._with_fresh_temporal_sync(first, contact_id="cid-base")
-    assert "Previous message in this conversation: 7s ago." in second
+    assert "Gap before current turn: 7s." in second
     assert "1h 00m" not in second
-    assert second.count("Previous message in this conversation:") == 1
+    assert second.count("Gap before current turn:") == 1
     assert (clock_body or "host clock") in second and "Remember the archive location." in second
     assert len([r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]) == 1
 
@@ -676,9 +676,9 @@ def test_conversation_gap_follows_native_session_boundary(
     now[0] += 7
     p.on_turn_start(3, "Review the selected conversation.")
     block = p._fresh_temporal_block_sync(contact_id="cid-base")
-    assert ("Previous message in this conversation: 7s ago." in block) is preserves_gap
+    assert ("Gap before current turn: 7s." in block) is preserves_gap
     if not preserves_gap:
-        assert "Previous message in this conversation:" not in block
+        assert "Gap before current turn:" not in block
     assert "1h 00m" not in block
     assert len([r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]) == 1
 
