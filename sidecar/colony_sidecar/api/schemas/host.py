@@ -102,9 +102,10 @@ class MemoryReadRequest(BaseModel):
     source_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     source_version: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     session_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    source_view: Literal['source', 'assertions', 'image', 'document'] = 'source'
+    source_view: Literal['source', 'assertions', 'image', 'document', 'video'] = 'source'
     asset_hash: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     page: Optional[int] = Field(default=None, ge=1, strict=True)
+    requested_ms: Optional[int] = Field(default=None, ge=0, le=30000, strict=True)
     claim_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     offset: int = Field(default=0, ge=0, le=10000000)
     read_revision: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
@@ -116,15 +117,17 @@ class MemoryReadRequest(BaseModel):
                 raise ValueError('canonical reads require source version/session and no graph memory ID')
             if (self.source_view == 'assertions') != bool(self.claim_id):
                 raise ValueError('assertion history requires its source claim ID')
-            if (self.source_view in {'image', 'document'}) != bool(self.asset_hash):
-                raise ValueError('image and document reads require an exact asset hash')
-            if self.source_view == 'image' and self.offset:
-                raise ValueError('image reads take no page offset')
+            if (self.source_view in {'image', 'document', 'video'}) != bool(self.asset_hash):
+                raise ValueError('image, document and video reads require an exact asset hash')
+            if self.source_view in {'image', 'video'} and self.offset:
+                raise ValueError('image and video reads take no page offset')
+            if (self.source_view == 'video') != (self.requested_ms is not None):
+                raise ValueError('video reads require a clip-relative requested_ms')
             if (self.source_view == 'document') != (self.page is not None):
                 raise ValueError('document reads require an original page number')
             if self.offset and not self.read_revision:
                 raise ValueError('continuation requires the preceding read revision')
-        elif self.source_version or self.claim_id or self.asset_hash or self.page is not None or self.offset or self.read_revision or self.source_view != 'source':
+        elif self.source_version or self.claim_id or self.asset_hash or self.page is not None or self.requested_ms is not None or self.offset or self.read_revision or self.source_view != 'source':
             raise ValueError('canonical read fields require a source ID')
         return self
 

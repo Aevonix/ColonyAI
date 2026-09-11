@@ -1325,8 +1325,13 @@ async def memory_read(
         if not person_id:
             raise HTTPException(status_code=403, detail='canonical source reads require a scoped person')
         from colony_sidecar.turns import get_turn_idempotency_ledger
-        from colony_sidecar.turns.source_read import read
+        from colony_sidecar.turns.source_read import read, read_video
         try:
+            if body.source_view == 'video':
+                return MemoryReadResponse(source=await read_video(get_turn_idempotency_ledger(get_state_dir()),
+                    contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
+                    source_version=body.source_version, asset_hash=body.asset_hash,
+                    requested_ms=body.requested_ms, read_revision=body.read_revision))
             return MemoryReadResponse(source=read(get_turn_idempotency_ledger(get_state_dir()),
                 contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
                 source_version=body.source_version, view=body.source_view, claim_id=body.claim_id,
@@ -4040,6 +4045,19 @@ async def audio_source_sync(turn_id: str, body: TurnSyncRequest, response: Respo
             and any(isinstance(block, dict) and block.get('type') == 'input_audio' for block in message.content)
             for message in messages):
         raise HTTPException(422, detail={'code': 'invalid_audio_source'})
+    return await turns_sync_v2(turn_id, body, response, request)
+
+
+@v2_router.put('/turns/source-media/video/{turn_id:path}', response_model=TurnSyncResponse)
+async def video_source_sync(turn_id: str, body: TurnSyncRequest, response: Response, request: Request = None):
+    """Selected inline MP4 ingestion; predecessors reject unequal path IDs."""
+    if body.context.turn_id == 'source-media/video/' + turn_id:
+        return await turns_sync_v2(body.context.turn_id, body, response, request)
+    messages = [body.user_message, body.assistant_message, *(body.checkpoint_messages or [])]
+    if body.context.turn_id != turn_id or not any(message and isinstance(message.content, list)
+            and any(isinstance(block, dict) and block.get('type') == 'input_video' for block in message.content)
+            for message in messages):
+        raise HTTPException(422, detail={'code': 'invalid_video_source'})
     return await turns_sync_v2(turn_id, body, response, request)
 
 

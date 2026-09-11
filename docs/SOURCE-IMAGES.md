@@ -64,6 +64,13 @@ revision must already have reached this participant's current model request.
 The tool accepts no file path, URL, participant override or image service.
 Opening another person's source or an asset not in that exact source fails.
 
+Recalled media places its checked canonical `source_id` and `source_version`
+beside the description. Copy those fields together; the `media:` row ID and
+`sha256:` asset ID identify different things. This metadata uses the existing
+recall character budget. A mismatched reader request can show up to four
+already-supplied sources matching the requested version, while retaining the
+error and opening nothing. It never converts a media ID into a source ID.
+
 The tool uses the existing scoped `POST /v1/host/memory/read` route with
 `source_view: "image"`. It returns original pixels together with their source
 message role, recorded/reported times, exact source references and attributed

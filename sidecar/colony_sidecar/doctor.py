@@ -809,8 +809,20 @@ def check_relationship_attribution() -> CheckResult:
                "to real contacts")
 
 
+def check_optional_video() -> CheckResult:
+    """Report the optional local decoder, without installing or running it."""
+    try:
+        import av
+    except (ImportError, OSError):
+        return CheckResult('optional-video', SKIP, detail=
+            "Decoder unavailable in this interpreter. For selected clip memory install 'colonyai[video]' here; see docs/SOURCE-VIDEOS.md.")
+    return CheckResult('optional-video', PASS, detail=
+        f'PyAV {av.__version__} imports in this interpreter; no clip, model or camera was tested.')
+
+
 def run_local_checks() -> List[CheckResult]:
     results: List[CheckResult] = []
+    results += _run('optional-video', check_optional_video)
     results += _run("state-dir", check_state_dir)
     results += _run("llm-config", check_llm_config)
     results += _run("contacts-db", check_contacts_db)
@@ -2018,7 +2030,8 @@ def run_private_instance_checks(base_url: str, api_key: str, timeout: float) -> 
     """Diagnose the local profile through its existing exact-person API."""
     results = []
     for name, check in (("state-dir", check_state_dir), ("llm-config", check_llm_config),
-                        ("contacts-db", check_contacts_db), ("owner-contact-id", check_owner_contact_id)):
+                        ("contacts-db", check_contacts_db), ("owner-contact-id", check_owner_contact_id),
+                        ("optional-video", check_optional_video)):
         results += _run(name, check)
     try:
         status, body = _http_get(base_url + '/v1/host/health', api_key, timeout)

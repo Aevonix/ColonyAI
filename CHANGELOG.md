@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.1.15 - selected video sources and original-frame recall
+
+Explicitly supplied short MP4 clips now enter the existing source ledger and
+media worker. The optional `video` extra provides a bounded decoder. The vision
+role describes sampled frames, and the native source reader can reopen a frame
+at a requested clip-relative time. Original clip and generated image hashes,
+timestamps, source revisions and corrections travel with the result.
+
+Video admission uses a dedicated compatible route and requires a stable turn
+ID. Frame revalidation checks retained provenance without decoding again; source
+correction or erasure withholds stale pixels. Existing source storage, search,
+backup and erasure are reused. Camera enrollment and continuous recording are
+outside this change.
+
+Recalled media now places the exact canonical source ID and version beside its
+description. Lexical media retrieval preserves the owning message hash so
+source corrections accompany that evidence. A reader call using a media ID
+still fails, but can show already-supplied matching source references to help
+the caller correct its arguments without guessing or widening access.
+
+CI installs the optional decoder for actual MP4-to-native-SDK integration
+checks. Controlled tests verify bytes, timing and source effects; they do not
+establish a model's visual accuracy or physical camera behavior.
+
 ## v1.1.14 - connected CLI recollection and retained-turn delivery
 
 An explicitly attested native CLI turn can now pass its resolved identity to
@@ -13,7 +37,7 @@ the existing bounded delivery drain. Original receipts remain erased, and
 complete erasure remains a no-op. Failed delivery retains recoverable work.
 
 Rejected image captions retain specific final-answer or length dispositions
-and the returned model provenance when available. Caption limits, retry timing
+and the configured model and routing provenance when available. Caption limits, retry timing
 and original-image access are unchanged. Historical generic errors cannot be
 diagnosed retrospectively.
 

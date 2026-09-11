@@ -15,7 +15,8 @@ channels, model endpoints and optional hardware adapters.
   and optional semantic retrieval. Retained images, audio and PDF pages keep
   references to their originals. Capture and supported media readers depend on
   the integration. [Memory](docs/MEMORY-QUALITY.md),
-  [audio](docs/SOURCE-AUDIO.md), [documents](docs/SOURCE-DOCUMENTS.md).
+  [audio](docs/SOURCE-AUDIO.md), [documents](docs/SOURCE-DOCUMENTS.md),
+  [selected video](docs/SOURCE-VIDEOS.md) with an optional decoder.
 - **Shared work:** native tasks, children, crons and enrolled external work appear
   in one scoped view, refreshed at model-request boundaries. Source coverage and
   missing observations stay explicit. Accepted drafts retain their identity
@@ -54,7 +55,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.14" "colony-hermes[native-memory]==1.1.14"
+python -m pip install "colonyai[hermes]==1.1.15" "colony-hermes[native-memory]==1.1.15"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
