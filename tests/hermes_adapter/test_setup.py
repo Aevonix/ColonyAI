@@ -21,11 +21,11 @@ import sys, os
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
 import runpy
-sys.argv = ['colony', 'init', '--non-interactive', '--hermes-python', sys.argv[7],
+sys.argv = ['apsimo', 'init', '--non-interactive', '--hermes-python', sys.argv[7],
     '--hermes-home', sys.argv[3], '--adapter-wheel', sys.argv[4], '--agent-name', 'Orion',
     '--contact-name', 'Fixture Owner', '--model-url', sys.argv[5], '--model', 'fixture', '--port', sys.argv[6],
     *(['--local-work'] if len(sys.argv)>8 and sys.argv[8]=='local-work' else [])]
-runpy.run_module('colony_sidecar', run_name='__main__')
+runpy.run_module('apsimo', run_name='__main__')
 '''
 SERVER = r'''
 import sys, importlib.abc
@@ -37,8 +37,8 @@ class NoOptionalPackages(importlib.abc.MetaPathFinder):
             raise ImportError('Optional package absent in clean local qualification')
 sys.meta_path.insert(0, NoOptionalPackages())
 import runpy
-sys.argv = ['colony', 'start']  # Discover the same instance from HERMES_HOME.
-runpy.run_module('colony_sidecar', run_name='__main__')
+sys.argv = ['apsimo', 'start']  # Discover the same instance from HERMES_HOME.
+runpy.run_module('apsimo', run_name='__main__')
 '''
 TURN = r'''
 import sys, json, inspect
@@ -49,13 +49,13 @@ from hermes_constants import get_hermes_home
 load_dotenv(get_hermes_home()/'.env', override=True)
 manager = get_plugin_manager()
 manager.discover_and_load()
-assert manager._plugins['colony'].enabled, manager._plugins['colony'].error
-import colony_hermes
-manifest = json.loads((get_hermes_home()/'colony'/'instance.json').read_text())
+assert manager._plugins['apsimo'].enabled, manager._plugins['apsimo'].error
+import apsimo_hermes
+manifest = json.loads((get_hermes_home()/'apsimo'/'instance.json').read_text())
 binding = manifest['adapter_binding']
 roots = (binding['sources'] if binding['mode'] == 'native-installed' else
-         {name: str(get_hermes_home()/'colony'/'adapter'/name) for name in ('colony_hermes', 'colony_memory')})
-assert Path(colony_hermes.__file__).resolve().parent == Path(roots['colony_hermes'])
+         {name: str(get_hermes_home()/'apsimo'/'adapter'/name) for name in ('apsimo_hermes', 'apsimo_memory')})
+assert Path(apsimo_hermes.__file__).resolve().parent == Path(roots['apsimo_hermes'])
 from cli import _build_cli_from_args, _configure_quiet_agent, _finalize_single_query
 # Resolve the wizard-written profile through real CLI startup. Supplying a
 # provider/base URL directly to AIAgent bypasses native provider validation.
@@ -65,14 +65,14 @@ assert cli._ensure_runtime_credentials()
 assert cli._init_agent()
 agent = cli.agent
 _configure_quiet_agent(agent)
-providers = [p for p in agent._memory_manager._providers if type(p).__name__ == 'ColonyMemoryProvider']
+providers = [p for p in agent._memory_manager._providers if type(p).__name__ == 'ApsimoMemoryProvider']
 assert len(providers) == 1, 'Native memory provider absent or duplicated'
-assert Path(inspect.getfile(type(providers[0]))).resolve().parent == Path(roots['colony_memory'])
+assert Path(inspect.getfile(type(providers[0]))).resolve().parent == Path(roots['apsimo_memory'])
 if len(sys.argv)>3 and sys.argv[3]=='defer-capture':
     # Exercise the documented durable-pending path deterministically, rather
     # than depending on whether a CI runner exceeds the 250 ms delivery budget.
-    from colony_hermes.client import ColonyClient
-    ColonyClient.sync_turn = lambda *args, **kwargs: False
+    from apsimo_hermes.client import ApsimoClient
+    ApsimoClient.sync_turn = lambda *args, **kwargs: False
 result = agent.run_conversation(sys.argv[2])
 print(json.dumps({'answer': result['final_response'], 'session_id': agent.session_id}))
 _finalize_single_query(cli)
@@ -85,15 +85,15 @@ from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.config import load_config
 load_dotenv(get_hermes_home()/'.env', override=True)
 get_plugin_manager().discover_and_load()
-from colony_hermes.client import ColonyClient, TurnOutbox
-config=load_config()['plugins']['colony']
+from apsimo_hermes.client import ApsimoClient, TurnOutbox
+config=load_config()['plugins']['apsimo']
 outbox=TurnOutbox(config['turn_outbox_path'])
 before=outbox.snapshot()
 assert len(before)==1,[(row['state'],row['last_error']) for row in before]
 assert before[0]['payload']['require_source_receipt'] is True
 assert 'cobalt-716' in before[0]['payload']['user_message']
 identity=(before[0]['turn_id'],before[0]['envelope_sha256'])
-client=ColonyClient(url=config['url'],api_key=os.environ['COLONY_NATIVE_API_KEY'])
+client=ApsimoClient(url=config['url'],api_key=os.environ['COLONY_NATIVE_API_KEY'])
 deadline=time.monotonic()+8
 while time.monotonic()<deadline:
     rows=outbox.snapshot()
@@ -112,8 +112,8 @@ DOCTOR = r'''
 import sys, runpy
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
-sys.argv = ['colony', 'doctor', '--json']
-runpy.run_module('colony_sidecar', run_name='__main__')
+sys.argv = ['apsimo', 'doctor', '--json']
+runpy.run_module('apsimo', run_name='__main__')
 '''
 
 NATIVE_GOALS_CONFIG = r'''
@@ -124,7 +124,7 @@ if sys.argv[2]: sys.path.append(sys.argv[2])
 def no_network(*a, **kw): raise AssertionError('Native setup configuration check must stay offline')
 socket.socket.connect=no_network; socket.create_connection=no_network
 import yaml
-from colony_sidecar.setup_native_goals import prepare
+from apsimo.setup_native_goals import prepare
 from hermes_cli.config import load_config
 from hermes_cli.tools_config import _get_platform_tools
 from hermes_cli.profiles import resolve_profile_env
@@ -186,14 +186,14 @@ from dotenv import load_dotenv
 from hermes_constants import get_hermes_home
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
-home=get_hermes_home();state=home/'colony';manifest=json.loads((state/'instance.json').read_text())
+home=get_hermes_home();state=home/'apsimo';manifest=json.loads((state/'instance.json').read_text())
 load_dotenv(home/'.env',override=True)
 get_plugin_manager().discover_and_load()
 from model_tools import handle_function_call
 source=home/'neutral-source.txt';source.write_text('The neutral source calls the orchard badge cobalt-716.\n')
 invoke_hook('pre_llm_call',session_id='owner-draft',task_id='owner-draft',turn_id='owner-draft',
     platform='cli',sender_id='',user_message='Please summarize this selected neutral source in a local draft.')
-accepted=json.loads(handle_function_call('colony_accept_local_draft',
+accepted=json.loads(handle_function_call('apsimo_accept_local_draft',
     {'question':'Summarize the selected source','sources':[str(source)]},session_id='owner-draft',
     task_id='owner-draft',turn_id='owner-draft',tool_call_id='accept-draft'))
 assert accepted.get('status')=='pending',accepted
@@ -248,7 +248,7 @@ def _native_interpreter(tmp_path, wheel, adapter_installation):
     venv.EnvBuilder(with_pip=False, symlinks=True).create(target)
     site = target/'lib'/f'python{sys.version_info.major}.{sys.version_info.minor}'/'site-packages'
     for source in Path(sysconfig.get_path('purelib')).iterdir():
-        if 'colony_hermes' in source.name or source.name in {'colony_memory', '__pycache__'}:
+        if any(name in source.name for name in ('colony_hermes', 'apsimo_hermes')) or source.name in {'colony_memory', 'apsimo_memory', '__pycache__'}:
             continue
         if adapter_installation == 'absent' and source.name.startswith('typer'):
             continue  # Hermes core does not require Colony's legacy CLI dependency.
@@ -301,19 +301,19 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
                       else '{"claims": []}')
             calls = None
             choice = body.get('tool_choice')
-            if isinstance(choice, dict) and choice.get('function', {}).get('name') == 'colony_setup_echo':
+            if isinstance(choice, dict) and choice.get('function', {}).get('name') == 'apsimo_setup_echo':
                 calls = [{'id':'setup-call','type':'function','function':{
-                    'name':'colony_setup_echo','arguments':json.dumps({'token':'colony-ready'})}}]
+                    'name':'apsimo_setup_echo','arguments':json.dumps({'token':'apsimo-ready'})}}]
             elif 'Produce the accepted local source draft below.' in full:
                 results = [m for m in body['messages'] if m.get('role')=='tool']
                 names = {tool['function']['name'] for tool in body.get('tools', [])}
                 if not results:
-                    if 'colony_read_work_source' in names:
-                        name,args='colony_read_work_source',{'source':0}
+                    if 'apsimo_read_work_source' in names:
+                        name,args='apsimo_read_work_source',{'source':0}
                     else:
-                        name,args='tool_search',{'queries':['colony_read_work_source', 'kanban_complete']}
+                        name,args='tool_search',{'queries':['apsimo_read_work_source', 'kanban_complete']}
                 elif not any('native_read' in str(row.get('content')) for row in results):
-                    name,args='colony_read_work_source',{'source':0}
+                    name,args='apsimo_read_work_source',{'source':0}
                 elif not any('"ok": true' in str(row.get('content')) for row in results):
                     assert any('cobalt-716' in str(row.get('content')) for row in results)
                     name,args='kanban_complete',{'summary':'Retain the selected source draft',
@@ -366,13 +366,13 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
     try:
         run_python('-I', '-c', INSTALL, installed, dependency_path, home, wheel, endpoint, port, native_python,
                    'local-work' if adapter_installation=='absent' else '', cwd=tmp_path, env=env)
-        manifest = json.loads((home/'colony'/'instance.json').read_text())
+        manifest = json.loads((home/'apsimo'/'instance.json').read_text())
         assert manifest['adapter_binding']['mode'] == ('native-installed' if installed_adapter else 'private-directory')
-        assert (home/'plugins'/'colony').exists() is not installed_adapter
-        assert (home/'plugins'/'colony-memory').exists() is not installed_adapter
+        assert (home/'plugins'/'apsimo').exists() is not installed_adapter
+        assert (home/'plugins'/'apsimo-memory').exists() is not installed_adapter
         if adapter_installation == 'editable':
             assert set(manifest['adapter_binding']['external_modules']) == {
-                'colony_hermes.colony_hostworker.catalog', 'colony_hermes.colony_hostworker.contract'}
+                'apsimo_hermes.apsimo_hostworker.catalog', 'apsimo_hermes.apsimo_hostworker.contract'}
         log_path = tmp_path/'sidecar.log'
         with log_path.open('w') as log:
             server = subprocess.Popen([sys.executable, '-I', '-c', SERVER, str(installed), dependency_path],
@@ -396,8 +396,8 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
         assert receipt['source_delivered'] and receipt['stable_turn'] and receipt['stable_envelope']
         if adapter_installation=='wheel':
             assert receipt['replayed_pending']
-        instance = json.loads((home/'colony'/'instance.json').read_text())
-        keyring = json.loads((home/'colony'/'api-keyring.json').read_text())
+        instance = json.loads((home/'apsimo'/'instance.json').read_text())
+        keyring = json.loads((home/'apsimo'/'api-keyring.json').read_text())
         response = httpx.post(f'http://127.0.0.1:{port}/v1/host/context/assemble',
             headers={'Authorization': 'Bearer '+keyring['principals'][0]['credentials'][0]['secret']},
             json={'identity': {'host_id': 'qualification'}, 'context': {'contact_id': instance['owner_id'], 'session_id': 'verification'},
@@ -413,8 +413,8 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
         assert any('cobalt-716' in json.dumps(body) for body in prompts)
         assert any('Orion' in str(message.get('content')) for body in requests
                    if body.get('stream') for message in body.get('messages', []) if message.get('role') == 'system')
-        assert not (home/'colony'/'lancedb').exists()
-        assert (home/'colony'/'contacts.db').exists()
+        assert not (home/'apsimo'/'lancedb').exists()
+        assert (home/'apsimo'/'contacts.db').exists()
         diagnostic = run_python('-I', '-c', DOCTOR, installed, dependency_path, cwd=tmp_path, env=env)
         checks = json.loads(diagnostic.stdout)
         assert checks['ok'], diagnostic.stdout
@@ -432,7 +432,7 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
             server = None
             # A same-version installed package with different code must not be
             # silently selected over the requested artifact on another attach.
-            client = Path(manifest['adapter_binding']['sources']['colony_hermes'])/'client.py'
+            client = Path(manifest['adapter_binding']['sources']['apsimo_hermes'])/'client.py'
             client.write_bytes(client.read_bytes()+b'\n# Different installed payload\n')
             other = tmp_path/'mismatch-home'; other.mkdir(mode=0o700)
             (other/'config.yaml').write_text('plugins: {enabled: []}\n')
@@ -442,7 +442,7 @@ def test_packaged_guided_setup_captures_and_recalls_with_real_native_sessions(ar
             rejected = subprocess.run([sys.executable, '-I', '-c', INSTALL, str(installed), dependency_path,
                 str(other), str(wheel), endpoint, str(port), str(native_python)],
                 cwd=tmp_path, env=env, text=True, capture_output=True, timeout=60)
-            assert rejected.returncode != 0 and 'different installed Colony adapter' in rejected.stdout
+            assert rejected.returncode != 0 and 'different installed Apsimo adapter' in rejected.stdout
             assert before == {path.name: path.read_bytes() for path in other.iterdir()}
             assert len(requests) == request_count, 'Adapter conflict must fail before endpoint probing'
     finally:

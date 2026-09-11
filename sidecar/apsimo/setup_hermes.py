@@ -33,8 +33,15 @@ from .util.instance import plugin_settings
 
 def _select_state_environment(state):
     clear_environment_aliases()
-    os.environ.pop('COLONY_STATE_DIR', None)
-    os.environ['APSIMO_STATE_DIR'] = str(state)
+    # Continue an explicitly canonical selection, but do not create canonical
+    # input variables for a legacy caller. The remaining CLI bootstrap reads
+    # COLONY_STATE_DIR; minting its reverse alias would pin a stale state over
+    # that caller's later configuration selection.
+    if 'APSIMO_STATE_DIR' in os.environ:
+        os.environ.pop('COLONY_STATE_DIR', None)
+        os.environ['APSIMO_STATE_DIR'] = str(state)
+    else:
+        os.environ['COLONY_STATE_DIR'] = str(state)
     apply_environment_aliases()
 
 

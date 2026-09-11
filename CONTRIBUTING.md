@@ -96,8 +96,8 @@ document it in `.env.example` instead of hardcoding it.
 
 Apsimo uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
 features, PATCH for fixes and documentation, and MAJOR for incompatible public
-contracts. The `apsimo` sidecar, `apsimo-hermes` integration and `apsimo-hostworker`
-distributions are published on PyPI with the same version. The former npm package is retired.
+contracts. The `apsimo` sidecar and `apsimo-hermes` integration are published together
+on PyPI with the same version. `apsimo-hostworker` has its own package version. The former npm package is retired.
 
 ## Release flow
 

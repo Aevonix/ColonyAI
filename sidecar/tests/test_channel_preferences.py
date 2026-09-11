@@ -1,6 +1,7 @@
 """An explicit receipt choice changes one selected profile, never transport authority."""
 from copy import deepcopy
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
@@ -47,7 +48,9 @@ def test_existing_profile_explicit_preference_preserves_scope_and_state(tmp_path
     assert len(list(home.glob('.config.yaml.colony-backup-*'))) == 1
 
 
-def test_omitted_receipt_preference_retains_config_bytes(tmp_path):
+def test_omitted_receipt_preference_retains_config_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.delenv("APSIMO_STATE_DIR", raising=False)
     home, state, _ = attached(tmp_path, {'whatsapp': {'send_read_receipts': True}})
     path = home / 'config.yaml'
     path.write_text('# A retained comment\n' + path.read_text())
@@ -55,6 +58,15 @@ def test_omitted_receipt_preference_retains_config_bytes(tmp_path):
     assert setup_hermes.run(state, SimpleNamespace(non_interactive=True, hermes_home=str(home))) == 0
     assert path.read_bytes() == before
     assert not list(home.glob('.config.yaml.colony-backup-*'))
+    assert "APSIMO_STATE_DIR" not in os.environ
+    # A legacy caller can select its next state without a stale canonical input
+    # taking precedence over that selection.
+    from apsimo.environment import normalize_environment
+    from apsimo import get_state_dir
+    following = tmp_path / 'following-state'
+    monkeypatch.setenv('COLONY_STATE_DIR', str(following))
+    assert normalize_environment()['COLONY_STATE_DIR'] == str(following)
+    assert get_state_dir() == following
 
 
 def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
