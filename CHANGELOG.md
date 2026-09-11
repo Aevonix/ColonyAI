@@ -13,8 +13,8 @@ horizon, using exact durable dispatch, reply and source receipts. The initial
 probability is an uncalibrated fixed baseline. Clock passage alone does not
 establish absence, and these observations do not select or send follow-ups.
 
-Current-work context labels expired execution phases as last observed and places
-them after recorded task outcomes. Native host tasks now bind recalled context
+Current-work context labels execution phases with unknown liveness as last
+observed and places them after recorded task outcomes. Native host tasks bind recalled context
 to their actual request text when their persisted display text differs, allowing
 the existing source-evidence framing to replace Hermes's authoritative-memory
 note without changing recalled quotations.
