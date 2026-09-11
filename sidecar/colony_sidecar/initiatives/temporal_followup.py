@@ -244,7 +244,7 @@ class TemporalFollowups:
         with self.transaction() as db:
             row = self._get(db, wait_id)
             if row['state'] not in TERMINAL:
-                row.update(state='cancelled', resolution_ref=evidence_ref)
+                row.update(state='cancelled', resolution_ref=evidence_ref, cancelled_at=self.clock())
                 return self._save(db, row)
             return row
 
@@ -390,7 +390,8 @@ class TemporalFollowups:
                 if (row['followup_action_digest'], row['followup_receipt_ref']) != (action_digest, receipt_ref):
                     raise ValueError('followup receipt conflict')
                 return row
-            row.update(followup_action_digest=action_digest, followup_receipt_ref=receipt_ref)
+            row.update(followup_action_digest=action_digest, followup_receipt_ref=receipt_ref,
+                       followup_observed_at=self.clock())
             return self._save(db, row)
 
     def invalidate_sources(self, source_refs, *, evidence_ref):

@@ -84,9 +84,9 @@ async def dispatch(r, **changes):
     return body
 
 
-async def reply(r, *, occurred=None, account='neutral-account', producer='provider', reply_to='provider-out', suffix='', canonical=True, other_contact=False):
+async def reply(r, *, occurred=None, account='neutral-account', producer='provider', reply_to='provider-out', suffix='', canonical=True, other_contact=False, sequence=1):
     response=await r.client.post(PREFIX+'/admit',headers=headers(producer),json={
-        'account_id':account,'epoch':'epoch-one','sequence':1,'event_id':'in-event'+suffix,
+        'account_id':account,'epoch':'epoch-one','sequence':sequence,'event_id':'in-event'+suffix,
         'occurred_at':r.now[0] if occurred is None else occurred,'journal_ref':'journal:reply'+suffix,
         'payload_digest':'a'*64,'media_available':True,
         'metadata':{'channel':'whatsapp','sender_ref':('15550000022' if other_contact else '15550000011')+'@s.whatsapp.net','reply_to_ref':reply_to}})

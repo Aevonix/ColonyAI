@@ -37,6 +37,12 @@ a dispatched follow-up, or its parent work closes. The retained stop is neither
 a miss nor evidence about the recipient. Existing callbacks or an exact wait
 read observe this change; no timer is added. Already observed reply outcomes
 remain historical evidence when the task is stopped later.
+If canonical admission arrives later for an exact in-horizon reply whose event
+time precedes the known stop, reconciliation appends a positive observation,
+preserving the original censor in history. Cancellation and follow-up times
+are retained in the existing wait payload. Legacy stops with no known time
+remain censored. Pre-issuance replies do not hide later qualifying replies,
+and canonical settlement reconciles every receipt in a native ingress batch.
 
 ## Inspection and recovery
 

@@ -189,33 +189,43 @@ def observe_dispatch(waits, row, *, producer, receipt, created):
         shareability='owner_private', conditions=c)
 
 
-def _stop_pending(store, ledger, commitments, prediction, latest, owner, now):
-    """Retain an observed stop without interpreting it as a recipient failure.
-
-    Only unresolved forecasts reach this check. A later owner cancellation or
-    follow-up does not invalidate an already observed historical reply outcome.
-    """
+def _stop_facts(ledger, commitments, prediction, now):
+    """Freeze the earliest known stop, without guessing a legacy event time."""
     from colony_sidecar.commitments.store import OPEN_STATUSES
     c = prediction.detail['conditions']
+    retained = _metadata(ledger, _fid(c['wait_id'])+':stopped')
+    if retained:
+        return retained
     with closing(commitments._connect()) as db:
         row = db.execute('SELECT state,revision,payload FROM temporal_followups WHERE wait_id=?',
                          (c['wait_id'],)).fetchone()
     if row is None:
-        return True
+        return None  # _parent_current already rejects a missing wait.
     wait = json.loads(row['payload'])
     parent = commitments.get(c['commitment_id'])
-    if row['state'] == 'cancelled' or not parent or parent['status'] not in OPEN_STATUSES:
-        state, reason = 'cancelled', 'cancelled'
-    elif wait.get('followup_receipt_ref'):
-        state, reason = 'intervened', 'intervened'
-    elif row['state'] == 'expired' or wait['expires_at'] <= now:
-        state, reason = 'expired', 'unavailable'
-    else:
-        return False
-    facts = {'method':METHOD, 'kind':'wait_stopped', 'state':state, 'reason':reason,
+    stops = []
+    if not parent or parent['status'] not in OPEN_STATUSES:
+        stamp = ((parent or {}).get('metadata') or {}).get('resolution', {}).get('at')
+        stamp = stamp or (parent or {}).get('fulfilled_at')
+        stops.append(('cancelled', 'cancelled', datetime.fromisoformat(stamp).timestamp() if stamp else None))
+    if row['state'] == 'cancelled' and (not stops or wait.get('cancelled_at') is not None):
+        stops.append(('cancelled', 'cancelled', wait.get('cancelled_at')))
+    if wait.get('followup_receipt_ref'):
+        stops.append(('intervened', 'intervened', wait.get('followup_observed_at')))
+    if row['state'] == 'expired' or wait['expires_at'] <= now:
+        stops.append(('expired', 'unavailable', wait['expires_at']))
+    if not stops:
+        return None
+    state, reason, cutoff = min(stops, key=lambda s: s[2] if s[2] is not None else float('-inf'))
+    return {'method':METHOD, 'kind':'wait_stopped', 'state':state, 'reason':reason,
+             'stopped_at':cutoff,
              'wait_revision':row['revision'], 'observed_at':now,
              'resolution_ref':wait.get('resolution_ref'),
              'followup_receipt_ref':wait.get('followup_receipt_ref')}
+
+
+def _record_stop(store, ledger, prediction, latest, owner, facts, now):
+    c = prediction.detail['conditions']
     versions, facts = _retain(ledger, _fid(c['wait_id'])+':stopped', owner, facts, now,
                              c['parent_sources'], c['parent_session_id'])
     store.record_forecast_outcome(forecast_id=prediction.detail['forecast_id'],
@@ -224,7 +234,6 @@ def _stop_pending(store, ledger, commitments, prediction, latest, owner, now):
         subject_person_id=owner, viewer_scope=owner, shareability='owner_private',
         status='censored', value=None, reason=facts['reason'],
         previous_revision=latest['revision'] if latest else 0)
-    return True
 
 
 def reconcile(wait_id):
@@ -240,12 +249,12 @@ def reconcile(wait_id):
     if not evidence_current(prediction):
         return
     latest = history['outcomes'][-1] if history['outcomes'] else None
-    if latest and latest['status'] in {'observed', 'censored'}:
+    if latest and latest['status'] == 'observed':
         return
     c = prediction.detail['conditions']
     now = time.time()
-    if _stop_pending(store, ledger, commitments, prediction, latest, owner, now):
-        return
+    stop = _stop_facts(ledger, commitments, prediction, now)
+    recorded_receipts = {o['receipt_ref'] for o in history['outcomes']}
     with closing(comms.read_connection()) as db:
         ingress = TransportIngress(db)
         matches = comms.match_reply(contact_id=c['recipient_id'], outbound_ref=c['provider_external_ref'],
@@ -257,16 +266,21 @@ def reconcile(wait_id):
             if row is None:
                 continue
             observed = row['occurred_at']
+            # Canonical admission can lag the actual reply or an already
+            # recorded censor. Only a reply known to precede the stop can
+            # replace that censor. Legacy missing timestamps stay unscored.
+            if stop and (stop.get('stopped_at') is None or observed >= stop['stopped_at']
+                         or not prediction.created_at <= observed <= prediction.horizon):
+                continue
             state = ('retrospective_unscored' if observed < prediction.created_at else
                      'reply_observed_in_time' if observed <= prediction.horizon else 'deadline_elapsed_unobserved')
             facts = {'method':METHOD, 'kind':'reply', 'state':state, 'reply':item,
                      'reply_sources':json.loads(row['source_versions_json']), 'observed_at':observed}
             source = _fid(wait_id)+':reply:'+_digest(row['receipt_id'])
+            if 'receipt:'+source in recorded_receipts:
+                continue
             versions, facts = _retain(ledger, source, c['recipient_id'], facts, now,
                 facts['reply_sources'], json.loads(row['native_turn_json'])['session_id'])
-            if latest and latest['receipt_ref'] == next(iter(versions)):
-                facts = None
-                break
             store.record_forecast_outcome(forecast_id=_fid(wait_id), receipt_ref=next(iter(versions)),
                 evidence_refs=versions, source_versions=versions, source_kind='transport_receipt',
                 observed_at=facts['observed_at'], recorded_at=now, subject_person_id=owner,
@@ -275,10 +289,13 @@ def reconcile(wait_id):
                 value=True if state == 'reply_observed_in_time' else None,
                 reason='' if state == 'reply_observed_in_time' else 'unknown',
                 previous_revision=latest['revision'] if latest else 0)
-            if state in {'reply_observed_in_time','retrospective_unscored'}:
+            if state == 'reply_observed_in_time':
                 return
             latest = store.forecast_history(_fid(wait_id))['outcomes'][-1]
-            break
+        if stop:
+            if not latest or latest['status'] != 'censored':
+                _record_stop(store, ledger, prediction, latest, owner, stop, now)
+            return
         if now < prediction.horizon:
             return
         accounts = db.execute('SELECT * FROM transport_ingress_coverage WHERE producer=?',

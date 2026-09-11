@@ -159,7 +159,8 @@ def test_recent_sibling_burst_preserves_other_active_sources_before_history():
     assert result['truncated'] and not result['complete']
 
 
-def test_terminal_task_outcome_precedes_unrelated_expired_execution():
+@pytest.mark.parametrize('same_session', [False, True])
+def test_terminal_task_outcome_precedes_unrelated_expired_execution(same_session):
     stale = execution(2, age=500)
     stale['platform'] = 'background_review'
     view = {'items': [execution(1, session='observer'), stale], 'total': 2,
@@ -167,7 +168,7 @@ def test_terminal_task_outcome_precedes_unrelated_expired_execution():
             'recent': [{'native_task_id': 'finished-repair', 'status': 'done',
                         'liveness': 'native_terminal_record'}]}}
     original = copy.deepcopy(view)
-    result = request_work_context(view, session_id='observer', limit=2)
+    result = request_work_context(view, session_id=stale['session_id'] if same_session else 'observer', limit=2)
     projected = rows(result)
     assert any(row.get('native_task_id') == 'finished-repair' for row in projected)
     assert not any(row.get('execution_id') == stale['execution_id'] for row in projected)

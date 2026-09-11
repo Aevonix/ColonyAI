@@ -182,10 +182,12 @@ def settle_receipt(ingress, row):
         return
     refs = ledger.source_references([source_id], contact_id=row['contact_id'], session_id=native['session_id'])
     if refs:
-        ingress.complete(native_turn=native,
+        completed = ingress.complete(native_turn=native,
             source_versions={r['source_id']: r['source_version'] for r in refs}, outcome='captured')
         from colony_sidecar.self_model import reply_forecasts
-        reply_forecasts.safe(reply_forecasts.reconcile_existing, receipt=row)
+        for settled in completed:
+            reply_forecasts.safe(reply_forecasts.reconcile_existing,
+                                 receipt=ingress.get(settled['receipt_id']))
 
 
 def complete_source(body, result):
