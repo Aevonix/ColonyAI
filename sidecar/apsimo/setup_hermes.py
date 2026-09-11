@@ -58,6 +58,33 @@ def _json(value):
     return json.dumps(value, indent=2, ensure_ascii=False) + '\n'
 
 
+def _owner_handles(args, ask, noninteractive):
+    """Local enrollment binds exact accounts; it does not configure channels."""
+    from .contacts.identity_links import normalized_handle
+    supplied = getattr(args, 'owner_handle', None)
+    values = list(supplied or [])
+    if not supplied and not noninteractive:
+        print('Optionally identify your own messaging accounts using Hermes sender IDs, not display names or group IDs.')
+        print('For example: telegram=123456789. Hermes continues to configure and authenticate each channel.')
+        while value := ask('Your account CHANNEL=SENDER_ID (blank to finish)'):
+            values.append(value)
+    handles, platforms = [], set()
+    for value in values:
+        platform, separator, address = value.partition('=')
+        platform, address = platform.strip().lower(), address.strip()
+        if (not separator or not re.fullmatch(r'[a-z0-9][a-z0-9_.-]{0,63}', platform)
+                or platform in {'cli', 'internal', 'system', 'background_review', 'colony_task'}
+                or any(ord(char) < 32 or ord(char) == 127 for char in address)):
+            raise ValueError('--owner-handle requires CHANNEL=SENDER_ID for your authenticated messaging account')
+        gateway, address = normalized_handle(platform, address)
+        if not address or address == '+':
+            raise ValueError('--owner-handle requires a nonempty sender ID')
+        if (gateway, address) not in handles:
+            handles.append((gateway, address))
+        platforms.add(platform)
+    return handles, sorted(platforms)
+
+
 def _receipt_preference(config, choice):
     """Project one native shared key, respecting Hermes' existing YAML layouts.
 
@@ -563,7 +590,7 @@ def run(root_dir=None, args=None):
             if root_dir or any(getattr(args, name, None) for name in (
                     'start', 'refresh_adapter', 'replace_memory_provider', 'local_work',
                     'native_goals', 'native_reviews', 'model_url', 'model', 'adapter_wheel', 'agent_name',
-                    'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'encrypt',
+                    'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'owner_handle', 'encrypt',
                     'passphrase', 'claim_genesis', 'mcp_harnesses', 'no_harness')) or (
                     getattr(args, 'host_framework', None) not in (None, 'hermes')):
                 raise ValueError('--preferences-only cannot be combined with instance or setup options')
@@ -593,6 +620,8 @@ def run(root_dir=None, args=None):
         if any((home/name).exists() for name in ('colony-memory.json', 'apsimo-memory.json')):
             raise ValueError('Existing native Apsimo settings need an explicit migration; select a new home')
         if (state/'instance.json').exists():
+            if getattr(args, 'owner_handle', None):
+                raise ValueError('--owner-handle is for a new private instance; existing owner bindings are retained')
             manifest = json.loads((state/'instance.json').read_text())
             if manifest.get('hermes_home') != str(home):
                 raise ValueError('This instance belongs to another Hermes home')
@@ -652,6 +681,7 @@ def run(root_dir=None, args=None):
         _preflight_outbox(home, resources)
         binding = _adapter_binding(python, resources)
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
+        owner_handles, owner_platforms = _owner_handles(args, ask, noninteractive)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
         agent_preferences = _agent_preferences(ask, args, config)
         endpoint = _endpoint(ask('Local model API root', getattr(args, 'model_url', None), True))
@@ -726,7 +756,11 @@ def run(root_dir=None, args=None):
                 store = SQLiteContactStore(ContactsConfig(sqlite_path=str(staged/'contacts.db')))
                 await store.connect()
                 try:
-                    return await setup.build_owner_contact(store, owner_name)
+                    contact_id = await setup.build_owner_contact(store, owner_name)
+                    for index, (gateway, address) in enumerate(owner_handles):
+                        await store.add_handle(contact_id, gateway, address,
+                            is_primary=index == 0, source='wizard', verified=True)
+                    return contact_id
                 finally:
                     await store.close()
             owner_id = asyncio.run(owner())
@@ -750,9 +784,11 @@ def run(root_dir=None, args=None):
             values = {('APSIMO_'+key[7:] if key.startswith('COLONY_') else key):value for key,value in values.items()}
             _private_write(staged/'.env', _native_environment(None, values))
             principal = {'principal': 'hermes-local', 'status': 'active', 'viewer_person_id': owner_id,
-                'audiences': ['viewer'], 'allow_unscoped_api': False, 'turn_ingress_platforms': ['cli'],
+                'audiences': ['viewer'], 'allow_unscoped_api': False, 'turn_ingress_platforms': ['cli', *owner_platforms],
                 'scopes': ['context:read', 'memory:read', 'memory:search', 'memory:write', 'turns:write'],
                 'credentials': [{'id': 'initial', 'secret': key, 'status': 'active'}]}
+            if owner_handles:
+                principal['scopes'].append('turns:resolve-sender')
             _private_write(staged/'api-keyring.json', _json({'version': 1, 'principals': [principal]}))
             model_configuration = {'provider': 'local', 'baseUrl': endpoint,
                 'apiKey': model_key, 'localHosts': local_hosts,
@@ -857,6 +893,8 @@ def run(root_dir=None, args=None):
         print(f'Private agent configured in {home}; state in {state}.')
         print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
         print('Canonical memory capture and recollection are enabled for new Hermes sessions.')
+        if owner_handles:
+            print('Owner accounts enrolled for: ' + ', '.join(owner_platforms) + '. Channel configuration and delivery still belong to Hermes.')
         print('Hermes hook output spill allowance is at least 65536 characters or already disabled; retrieval budgets are unchanged.')
         print('Source memory, temporal claims, contacts, commitments and self state persist without a graph.')
         print('Graph/vector recall and consequential background work are optional and currently disabled.')
