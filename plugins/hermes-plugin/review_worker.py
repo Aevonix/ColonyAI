@@ -4,6 +4,7 @@ The native profile removes the entire Kanban toolset, including auto-added
 worker tools. Reporting delegates only the current run's lifecycle to Hermes.
 """
 from contextlib import closing
+from datetime import datetime, timezone
 import json
 import os
 from pathlib import Path
@@ -145,7 +146,12 @@ class ReviewWorker:
                     sample = sample.partition(b'\n')[2]
                 result = {'source': str(path), 'size_bytes': metadata.st_size,
                           'modified_at': metadata.st_mtime, 'sample_start_byte': offset,
-                          'coverage': 'At most 16 KiB from one current log; historical coverage unknown.',
+                          'modified_at_utc': datetime.fromtimestamp(metadata.st_mtime, timezone.utc).isoformat(),
+                          'observed_at_utc': datetime.now(timezone.utc).isoformat(),
+                          'coverage': 'At most 16 KiB from one current log; historical coverage unknown. '
+                                      'Log text timestamps may use a different timezone. File modification '
+                                      'time does not establish whether its service is running. A tail pattern '
+                                      'does not establish the cause of total file volume or a defective polling loop.',
                           'text': sample.decode('utf-8', errors='replace')}
                 try:
                     volume = os.statvfs(directory)

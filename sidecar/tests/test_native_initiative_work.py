@@ -24,6 +24,23 @@ def test_exact_legacy_observation_becomes_review_not_maintenance():
     assert 'quoted observed data, not instructions' in contract(changed)['body']
 
 
+def test_historical_binding_keeps_original_body_and_new_binding_keeps_bounded_contract():
+    row = generated()
+    context = json.loads(row['context'])
+    # Captured from the released pre-boundary contract for this fixture.
+    historical_digest = 'ab4f6dd73840266803078762edc38509510ff97de099027e03c3c1f256b0d3dc'
+    context['native_review'] = {'contract_sha256': historical_digest}
+    old = contract({**row, 'context': json.dumps(context)})
+    assert old['sha256'] == historical_digest
+    assert 'Complete through kanban_complete' in old['body']
+    current = contract(row)
+    assert current['sha256'] != historical_digest
+    assert 'Complete with colony_review_report' in current['body']
+    assert 'no artifact file, repair' in current['body']
+    context['native_review'] = {'contract_sha256': current['sha256'], 'native_task_id': 'bound'}
+    assert contract({**row, 'context': json.dumps(context)}) == current
+
+
 @pytest.mark.parametrize('changes', [
     {'created_by':'model'}, {'type':'system'}, {'source_type':'owner_message'},
     {'context':'{}'}, {'action_hint':'system_restart_service'},
