@@ -516,6 +516,9 @@ class RequestMemory:
         return list(refs.values())
 
     def __call__(self, request, scope, *, operational=None):
+        from .input_provenance import current as supplied_current, withheld_request
+        supplied_input = supplied_current()
+        updates = supplied_input.request_updates(scope, request) if supplied_input else []
         contact = scope.contact_id if scope is not None and scope.valid_participant else ''
         with self._lock:
             observed_key = (contact, scope.task_id, scope.turn_id) if scope else None
@@ -539,6 +542,9 @@ class RequestMemory:
                     source_refs[(ref['source_id'], ref['source_version'])] = ref
             if host_input:
                 for ref in host_input['sources']:
+                    source_refs[(ref['source_id'], ref['source_version'])] = ref
+            for entry in updates:
+                for ref in entry['update'].source_refs:
                     source_refs[(ref['source_id'], ref['source_version'])] = ref
             for row in _read_rows(request):
                 receipt = _read_receipt(row, read_receipts)
@@ -673,6 +679,12 @@ class RequestMemory:
             fresh = False
             repair = None
         filtered = _recombine_current_suffix(filtered, repair)
+        if supplied_input is not None and updates:
+            if not supplied_input.check_updates(scope, updates, fresh=fresh and observed, rules=rules):
+                return {'request': withheld_request(filtered, failure=supplied_input.failure),
+                    'source': 'colony', 'freshness_retryable': False,
+                    'reason': 'source_update_unavailable'}
+            supplied_input.admit_updates(scope, filtered, updates)
         if operational and not (fresh and observed and operational['contact_id'] == contact
                                 and operational['watermark'] == watermark):
             from .request_work import replace_context

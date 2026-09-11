@@ -64,13 +64,19 @@ class NativeMemoryRequests:
             with self._lock:
                 checked = digest in seen
                 seen.pop(digest, None)
-            if checked:
-                return request
+            from .input_provenance import current, withheld_request
+            supplied = current()
             # Use Relay's raw execution contract: its annotated request codec
             # cannot preserve unknown provider fields while deleting and
             # rewriting several unkeyed history rows. The next provider
             # callback accepts this complete filtered raw request directly.
-            filtered = self.memory(request.content, scope)['request']
+            # A newly registered update can arrive after normal middleware
+            # ran. Reuse that check only when no update depends on this body.
+            updates = supplied.request_updates(scope, request.content) if supplied else []
+            filtered = (request.content if checked and not updates
+                        else self.memory(request.content, scope)['request'])
+            if supplied is not None and not supplied.observe_updates(scope, filtered, stage='native_request_visible'):
+                filtered = withheld_request(filtered, failure=supplied.failure)
             return relay.LLMRequest(request.headers, filtered)
 
         async def execute(_name, request, next_call):

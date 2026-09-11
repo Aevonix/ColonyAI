@@ -2667,6 +2667,10 @@ def register(ctx: Any) -> None:
             result['request'] = input_provenance.withheld_request(result['request'],
                 failure=input_provenance.current().failure)
             result['reason'] = 'source_input_unavailable'
+        supplied = input_provenance.current()
+        if supplied is not None and not supplied.observe_updates(scope, result['request'], stage='middleware_visible'):
+            result['request'] = input_provenance.withheld_request(result['request'], failure=supplied.failure)
+            result['reason'] = 'source_update_receipt_unavailable'
         result['request'] = describe(result['request'])
         native_memory.checked(result['request'], scope)
         return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
