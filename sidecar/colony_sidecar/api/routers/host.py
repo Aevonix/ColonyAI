@@ -2291,8 +2291,8 @@ async def _build_temporal_section(
     t_lines.append(
         "^ This is the authoritative CURRENT date/time — this is NOW. Ignore any "
         "'Conversation started' date in your system prompt; that is only when this "
-        "long-running session began (often days ago), NOT today. Greet and compute "
-        "elapsed/upcoming relative to the time above."
+        "long-running session began (often days ago), NOT today. Use the time above "
+        "for elapsed/upcoming calculations when relevant to the request."
     )
     return ContextSection(
         id="temporal-context",

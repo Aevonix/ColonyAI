@@ -42,8 +42,8 @@ def register(ctx):
             if line:
                 return {
                     "context": (
-                        f"\u23f0 CURRENT DATE & TIME, right now: {line}. This is TODAY "
-                        "\u2014 greet and reason from THIS. Any 'Conversation started' "
+                        f"\u23f0 CURRENT DATE & TIME, right now: {line}. This is TODAY. Use this clock "
+                        "when time is relevant to the request. Any 'Conversation started' "
                         "date in your prompt is only when this long-running session "
                         "began (often days ago), NOT today."
                     )
