@@ -11,6 +11,9 @@ backups or raw files. Untracked historical material has no invented source links
 
 Native repeat-read warnings retain the authenticated history receipt; altered
 or unrecognized source wrappers are withheld without gaining provenance.
+On earlier Hermes versions, authorized steering instructions survive when
+appended to a withheld source read. The source body stays withheld and may need
+to be read again; unrelated appended text gains no authority.
 
 Attachment accepts Hermes 0.21.2 while retaining the earlier supported versions.
 Native merged user inputs retain their current source attribution and historical

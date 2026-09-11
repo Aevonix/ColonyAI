@@ -1,66 +1,175 @@
-# Apsimo
-
-Persistent memory and shared work for a personal agent, using your own models.
+# Apsimo PsuedoAGI Engine
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml)
 
-Apsimo runs beside [Hermes](https://github.com/NousResearch/hermes-agent).
-Hermes handles conversations, tools, scheduling and delegation. Apsimo retains
-source evidence, recalls relevant information before a turn, and shares work
-across sessions. Your private instance supplies its identity, credentials,
-channels, model endpoints and optional hardware adapters.
+Apsimo adds persistent memory, shared work and evolving agent state to
+[Hermes](https://github.com/NousResearch/hermes-agent). It connects conversations
+and background tasks to the same private records, so an agent can carry knowledge
+and commitments between sessions while its models change.
 
-- **Memory:** attributed source records, correction history, deliberate forgetting
-  and optional semantic retrieval. Retained images, audio and PDF pages keep
-  references to their originals. Capture and supported media readers depend on
-  the integration. [Memory](docs/MEMORY-QUALITY.md),
-  [audio](docs/SOURCE-AUDIO.md), [documents](docs/SOURCE-DOCUMENTS.md),
-  [selected video](docs/SOURCE-VIDEOS.md) with an optional decoder.
-- **Shared work:** native tasks, children, crons and enrolled external work appear
-  in one scoped view, refreshed at model-request boundaries. Source coverage and
-  missing observations stay explicit. Accepted drafts retain their identity
-  through delayed acknowledgments. Completed artifact prose opens on demand;
-  its status, limitations and report receipt remain in automatic context.
-  Optional [conversation task controls](docs/NATIVE-TASK-CHANNELS.md) let the
-  same owner start, inspect, steer and stop work from different channels while
-  continuing the foreground conversation.
-- **A private instance:** source-backed preferences, inspectable attention and
-  revisable relationship appraisals can guide relevant behavior. Relationship
-  state and action permissions are separate. Automatic persistent opinions are
-  experimental and disabled by default.
-- **Your processors:** named function roles and optional per-task overrides select
-  configured local endpoints, capabilities, deadlines and fallback candidates.
-  In-flight calls retain their selected configuration.
-- **Native development:** optional evaluated skill updates use Hermes work and
-  existing deployment authorization. A rejected candidate remains a recorded
-  learning attempt; it does not count as an improvement.
+Hermes provides the conversations, tools and execution runtime. Apsimo supplies
+relevant memories, a view of work in progress, and the state used for preferences,
+relationships and initiative. Each deployment defines its own agent identity,
+model endpoints, channels and optional devices.
 
-The lightweight profile starts with memory and observation. Extended autonomy,
-public channels, voice and hardware need deployment integration and behavioral
-checks. Current limitations include unsupported model claims and incomplete
-ordinary-use evidence for useful autonomous learning. The
-[changelog](CHANGELOG.md) records implementation changes and qualification limits.
+Formerly ColonyAI. Existing installations should follow the
+[migration guide](docs/APSIMO-MIGRATION.md); historical names and state paths remain valid.
 
-Existing deployments: read the [Apsimo migration guide](docs/APSIMO-MIGRATION.md)
-before changing the selected environment. Old state paths and historical names
-remain valid.
+## Mission: what we mean by pseudo-AGI
+
+Our goal is a persistent agent that learns from experience, carries work across
+conversations, develops evidence-based judgments, and acts within its owner's
+authority. The owner should be able to inspect what it knows, correct it, ask
+what it is doing, and see whether an attempted improvement actually helped.
+
+We use **pseudo-AGI** for that combination of observable behaviors:
+
+- **Persistence:** knowledge, identity and unfinished work survive a session,
+  process restart or model change.
+- **One mind:** conversations, workers and scheduled tasks share commitments
+  and relevant context. The owner can keep talking while work continues.
+- **Evolving memory:** ordinary use produces useful retained evidence;
+  recollection brings relevant information into later decisions. Corrections,
+  contradictions and forgetting have explicit consequences.
+- **Selfhood and relationships:** identity, values, preferences and working
+  opinions are inspectable state that can influence behavior and be corrected.
+- **Autonomy:** the agent can notice something worth doing, judge whether it is
+  authorized, act or propose work, and follow through without repeated prompting.
+- **Measured improvement:** a change earns adoption by improving a real task
+  without hiding regressions.
+
+The term describes our engineering target. Consciousness is outside these
+acceptance criteria. Model capability still limits reasoning and behavior;
+shared state cannot make every processor equally capable.
+
+## Where we are today
+
+**Phase 1 is in development and behavioral validation.** Installable packages,
+native Hermes integration and substantial parts of the system are available.
+The complete unified-agent goal remains unfinished.
+
+The supported core includes [source memory](docs/MEMORY-QUALITY.md), automatic
+recollection, [shared task controls](docs/NATIVE-TASK-CHANNELS.md),
+[contact identity and preferences](docs/SOCIAL-STATE.md), named model routing,
+and guided private setup. Readers retain links to original images, audio,
+documents and selected video. Native skill proposal, evaluation and rollback
+mechanisms are also available.
+
+These mechanisms have stronger evidence than the complete autonomous behavior.
+Recollection and task continuity have passed bounded trials, while ordinary-use
+quality, responsiveness and unattended operation need further validation.
+Unsupported model claims remain a measured weakness. Complete forgetting across
+old transcripts, unlinked copies and backups remains open.
+
+Automatic persistent opinions are experimental and disabled by default.
+Relationship state does not grant permissions. A selected skill evaluator does
+not establish general self-improvement.
+
+The roadmap below identifies the remaining outcomes. The [changelog](CHANGELOG.md)
+records implementation changes, and [known gaps](docs/KNOWN-GAPS.md) covers partial
+and retired components. Availability depends on the selected profile, model and
+deployment adapters.
+
+## How Apsimo connects to Hermes
+
+```mermaid
+flowchart LR
+    Channels[Conversations and device adapters] <--> Hermes[Hermes runtime]
+    Hermes <-->|Plugins, memory provider, request hooks| Apsimo[Apsimo service]
+    Hermes --> Models[Configured model roles]
+    Apsimo --> Models
+    Apsimo <--> State[Private memory, identity and shared work]
+```
+
+Hermes owns channel transport, tool execution, native scheduling and workers.
+Apsimo connects through its plugin and memory-provider contracts, with an HTTP
+API for authenticated deployment adapters. It observes native work instead of
+adding a second task scheduler.
+
+**Ordinary turns recall context before generation.** The memory provider selects
+context for the current participant and question. During a longer tool loop, source freshness
+checks and the [current-work view](docs/REQUEST-WORK-CONTEXT.md) run at model-request
+boundaries. Full recollection remains once per turn. This keeps a continuing task
+aware of relevant changes without replaying all stored memories into every request.
+
+**Canonical evidence is separate from search indexes.** SQLite supports the
+minimum deployment. Optional Lance indexes provide semantic retrieval; their
+embedding generations are replaceable. Existing extended deployments can retain
+legacy Neo4j records, which are not yet fully reconstructible from canonical
+sources. Adding a database does not resolve poor memory admission or retrieval.
+
+**Models are replaceable processors.** [Named function roles](docs/FUNCTION-ROUTING.md)
+select configured endpoints and fallbacks. Later requests can use updated
+bindings while in-flight work retains its selection. Automatic fleet enrollment,
+capacity scheduling and empirical model selection remain roadmap work. Local
+inference is supported without a cloud-model dependency for normal operation.
+
+**Each agent remains private.** Identity, credentials, relationship data, model
+addresses and device configuration belong outside the public repository. Voice,
+cameras, phones, panels and other hardware connect through deployment adapters.
+The public system does not assume a particular household or hardware fleet.
+
+The [architecture guide](docs/ARCHITECTURE.md) describes state ownership and
+extension boundaries. Reuse the host's facilities before adding a subsystem.
+
+## Progress roadmap
+
+### Phase 1: demonstrate a useful unified agent
+
+This phase completes and validates the current system. Its milestones close on
+observed outcomes, rather than component counts or test totals.
+
+| Milestone | Current position | Acceptance outcome |
+| --- | --- | --- |
+| Useful persistent memory | Implemented; quality validation continues | A correction given through one channel is applied in another after a model swap, with the right source and uncertainty. Low-value material does not crowd it out. |
+| Correction and forgetting | Source lifecycle implemented; complete erasure unfinished | Contradictions remain inspectable. Supported memory and history tools cannot resurface forgotten material. Derived copies are removed, and backup handling and unsupported copies are accounted for. |
+| Conversation during work | Implemented; cross-channel acceptance continues | The owner talks, inspects progress, changes direction or cancels from another enrolled channel while the same task retains its identity and constraints. |
+| Self, contacts and relationships | State and correction paths implemented; usefulness under evaluation | A supported change in preference or working opinion produces an explainable behavioral change. Uncertain identity matches stay unresolved until supported. |
+| Multimodal recollection | Supported readers implemented; coverage incomplete | Useful information from text, images, audio, documents and selected video is recalled with traceable originals and accurately stated limits. |
+| Initiative and follow-up | Execution and observation paths implemented; outcome quality incomplete | A relevant opportunity or overdue commitment produces one useful authorized action or proposal, with delivery and outcome observed. |
+| Model-role qualification | [Evaluation suite available](docs/MODEL-QUALIFICATION.md); coverage expanding | Compare candidate models on the actual consumers they will serve, including quality, latency, failure behavior and memory use. Preserve unsuccessful attempts. |
+| Useful self-improvement | Proposal/evaluation/rollback paths implemented; end-to-end benefit unproven | The agent diagnoses a recurring failure, authors a change, improves an independently evaluated task and detects a measured regression. Consequential activation uses owner authorization. |
+| Installation and unattended operation | Setup and recovery mechanisms implemented; wider acceptance incomplete | A new private installation completes the supported behaviors, survives representative service failures and upgrades, and retains current memory, tasks and permissions through recovery. |
+
+Phase 1 is complete when these outcomes hold on the selected production runtime
+and configuration, including ordinary use and recovery. A controlled model
+response proves an integration contract; an observed real task establishes its
+value. Physical device coverage is recorded per deployment.
+
+When a behavior works and its meaningful failure cases are covered, move on.
+Prefer a small repair to another review service, approval layer or parallel
+implementation of something Hermes already provides.
+
+### Phase 2: recursive improvement of the agent system
+
+Phase 2 begins after Phase 1 is validated. The next learning loop is:
+
+1. Detect a recurring failure or opportunity from retained outcomes.
+2. Form a hypothesis and propose a bounded change to a skill, playbook, prompt,
+   retrieval strategy or non-core code.
+3. Compare it with the current behavior on independent task cases.
+4. Adopt an authorized improvement, observe its real effect and roll back a regression.
+5. Retain what the experiment established so the next attempt starts with better evidence.
+
+The first target is learning through memory, strategies and evaluated system
+changes. Model fine-tuning is optional future work. Claims of recursive
+improvement require evidence that successive learning cycles themselves become
+more effective. A self-written patch or a successful self-review is insufficient.
 
 ## Start with Hermes
 
-The current qualification target is Hermes 0.21.2; 0.21.0 and 0.21.1 attachment remain supported.
-Optional [concurrent background tasks](docs/NATIVE-TASK-CHANNELS.md) require the
-callback correction in the [pinned Hermes compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
-The daily upstream check remains separate, and setup does not patch your runtime.
-Native final-summary memory filtering requires NeMo Relay 0.8.3, included in
-the `native-memory` extra below. Older attachments retain ordinary request filtering.
-Use the selected Hermes runtime's Python interpreter for attachment;
-Python 3.12 is exercised by native integration CI. One local OpenAI-compatible
-chat endpoint is sufficient. The lightweight profile needs no Docker, Neo4j,
-embedding model or external account.
+Use Python 3.12, an existing supported Hermes deployment and one local
+OpenAI-compatible chat endpoint. The lightweight profile needs no Docker,
+Neo4j, embedding model or external account.
 
-Install the matching release packages in a private environment. An Apsimo
-checkout is not required:
+The current qualification target is Hermes 0.21.2; 0.21.0 and 0.21.1 attachment
+remain supported. Optional concurrent tasks and current detached-review
+integration use the [documented compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
+Setup does not patch Hermes core or restart an existing gateway. The daily
+upstream compatibility check is separate from the pinned release checks.
+
+Install matching packages in a private environment:
 
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
@@ -69,228 +178,44 @@ python -m pip install "apsimo[hermes]==1.3.3" "apsimo-hermes[native-memory]==1.3
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
-The wizard lists existing Hermes profiles, selects one home, asks for your name, optional owner messaging accounts, agent name, model, values, timezone and quiet hours, and
-creates private state outside Git. It preserves existing identity, channels and
-model settings. Replacing an incumbent memory provider is an explicit choice.
-It attaches the canonical installed adapter when its bytes match, or installs
-profile directory adapters when no native package is present. It neither
-patches Hermes core nor restarts an existing gateway.
+The wizard selects a Hermes profile and creates private state outside Git. It
+asks for the agent identity, owner details, model and operating preferences,
+while preserving existing identity, channels and model settings. Replacing an
+existing memory provider is an explicit choice.
 
-Choose a private `--hermes-home` outside Git checkouts. The
-[setup guide](docs/LOCAL-HERMES-SETUP.md) covers existing profiles, directory
-permissions, user services, upgrades and development from a checkout.
-Run `apsimo init --help` for unattended setup and optional task features.
-
-Accept the wizard's startup option, or run:
+Accept the startup option or run:
 
 ```bash
 apsimo --instance /path/to/private/apsimo start --detach
 apsimo --instance /path/to/private/apsimo status
 ```
 
-Start a new Hermes session, give it a harmless fact, then ask for that fact in a
-second session. The [setup guide](docs/LOCAL-HERMES-SETUP.md) explains existing
-profiles, unattended flags, startup and recovery. The minimum profile remembers
-and observes. Consequential background execution requires deliberate setup.
-The wizard can also enable [accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md):
-ask for a summary or comparison of selected local text files, and the native
-Hermes Kanban worker completes it in the background with a retained cited report.
-This requires a local model with function calling and a running Hermes gateway.
-For general persistent tasks, opt in separately with `apsimo init --native-goals`
-for the selected home. This enables native Kanban tools on the existing profile
-and observes its selected boards. The wizard does not start the Hermes gateway.
-Native task tools and consequential-action consent remain governed by that
-profile; see the [setup guide](docs/LOCAL-HERMES-SETUP.md#persistent-native-tasks).
-For login startup and automatic process recovery, stop a detached instance and
-run `apsimo --instance /path/to/private/apsimo service install`, then
-`apsimo --instance /path/to/private/apsimo service start`. Linux systemd user
-services and macOS LaunchAgents use the selected environment and private state.
-This follows the user session's lifetime, not a guarantee of operation before
-login. See the setup guide for status, stop, uninstall and recovery.
+Start a fresh Hermes session, provide a harmless fact and ask for it in another
+session. Confirm the source and answer. The minimum profile remembers and
+observes; background execution and external effects need deliberate configuration.
+Consequential actions require owner authorization. Work and its results should
+survive a missed notification.
 
-When upgrading an existing attachment, update the matching Apsimo packages,
-then run `apsimo init --refresh-adapter` for the selected Hermes home while its
-runtimes are stopped. This refreshes a copied adapter that a package upgrade
-alone would leave behind. It preserves private identity and state and retains
-the previous adapter for recovery. Follow the
-[upgrade procedure](docs/LOCAL-HERMES-SETUP.md#update-an-existing-attachment)
-for native package installations and service bindings.
+The [setup guide](docs/LOCAL-HERMES-SETUP.md) covers services, native tasks,
+[accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md), existing profiles and recovery.
+For upgrades, follow the
+[adapter refresh procedure](docs/LOCAL-HERMES-SETUP.md#update-an-existing-attachment).
+A package upgrade alone does not replace an adapter copied into a profile.
 
-## What the active paths provide
+## Further reading
 
-- **Contacts and working views.** Exact channel handles identify contacts;
-  uncertain matches stay proposals. Owner corrections preserve attribution history.
-  Source-backed preferences, temporary appraisals and narrow opinions supply
-  relevant context without changing permissions. Numeric closeness and inferred
-  Big Five scores no longer govern the active path. [Social state](docs/SOCIAL-STATE.md)
-  Ordinary turns also omit the legacy numeric mood estimator. Existing affect
-  history remains explicitly readable, but those guesses no longer enter recall.
-- **Task anticipation.** Expected replies share the original commitment and begin
-  timing only after a real transport receipt. Native review tasks use the existing
-  Hermes scheduler. Prepared follow-ups require deployment-owned authority and a
-  qualified delivery path. Prospective task forecasts learn from measured outcomes.
-  [Forecasts and waiting](docs/TEMPORAL-FORECASTS.md)
-  [Declared reply forecasts](docs/EXPECTED-REPLY-FORECASTS.md) observe exact
-  durable replies against a registered horizon. Their initial probability is an
-  uncalibrated baseline; they do not choose or send follow-ups.
-- **Automatic recollection.** The native memory provider requests context for
-  the current participant, session and question before inference. A durable
-  outbox captures ordinary turns; retry does not create another source.
-  Older automatically injected packets are removed when the next turn receives
-  fresh context, including withdrawn relationship guidance. Direct conversation
-  remains in the session history.
-- **Scoped source recall.** Authenticated participants can recall their own
-  canonical evidence without the legacy graph runtime. Optional semantic
-  projections find retained passages and image descriptions, then resolve them
-  back to current sources before selection. [Source retrieval](docs/SOURCE-SEMANTIC-RECALL.md)
-- **Evidence that outlives a model.** Original messages, timestamps, provenance
-  and derived claims persist independently of inference weights. Corrections
-  and conflicting claims remain inspectable. Recollection distinguishes requested
-  time windows from timestamps inside pasted evidence. [Source claims](docs/SOURCE-CLAIMS.md)
-- **Corrections that stay with recall.** An attested owner or system turn can
-  use `colony_memory_annotate` on an exact source revision supplied to that turn.
-  Recollection keeps the original and its attributed corrections together;
-  corrections remain evidence, with their author and uncertainty visible.
-  [Source annotations](docs/SOURCE-ANNOTATIONS.md)
-- **Forgetting derived answers.** New native turns retain the canonical source
-  revisions supplied to generation. Forgetting a selected source also removes
-  linked assistant answers, while preserving independent user evidence. This
-  does not discover old unlinked copies or erase native transcripts and backups.
-  [Source lifecycle](docs/HERMES-ADAPTER.md)
-- **Selective factual learning.** One extractor proposes useful, quoted
-  assertions, followed by one batched review through the existing judging role.
-  Both judgments remain fallible; a rejected proposal leaves its source
-  searchable. Capture adds neither duplicate graph
-  summaries nor automatic contact-knowledge guesses. Malformed extraction output
-  retries from retained source instead of silently completing without claims.
-  [Memory quality](docs/MEMORY-QUALITY.md)
-- **Images with origins.** Retained image bytes and model-generated descriptions
-  stay distinct. Recollection can include the description and a scoped reference
-  to its source. This does not imply reliable understanding of every image.
-  [Image memory](docs/SOURCE-IMAGES.md)
-- **Shared work.** Sessions can observe commitments and claim work through one
-  persistent registry. Another session sees who holds it. A lease coordinates
-  work; it cannot by itself make an external side effect exactly once.
-  A rejected or uncertain claim holds ordinary tools in that turn until explicit
-  detachment; it cannot release another session's undertaking.
-  Local draft acceptances against one open commitment share an active task and
-  its retained result. An explicit fresh draft can follow completed work.
-  [Commitment work](docs/COMMITMENT-WORK.md)
-  During a long owner turn, a bounded operational view refreshes before each
-  model request so concurrent completion does not wait for another user message.
-  Full memory recollection remains once per turn.
-  [Current work within a turn](docs/REQUEST-WORK-CONTEXT.md)
-  Selected native Kanban boards contribute general tasks, attempts, goal budgets
-  and recent terminal records to that view. Hermes owns their execution and
-  continuation. Internal worker instructions stay in native work history instead
-  of becoming owner-source memories.
-  Selected generated internal reviews can use that same native dispatcher.
-  Their task association survives repeated review cycles, and shared views
-  distinguish completed reports, exhausted failures and needs-input blocks.
-  Known unchanged backup and service review conditions wait the existing interval
-  after completion. Changed observed evidence can trigger an earlier review;
-  timestamps and rewritten proposal text alone do not count as changed conditions.
-  Initiative listings accept one `status` filter, such as `pending` or
-  `assigned`, so active work can be selected independently of terminal records
-  filling an unfiltered page. Omitted or empty status leaves the list unfiltered.
-  Existing profile tools and authority still apply; read-only review admission
-  does not create a sandbox.
-  Attested completion summaries can also become retained assistant evidence for
-  later recall, with supplied source dependencies and erasure. They remain
-  unverified machine reports, not owner facts or proof of an external effect.
-- **Measured model consumers.** Opt-in `apsimo models inspect`, `evaluate` and
-  `compare` record bounded results without changing deployed bindings. Direct
-  completion and actual memory-consumer cases stay separate, with failed and
-  interrupted attempts retained. [Model qualification](docs/MODEL-QUALIFICATION.md)
-- **Replaceable search indexes.** Optional Lance indexes record embedding
-  identity and rebuild into a separate generation. Interrupted rebuilds resume;
-  incompatible or unknown vectors are not compared. Canonical evidence remains
-  available through lexical recall. [Embedding generations](docs/EMBEDDING-GENERATIONS.md)
-- **Source-linked forgetting.** Erasure fences source evidence immediately and
-  removes linked fact, graph and vector projections. Cleanup status is explicit.
-  Unlinked historical records, host transcripts and backups require additional
-  reconciliation. [Derived fact lineage](docs/TOM-SOURCE-LINEAGE.md)
-- **Inspectable priorities.** Source-backed owner corrections can change
-  optional research ordering. The dated attention snapshot records the
-  corrections and applied weights. Historical runtime outcomes remain
-  inspectable without establishing task quality or current-model competence.
-  [Working perspective](docs/WORKING-PERSPECTIVE.md)
-  When several standing directives quote the same owner message, context
-  includes that exact quotation once per polarity. Each stored directive
-  continues to participate in action checks.
-- **Durable communication preferences.** Supported explicit corrections such
-  as "I prefer brief replies" enter dedicated context each turn. Their source,
-  later correction and erasure persist across model changes. Task-specific
-  artifact requests remain ordinary evidence; this parser covers a limited
-  vocabulary rather than every natural-language preference.
-- **Revisable working views.** Attributed owner turns can support fallible agent
-  judgments with evidence and history. Newly bound internal reviews can also
-  contribute runtime-recorded failures and timing, separately from unverified
-  assistant reports. Reflection can abstain; this wiring does not establish a
-  learning gain. Owners can inspect, withdraw or request
-  reconsideration through the native tool. These views do not establish truth
-  or change authority; model grounding remains imperfect.
-  [Working judgments and observed limits](docs/SELF-JUDGMENTS.md)
-- **Evaluated skill updates.** Native Hermes review can stage a proposal for an
-  existing skill. An explicitly selected task evaluator compares the current
-  skill and candidate, verifies activation and uses native rollback for a
-  measured regression. Deployments supply their own task cases and activation
-  policy. [Native skill review](docs/HERMES-ADAPTER.md#measured-skill-updates)
-- **Source recovery.** Backups capture consistent individual SQLite databases
-  and the original images owned by their source ledger. Restore verifies the
-  captured images and restores SQLite through its backup API. Coverage and
-  cross-store limits are explicit. [Memory recovery](docs/SOURCE-MEMORY-RECOVERY.md)
-
-## Architecture and extension
-
-Models are interchangeable processors over shared canonical evidence,
-commitments and working views. Hermes owns native task scheduling and execution;
-Apsimo observes those tasks and supplies context through its existing adapter.
-One sidecar owns canonical state and a bounded context selector. SQLite supports
-the minimum deployment. Neo4j remains the extended deployment's legacy memory
-store; Lance is a replaceable search projection. Legacy graph records are not
-yet fully reconstructible from canonical sources. There is no database service
-per cognitive feature.
-
-The Hermes adapter uses native plugin and memory-provider contracts. Other hosts
-can use the HTTP API, with participant identity supplied by an authenticated
-adapter. Device protocols, continuous audio, camera capture and private identity
-belong in deployment adapters rather than public cognition code.
-
-Named model roles choose eligible local endpoints and fallbacks. Runtime reload,
-configured endpoint advertisements and completion availability let later requests
-follow changed bindings. Empty or truncated function responses can use the next
-eligible candidate within the same deadline; requested tool turns remain valid.
-Changing a processor does not replace the agent's
-memories or identity. Automatic fleet enrollment, capacity scheduling and empirical
-model selection remain separate work.
-[Function routing](docs/FUNCTION-ROUTING.md)
-
-See [architecture and ownership](docs/ARCHITECTURE.md) before adding a component.
-Every addition should close an observable loop, have one state owner, and reuse
-Hermes facilities where they already fit. Self and relationships are explicit
-state, not evidence of subjective feelings. Relationship scores must not grant
-privileged capabilities.
-
-## Operation and limits
-
-Consequential actions need owner authorization. Authorization belongs to the
-work being approved; losing a notification should not discard a build or its
-result. The lightweight installer does not enable external-effect workers.
-Existing extended deployments must inspect their actual resolved configuration
-at `GET /v1/host/autonomy/posture` before enabling another loop.
-
-The [known gaps](docs/KNOWN-GAPS.md) inventory includes legacy components that
-are partial, dormant or awaiting replacement. They are outside the supported
-core until their deployment loops are qualified. Shared observations do not
-prevent every conflicting promise; a selected skill evaluator does not establish
-general self-improvement. Source forgetting does not rewrite arbitrary old
-transcripts, unlinked paraphrases or backups. See the
-[native request boundary](docs/NATIVE-REQUEST-ERASURE.md) for its exact scope.
+- Memory: [claims](docs/SOURCE-CLAIMS.md), [annotations](docs/SOURCE-ANNOTATIONS.md),
+  [semantic recall](docs/SOURCE-SEMANTIC-RECALL.md),
+  [request erasure](docs/NATIVE-REQUEST-ERASURE.md),
+  [backup and recovery](docs/SOURCE-MEMORY-RECOVERY.md).
+- Media: [images](docs/SOURCE-IMAGES.md), [audio](docs/SOURCE-AUDIO.md),
+  [documents](docs/SOURCE-DOCUMENTS.md), [selected video](docs/SOURCE-VIDEOS.md).
+- Agent state: [working perspective](docs/WORKING-PERSPECTIVE.md),
+  [working judgments](docs/SELF-JUDGMENTS.md),
+  [reply forecasts](docs/EXPECTED-REPLY-FORECASTS.md),
+  [commitments](docs/COMMITMENT-WORK.md).
 
 ## Development
-
-Install the sidecar development dependencies, then run its tests from `sidecar`:
 
 ```bash
 python -m pip install -e './sidecar[dev]'
@@ -298,13 +223,11 @@ cd sidecar
 python -m pytest -q tests apsimo
 ```
 
-`tests/hermes_adapter` qualifies built packages against the pinned native
-Hermes runtime. Its controlled model fixture verifies integration, not model
-quality. Deployment acceptance also needs real inference, source receipts,
-cross-session behavior and recovery with the actual configuration.
-
-Keep personal data, endpoint coordinates, secrets and deployment configuration
-out of public examples, commits and test artifacts.
+`tests/hermes_adapter` qualifies built packages against the pinned native Hermes
+runtime. Deployment acceptance additionally needs real inference, source
+receipts, cross-session behavior and recovery with the actual configuration.
+Keep personal data, endpoint addresses, secrets and deployment configuration out
+of public examples, commits and test artifacts.
 
 ## License
 
