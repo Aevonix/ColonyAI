@@ -76,7 +76,7 @@ for i in range(2):reviews[i].reconcile(board='default',dry_run=False)
 with kb.connect(board='default') as db:
  assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==1
  task=kb.get_task(db,tid)
- assert task.status=='ready' and task.goal_mode and task.goal_max_turns==4
+ assert task.status=='ready' and not task.goal_mode
  assert task.assignee=='colony-reviews' and task.max_runtime_seconds==480 and task.max_retries==1
  assert not db.execute('SELECT 1 FROM kanban_notify_subs').fetchone()
  claimed=kb.claim_task(db,tid);run=claimed.current_run_id

@@ -89,7 +89,7 @@ class NativeReviews:
                     title=review['title'], body=review['body'], assignee=profile,
                     created_by=self.creator, tenant=self.owner, idempotency_key=self.prefix+identifier,
                     board='default', initial_status='blocked', workspace_kind='scratch',
-                    goal_mode=True, goal_max_turns=4, max_runtime_seconds=480, max_retries=1)
+                    goal_mode=False, max_runtime_seconds=480, max_retries=1)
                 task = kb.get_task(db, task_id)
                 if (task.created_by != self.creator or task.tenant != self.owner
                         or task.assignee != profile or task.body != review['body']):
