@@ -11,19 +11,19 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority, required_scope
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.cognition.external_events import (
+from apsimo.api.authority import RequestAuthority, required_scope
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.cognition.external_events import (
     ExternalCognitionEventV1,
     ExternalEventConflict,
     ExternalEventInboxStore,
     ExternalEventIntake,
     ExternalEventValidationError,
 )
-from colony_sidecar.events.journal import append_event_record, replay_events
-from colony_sidecar.projects import ProjectEngine, ProjectStore
-from colony_sidecar.work_orders import QueueWorkOrderAdapter
+from apsimo.events.journal import append_event_record, replay_events
+from apsimo.projects import ProjectEngine, ProjectStore
+from apsimo.work_orders import QueueWorkOrderAdapter
 
 
 NOW = datetime(2026, 7, 12, 20, 0, tzinfo=timezone.utc)
@@ -458,7 +458,7 @@ def test_receipt_commit_survives_projection_failure_and_restart(
     failed = ExternalEventIntake(
         store, journal_projector=lambda *_args, **_kwargs: None,
     )
-    from colony_sidecar.cognition.external_events import ExternalEventProjectionError
+    from apsimo.cognition.external_events import ExternalEventProjectionError
     with pytest.raises(ExternalEventProjectionError):
         failed.ingest(event, now=NOW)
     reserved, created = store.reserve(event, now=NOW)
@@ -505,7 +505,7 @@ def test_journal_success_then_finalize_crash_and_prune_reconciles_tombstone(
     store.complete_projection = original_complete
     store.close()
 
-    from colony_sidecar.events.journal import append_event
+    from apsimo.events.journal import append_event
     assert append_event("test.retention.advance", {"step": 2}) == 2
     tombstone = json.loads(marker_path.read_text())
     assert tombstone["state"] == "pruned"
@@ -567,7 +567,7 @@ def test_event_key_marker_is_minimal_pruned_and_completed_replay_cannot_resurrec
     (journal_dir / ".cursor").unlink()
     shutil.rmtree(journal_dir / ".sequence-index")
 
-    from colony_sidecar.events.journal import append_event
+    from apsimo.events.journal import append_event
     assert append_event("test.retention.advance", {"step": 2}) == 2
     assert list((journal_dir / ".event-keys").iterdir()) == []
     assert [item["seq"] for item in replay_events(

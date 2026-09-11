@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from colony_sidecar.autonomy.synthesis import (
+from apsimo.autonomy.synthesis import (
     ConversationSynthesisTask,
     SynthesisState,
     _parse_turn_content,
 )
-from colony_sidecar.goals.inference import ConversationMessage, IntentSignal
-from colony_sidecar.goals.models import GoalStatus
+from apsimo.goals.inference import ConversationMessage, IntentSignal
+from apsimo.goals.models import GoalStatus
 
 
 # ── Parse turn content ───────────────────────────────────────────────────────

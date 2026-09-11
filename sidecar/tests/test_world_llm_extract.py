@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.self_model import ActionJournal
-from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+from apsimo.self_model import ActionJournal
+from apsimo.world_model.llm_extract import WorldLLMExtractor
 
 
 class FakeWorld:
@@ -102,7 +102,7 @@ async def test_off_mode_does_nothing(monkeypatch):
 @pytest.mark.asyncio
 async def test_boundary_suppresses_entity(monkeypatch):
     monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    from colony_sidecar.directives import DirectiveManager, DirectiveStore
+    from apsimo.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore())
     dm.add_explicit("Initech", polarity="prohibit",
                     raw_text="don't even look at Initech",)

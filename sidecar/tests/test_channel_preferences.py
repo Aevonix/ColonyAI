@@ -1,12 +1,13 @@
 """An explicit receipt choice changes one selected profile, never transport authority."""
 from copy import deepcopy
 import json
+import os
 from types import SimpleNamespace
 
 import pytest
 import yaml
 
-from colony_sidecar import setup_hermes
+from apsimo import setup_hermes
 
 
 def attached(tmp_path, config):
@@ -47,7 +48,9 @@ def test_existing_profile_explicit_preference_preserves_scope_and_state(tmp_path
     assert len(list(home.glob('.config.yaml.colony-backup-*'))) == 1
 
 
-def test_omitted_receipt_preference_retains_config_bytes(tmp_path):
+def test_omitted_receipt_preference_retains_config_bytes(tmp_path, monkeypatch):
+    monkeypatch.setattr(os, "environ", dict(os.environ))
+    monkeypatch.delenv("APSIMO_STATE_DIR", raising=False)
     home, state, _ = attached(tmp_path, {'whatsapp': {'send_read_receipts': True}})
     path = home / 'config.yaml'
     path.write_text('# A retained comment\n' + path.read_text())
@@ -55,11 +58,20 @@ def test_omitted_receipt_preference_retains_config_bytes(tmp_path):
     assert setup_hermes.run(state, SimpleNamespace(non_interactive=True, hermes_home=str(home))) == 0
     assert path.read_bytes() == before
     assert not list(home.glob('.config.yaml.colony-backup-*'))
+    assert "APSIMO_STATE_DIR" not in os.environ
+    # A legacy caller can select its next state without a stale canonical input
+    # taking precedence over that selection.
+    from apsimo.environment import normalize_environment
+    from apsimo import get_state_dir
+    following = tmp_path / 'following-state'
+    monkeypatch.setenv('COLONY_STATE_DIR', str(following))
+    assert normalize_environment()['COLONY_STATE_DIR'] == str(following)
+    assert get_state_dir() == following
 
 
 def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
     import sys
-    from colony_sidecar import cli, setup
+    from apsimo import cli, setup
     observed = []
     monkeypatch.setattr(sys, 'argv', ['colony', 'init', '--whatsapp-read-receipts', 'on',
                                      '--hermes-home', str(tmp_path), '--non-interactive'])
@@ -73,7 +85,7 @@ def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
 @pytest.mark.parametrize('preview', [True, False])
 def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path, monkeypatch, preview):
     import sys
-    from colony_sidecar import cli
+    from apsimo import cli
     home = tmp_path/'home'
     home.mkdir()
     config = home/'config.yaml'
@@ -107,7 +119,7 @@ def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path,
     {'mcp_harnesses': 'fixture'}, {'host_framework': 'standalone'},
 ])
 def test_preference_only_rejects_setup_combinations_before_writes(tmp_path, options):
-    from colony_sidecar import setup
+    from apsimo import setup
     (tmp_path/'config.yaml').write_text('whatsapp: {enabled: false}\n')
     args = SimpleNamespace(hermes_home=str(tmp_path), preferences_only=True,
                            whatsapp_read_receipts='on', **options)
@@ -137,7 +149,7 @@ def test_projection_does_not_mutate_a_shared_yaml_alias():
 
 
 def test_config_race_is_rejected_and_concurrent_bytes_remain(tmp_path, monkeypatch):
-    from colony_sidecar import setup
+    from apsimo import setup
     path = tmp_path/'config.yaml'
     path.write_text('whatsapp: {enabled: false}\n')
     actual_writer = setup._atomic_hermes_config_write

@@ -17,13 +17,13 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.api.authority import legacy_authority
-from colony_sidecar.commitments.store import (
+import apsimo.api.routers.host as host_mod
+from apsimo.api.authority import legacy_authority
+from apsimo.commitments.store import (
     CommitmentResolutionConflict, CommitmentStore, _normalize_desc, _similar_desc,
 )
-from colony_sidecar.self_model import settlement
-from colony_sidecar.self_model.workspace import ConcernStore, WorkspaceEngine
+from apsimo.self_model import settlement
+from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
 
 
 @pytest.fixture
@@ -569,7 +569,7 @@ class _FakeAsyncClient:
 async def test_introspection_skips_open_and_rejected_duplicates(tmp_path, monkeypatch):
     """The extractor must not re-record an item that is already open, nor one
     recently rejected as invalid/duplicate — code-enforced, not prompt-hoped."""
-    from colony_sidecar.cognition import introspection as intro
+    from apsimo.cognition import introspection as intro
 
     cstore = CommitmentStore(db_path=tmp_path / "c.db")
     existing = cstore.create(person_id="owner",

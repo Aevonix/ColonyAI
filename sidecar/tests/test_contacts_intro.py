@@ -10,10 +10,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.world_model.constants import RELATIONSHIP_TYPES
+from apsimo.api.routers import host as host_mod
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.world_model.constants import RELATIONSHIP_TYPES
 
 GUEST = "+15550000042"
 

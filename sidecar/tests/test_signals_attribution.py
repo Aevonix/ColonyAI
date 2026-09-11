@@ -14,8 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.schemas.host import (
+from apsimo.api.routers import host as host_mod
+from apsimo.api.schemas.host import (
     HostIdentity, HostMessage, HostSender, HostTurnContext,
     SignalIngestRequest)
 

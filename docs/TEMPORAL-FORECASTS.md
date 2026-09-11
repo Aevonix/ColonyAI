@@ -1,6 +1,6 @@
 # Task forecasts and expected replies
 
-Colony keeps forecasts in the existing expectation ledger and reply waits in the commitment database. Hermes owns native tasks and scheduling. The selected delivery outbox owns attempted, acknowledged and uncertain sends.
+Apsimo keeps forecasts in the existing expectation ledger and reply waits in the commitment database. Hermes owns native tasks and scheduling. The selected delivery outbox owns attempted, acknowledged and uncertain sends.
 
 The owner work view retains the original forecast horizon and unchanged-prior
 decision alongside later measured outcomes. These are shadow comparisons;
@@ -95,7 +95,7 @@ contention and hidden auxiliary calls are not yet measured covariates. Provider
 configuration changes that retain the same response-model label are also not
 attested by a provider-default observation.
 
-For long requests whose hook body is truncated, Colony's existing request
+For long requests whose hook body is truncated, Apsimo's existing request
 middleware places only the request ID, output-limit policy and optional numeric
 cap in Hermes' existing middleware trace. The observer accepts this marker only
 for the same API request and only as the final request-changing trace entry.

@@ -18,7 +18,7 @@ from httpx import ASGITransport, AsyncClient
 @pytest.fixture
 def app():
     """Create a fresh sidecar app for each test."""
-    from colony_sidecar.server import create_app
+    from apsimo.server import create_app
     return create_app()
 
 
@@ -35,23 +35,23 @@ async def client(app):
 # ---------------------------------------------------------------------------
 
 SUBSYSTEMS = [
-    ("colony_sidecar.reasoning.loop", "ReasoningLoop"),
-    ("colony_sidecar.reasoning.executor", "ToolExecutor"),
-    ("colony_sidecar.gate.pipeline", "ResponseGate"),
-    ("colony_sidecar.intelligence.graph.client", "ColonyGraph"),
-    ("colony_sidecar.intelligence.cognition.metalearner", "MetaLearner"),
-    ("colony_sidecar.intelligence.synthesis.connection_discoverer", "ConnectionDiscoverer"),
-    ("colony_sidecar.intelligence.learning.continuous_learner", "ContinuousLearner"),
-    ("colony_sidecar.intelligence.mind_model.signal_collector", "SignalCollector"),
-    ("colony_sidecar.intelligence.relationships.trust_tiers", "TrustTier"),
-    ("colony_sidecar.goals.engine", "GoalEngine"),
-    ("colony_sidecar.briefings.engine", "BriefingEngine"),
-    ("colony_sidecar.delivery.bridge", "ProactiveDeliveryBridge"),
-    ("colony_sidecar.research.pipeline", "ResearchPipeline"),
-    ("colony_sidecar.contacts.store", "ContactStore"),
-    ("colony_sidecar.world_model.store", "WorldModelStore"),
-    ("colony_sidecar.vector.embedder", "EmbeddingPipeline"),
-    ("colony_sidecar.skills.registry", "SkillRegistry"),
+    ("apsimo.reasoning.loop", "ReasoningLoop"),
+    ("apsimo.reasoning.executor", "ToolExecutor"),
+    ("apsimo.gate.pipeline", "ResponseGate"),
+    ("apsimo.intelligence.graph.client", "ColonyGraph"),
+    ("apsimo.intelligence.cognition.metalearner", "MetaLearner"),
+    ("apsimo.intelligence.synthesis.connection_discoverer", "ConnectionDiscoverer"),
+    ("apsimo.intelligence.learning.continuous_learner", "ContinuousLearner"),
+    ("apsimo.intelligence.mind_model.signal_collector", "SignalCollector"),
+    ("apsimo.intelligence.relationships.trust_tiers", "TrustTier"),
+    ("apsimo.goals.engine", "GoalEngine"),
+    ("apsimo.briefings.engine", "BriefingEngine"),
+    ("apsimo.delivery.bridge", "ProactiveDeliveryBridge"),
+    ("apsimo.research.pipeline", "ResearchPipeline"),
+    ("apsimo.contacts.store", "ContactStore"),
+    ("apsimo.world_model.store", "WorldModelStore"),
+    ("apsimo.vector.embedder", "EmbeddingPipeline"),
+    ("apsimo.skills.registry", "SkillRegistry"),
 ]
 
 
@@ -68,13 +68,13 @@ def test_subsystem_import(module, cls):
 # ---------------------------------------------------------------------------
 
 def test_create_app():
-    from colony_sidecar.server import create_app
+    from apsimo.server import create_app
     app = create_app()
-    assert app.title == "Colony Intelligence Sidecar"
+    assert app.title == "Apsimo"
 
 
 def test_openapi_spec_export():
-    from colony_sidecar.server import create_app
+    from apsimo.server import create_app
     app = create_app()
     spec = app.openapi()
     assert "paths" in spec
@@ -87,8 +87,8 @@ def test_openapi_spec_export():
 
 def test_unrecognised_guard_mode_refuses():
     """A COLONY_GUARD_MODE typo must refuse loudly, never silently shadow."""
-    from colony_sidecar.gate.response_guard import GuardMode
-    from colony_sidecar.server import _resolve_guard_mode
+    from apsimo.gate.response_guard import GuardMode
+    from apsimo.server import _resolve_guard_mode
     assert _resolve_guard_mode(None) is GuardMode.SHADOW
     assert _resolve_guard_mode("shadow") is GuardMode.SHADOW
     assert _resolve_guard_mode("ENFORCE") is GuardMode.ENFORCE
@@ -103,7 +103,7 @@ async def test_unrecognised_grant_envelope_refuses_before_startup(
 ):
     """A typo must abort before any subsystem can begin initialization."""
 
-    from colony_sidecar import server
+    from apsimo import server
 
     monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", invalid_value)
     monkeypatch.delenv("COLONY_GRANT_MAX_USES", raising=False)
@@ -231,7 +231,7 @@ async def test_reasoning_turn_not_wired(client):
 async def test_safety_check_unavailable_when_gate_missing(client, monkeypatch):
     """No response gate => 503 + decision "unavailable", NEVER "pass" —
     a caller must not mistake "not evaluated" for "evaluated and clean"."""
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
     monkeypatch.setattr(host_mod, "_response_gate", None)
     resp = await client.post("/v1/host/safety/check", json={
         "identity": {"host_id": "test"},
@@ -362,7 +362,7 @@ async def test_query_entities_requires_identity(client):
 
 @pytest.mark.asyncio
 async def test_query_entities_forwards_the_type_filter(client, monkeypatch):
-    from colony_sidecar.api.routers import host as host_router
+    from apsimo.api.routers import host as host_router
 
     class _Store:
         def __init__(self):
@@ -549,7 +549,7 @@ async def test_dismiss_insight(client):
 
 def test_setup_wizard_import():
     """Verify setup module imports correctly."""
-    from colony_sidecar.setup import run_init
+    from apsimo.setup import run_init
     assert callable(run_init)
 
 
@@ -559,7 +559,7 @@ def test_setup_wizard_import():
 
 def test_tool_call_extraction():
     """Verify tool call extraction from a mock LiteLLM response."""
-    from colony_sidecar.reasoning.loop import ReasoningLoop
+    from apsimo.reasoning.loop import ReasoningLoop
 
     class MockFunc:
         name = "read_file"
@@ -585,13 +585,13 @@ def test_tool_call_extraction():
 
 
 def test_tool_call_extraction_empty():
-    from colony_sidecar.reasoning.loop import ReasoningLoop
+    from apsimo.reasoning.loop import ReasoningLoop
     assert ReasoningLoop._extract_tool_calls(None) == []
     assert ReasoningLoop._extract_tool_calls(type("R", (), {"choices": []})()) == []
 
 
 def test_build_assistant_message():
-    from colony_sidecar.reasoning.loop import ReasoningLoop
+    from apsimo.reasoning.loop import ReasoningLoop
     msg = ReasoningLoop._build_assistant_message(None, "hello", [])
     assert msg["role"] == "assistant"
     assert msg["content"] == "hello"
@@ -613,7 +613,7 @@ async def test_tool_executor_unknown_tool():
     see the miss and adjust — the executor does NOT defer back to the
     host (that earlier design was superseded when Colony grew its own
     native-tool surface)."""
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
     executor = ToolExecutor()
     results = await executor.execute_batch([
         {"id": "tc_1", "name": "unknown_tool", "arguments": {}}
@@ -627,7 +627,7 @@ async def test_tool_executor_unknown_tool():
 
 @pytest.mark.asyncio
 async def test_tool_executor_custom_handler():
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     async def mock_handler(args):
         return f"result: {args.get('x', 0)}"
@@ -729,7 +729,7 @@ def autonomy_not_wired():
     module-global autonomy loop to a Mock; without this isolation these
     tests pass alone but fail in a full suite run, depending on order.
     """
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
 
     prev = host_mod._autonomy_loop
     host_mod.set_autonomy_loop(None)
@@ -758,14 +758,14 @@ async def test_autonomy_stop_not_wired(client, autonomy_not_wired):
 
 
 def test_autonomy_config_from_env():
-    from colony_sidecar.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.config import AutonomyConfig
     config = AutonomyConfig.from_env()
     assert config.tick_interval_secs > 0
     assert config.max_actions_per_hour > 0
 
 
 def test_subsystem_registry():
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
+    from apsimo.autonomy.registry import SubsystemRegistry
     registry = SubsystemRegistry()
     # All properties should return None or a value without error
     # Access them to verify they don't raise
@@ -774,9 +774,9 @@ def test_subsystem_registry():
 
 
 def test_autonomy_loop_instantiation():
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.registry import SubsystemRegistry
     config = AutonomyConfig(tick_interval_secs=60)
     registry = SubsystemRegistry()
     loop = AutonomyLoop(registry=registry, config=config)
@@ -789,10 +789,10 @@ def test_autonomy_loop_instantiation():
 @pytest.mark.asyncio
 async def test_phase_scheduled_runs_due_tasks(tmp_path):
     """Scheduler.tick() should be invoked by the loop and increment stats."""
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
-    from colony_sidecar.autonomy.scheduler import AutonomyScheduler
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.registry import SubsystemRegistry
+    from apsimo.autonomy.scheduler import AutonomyScheduler
 
     scheduler = AutonomyScheduler(db_path=str(tmp_path / "sched.db"))
 
@@ -820,9 +820,9 @@ async def test_phase_scheduled_runs_due_tasks(tmp_path):
 @pytest.mark.asyncio
 async def test_phase_scheduled_no_scheduler_is_noop():
     """With no scheduler, _phase_scheduled must not raise or increment stats."""
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.registry import SubsystemRegistry
 
     loop = AutonomyLoop(
         registry=SubsystemRegistry(),
@@ -830,7 +830,7 @@ async def test_phase_scheduled_no_scheduler_is_noop():
         scheduler=None,
     )
     # Registry also returns None when host._scheduler isn't set.
-    from colony_sidecar.api.routers import host as _host
+    from apsimo.api.routers import host as _host
     _host._scheduler = None
     await loop._phase_scheduled()
     assert loop.stats.scheduled_runs == 0
@@ -840,10 +840,10 @@ async def test_phase_scheduled_no_scheduler_is_noop():
 @pytest.mark.asyncio
 async def test_phase_task_completion_emits_followups(monkeypatch):
     """Newly-completed goals should bump stats.task_follow_ups."""
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
-    from colony_sidecar.goals.models import GoalStatus
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.registry import SubsystemRegistry
+    from apsimo.goals.models import GoalStatus
     from datetime import datetime, timedelta, timezone
 
     class _FakeGoal:
@@ -861,7 +861,7 @@ async def test_phase_task_completion_emits_followups(monkeypatch):
     })()
 
     registry = SubsystemRegistry()
-    from colony_sidecar.api.routers import host as _host
+    from apsimo.api.routers import host as _host
     _host._goals_store = fake_goals_store
     _host._connection_discoverer = None
 
@@ -882,10 +882,10 @@ async def test_phase_task_completion_emits_followups(monkeypatch):
 @pytest.mark.asyncio
 async def test_phase_scheduled_failing_task_counts_errors(tmp_path):
     """A failing scheduled callback should bump errors, not halt the loop."""
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
-    from colony_sidecar.autonomy.scheduler import AutonomyScheduler
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.registry import SubsystemRegistry
+    from apsimo.autonomy.scheduler import AutonomyScheduler
 
     scheduler = AutonomyScheduler(db_path=str(tmp_path / "sched.db"))
 
@@ -911,7 +911,7 @@ async def test_phase_scheduled_failing_task_counts_errors(tmp_path):
 async def test_scheduler_sustained_failures_flip_healthy_false(tmp_path):
     """A schedule failing every run forever must not report healthy: True."""
     from datetime import datetime, timedelta, timezone
-    from colony_sidecar.autonomy.scheduler import (
+    from apsimo.autonomy.scheduler import (
         SUSTAINED_FAILURE_THRESHOLD, AutonomyScheduler,
     )
 
@@ -940,7 +940,7 @@ async def test_scheduler_skip_is_not_a_success(tmp_path):
     """A callback returning {"status": "skipped"} is receipted as a skip:
     it neither counts as success nor resets the failure track record."""
     from datetime import datetime, timedelta, timezone
-    from colony_sidecar.autonomy.scheduler import AutonomyScheduler
+    from apsimo.autonomy.scheduler import AutonomyScheduler
 
     now = [datetime.now(timezone.utc)]
     scheduler = AutonomyScheduler(
@@ -974,8 +974,8 @@ def test_scheduler_health_check_task_reports_wiring(monkeypatch):
     """The registered health_check task must reflect real wiring, not an
     unconditional {"status": "ok"} behind a swallowed exception."""
     from types import SimpleNamespace
-    import colony_sidecar.api.routers.host as host_mod
-    from colony_sidecar.server import _scheduler_health_check
+    import apsimo.api.routers.host as host_mod
+    from apsimo.server import _scheduler_health_check
 
     names = ("_commitment_store", "_goals_store", "_affect_store",
              "_contacts_store", "_delivery_bridge", "_workspace",

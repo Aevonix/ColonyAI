@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 from jsonschema import Draft202012Validator, ValidationError
 import pytest
 
-from colony_sidecar.beliefs import source_claims
-from colony_sidecar.self_model import appraisals, judgments
+from apsimo.beliefs import source_claims
+from apsimo.self_model import appraisals, judgments
 from test_memory_formation import PROCEDURE, procedure
 
 

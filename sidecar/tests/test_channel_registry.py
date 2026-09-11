@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from colony_sidecar.delivery.channels import Channel, ChannelRegistry
+from apsimo.delivery.channels import Channel, ChannelRegistry
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────

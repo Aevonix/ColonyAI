@@ -2,21 +2,21 @@
 
 The broken stores below each violate exactly one documented invariant the
 way a plausible buggy adapter would; the suite must flag every one.  If a
-new invariant is added to :mod:`colony_hostworker.store`, add both a case
+new invariant is added to :mod:`apsimo_hostworker.store`, add both a case
 and a broken store here.
 """
 
 import pytest
 
-from colony_hostworker.conformance import (
+from apsimo_hostworker.conformance import (
     CASES,
     SqliteStoreHarness,
     assert_store_conformance,
     run_store_conformance,
     sqlite_harness,
 )
-from colony_hostworker.gate import GateAuthorization
-from colony_hostworker.sqlite_store import SqliteActionStore
+from apsimo_hostworker.gate import GateAuthorization
+from apsimo_hostworker.sqlite_store import SqliteActionStore
 
 
 def failed_names(results):
@@ -162,7 +162,7 @@ def test_suite_catches_a_store_that_tolerates_duplicate_gates():
 
 
 def test_module_runner_reports_reference_success(capsys):
-    from colony_hostworker.conformance.__main__ import main
+    from apsimo_hostworker.conformance.__main__ import main
 
     assert main() == 0
     output = capsys.readouterr().out

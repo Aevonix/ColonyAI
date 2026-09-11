@@ -14,10 +14,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.contact_grants import ContactGrantRegistry
-from colony_sidecar.api.authority import KeyringError, load_keyring
-from colony_sidecar.api.routers import host
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.contact_grants import ContactGrantRegistry
+from apsimo.api.authority import KeyringError, load_keyring
+from apsimo.api.routers import host
 
 
 class _Graph:
@@ -573,7 +573,7 @@ async def test_sender_resolving_adapter_discards_initial_contact_claim(tmp_path,
 async def test_turn_concern_journal_scope_is_sealed_from_scoped_authority(
     tmp_path, graph, monkeypatch,
 ):
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])
@@ -628,7 +628,7 @@ async def test_turn_concern_journal_scope_is_sealed_from_scoped_authority(
 async def test_scoped_unkeyed_turn_gets_deterministic_server_lineage_id(
     tmp_path, graph, monkeypatch,
 ):
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])
@@ -679,7 +679,7 @@ async def test_server_resolved_attested_sender_gets_subject_private_turn_scope(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -744,7 +744,7 @@ async def test_dynamic_sender_grant_retry_keeps_attribution_and_digest_stable(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -802,7 +802,7 @@ async def test_dynamic_sender_grant_cap_failure_does_not_attest_identity(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -859,8 +859,8 @@ async def test_structured_sender_platform_cannot_hide_behind_voice_lane(
     tmp_path, graph, monkeypatch, platform,
 ):
     from types import SimpleNamespace
-    from colony_sidecar.events import journal as event_journal
-    from colony_sidecar.self_model.event_concerns import project_conversation_turn
+    from apsimo.events import journal as event_journal
+    from apsimo.self_model.event_concerns import project_conversation_turn
 
     class Contacts:
         async def resolve_messaging_handle(self, _platform, _user_id):
@@ -927,7 +927,7 @@ async def test_resolved_sender_in_static_grant_needs_no_dynamic_platform_grant(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -985,7 +985,7 @@ async def test_resolved_static_sender_without_resolve_scope_is_not_attested(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -1036,7 +1036,7 @@ async def test_resolved_static_sender_without_resolve_scope_is_not_attested(
 async def test_unresolved_structured_sender_cannot_fall_back_to_viewer_attestation(
     tmp_path, graph, monkeypatch,
 ):
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     principal = _principal(scopes=["turns:write", "turns:resolve-sender"])
     principal["attested_contact_grants"] = {
@@ -1082,7 +1082,7 @@ async def test_unresolved_structured_sender_cannot_fall_back_to_viewer_attestati
 async def test_legacy_body_claim_cannot_mint_turn_concern_attestation(
     tmp_path, graph, monkeypatch,
 ):
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     app = _app(None, legacy_key="legacy-secret")
     monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
@@ -1123,7 +1123,7 @@ async def test_legacy_body_claim_cannot_mint_turn_concern_attestation(
 async def test_turn_concern_flag_off_keeps_legacy_journal_shape_exact(
     tmp_path, graph, monkeypatch,
 ):
-    from colony_sidecar.events import journal as event_journal
+    from apsimo.events import journal as event_journal
 
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])

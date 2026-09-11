@@ -14,13 +14,13 @@ import httpx
 import pytest
 
 
-@pytest.mark.skipif(os.environ.get('COLONY_TEST_USER_SERVICE') != '1',
+@pytest.mark.skipif((os.environ.get('APSIMO_TEST_USER_SERVICE') or os.environ.get('COLONY_TEST_USER_SERVICE')) != '1',
                     reason='Opt-in native user-manager qualification')
 def test_installed_cli_two_instances_crash_recovery_and_retained_memory(tmp_path):
-    python = os.environ['COLONY_TEST_SERVICE_PYTHON']
-    hermes_python = os.environ['COLONY_TEST_HERMES_PYTHON']
+    python = os.environ.get('APSIMO_TEST_SERVICE_PYTHON') or os.environ['COLONY_TEST_SERVICE_PYTHON']
+    hermes_python = os.environ.get('APSIMO_TEST_HERMES_PYTHON') or os.environ['COLONY_TEST_HERMES_PYTHON']
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith(('COLONY_', 'HERMES_', 'OPENAI_', 'ANTHROPIC_', 'PYTHONPATH'))}
+           if not key.startswith(('APSIMO_', 'COLONY_', 'HERMES_', 'OPENAI_', 'ANTHROPIC_', 'PYTHONPATH'))}
     env.update(HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1',
                LITELLM_LOCAL_MODEL_COST_MAP='True')
     # The unit suite deliberately replaces HOME/XDG with fake locations. This
@@ -43,7 +43,7 @@ def test_installed_cli_two_instances_crash_recovery_and_retained_memory(tmp_path
     instances = []
 
     def cli(*args, check=True):
-        result = subprocess.run([python, '-m', 'colony_sidecar', *map(str, args)],
+        result = subprocess.run([python, '-m', 'apsimo', *map(str, args)],
             env=env, cwd=tmp_path, capture_output=True, text=True, timeout=60)
         if check:
             assert result.returncode == 0, result.stdout + result.stderr
@@ -69,11 +69,12 @@ def test_installed_cli_two_instances_crash_recovery_and_retained_memory(tmp_path
             cli('init', '--non-interactive', '--hermes-home', home, '--hermes-python', hermes_python,
                 '--agent-name', 'Service Fixture', '--contact-name', 'Fixture Owner',
                 '--model-url', f'http://127.0.0.1:{model.server_port}/v1', '--model', 'service-fixture', '--port', port)
-            state = home/'colony'
-            values = dict(line.split('=', 1) for line in (state/'.env').read_text().splitlines() if '=' in line)
-            item = {'state': state, 'owner': values['COLONY_OWNER_CONTACT_ID'],
+            state = home/'apsimo'
+            from dotenv import dotenv_values
+            values = dotenv_values(state/'.env', interpolate=False)
+            item = {'state': state, 'owner': values['APSIMO_OWNER_CONTACT_ID'],
                 'url': f'http://127.0.0.1:{port}',
-                'headers': {'Authorization': 'Bearer '+values['COLONY_CLIENT_API_KEY']}}
+                'headers': {'Authorization': 'Bearer '+values['APSIMO_CLIENT_API_KEY']}}
             instances.append(item)
             installed = service(state, 'install')
             assert installed['installed'] and not installed['running']

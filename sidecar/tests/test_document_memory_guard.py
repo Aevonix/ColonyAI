@@ -8,8 +8,8 @@ from types import SimpleNamespace
 import psutil
 import pytest
 
-from colony_sidecar.turns import documents
-from colony_sidecar.turns.source_read import read
+from apsimo.turns import documents
+from apsimo.turns.source_read import read
 from test_source_documents import pdf_bytes
 from test_source_document_read import original, opened
 

@@ -5,22 +5,22 @@ import sqlite3
 
 import pytest
 
-from colony_hostworker.conformance import (
+from apsimo_hostworker.conformance import (
     SqliteStoreHarness,
     build_envelope,
     build_intent,
     delivery_gate_evidence,
 )
-from colony_hostworker.conformance.suite import (
+from apsimo_hostworker.conformance.suite import (
     OWNER_A,
     SOURCE,
     _dispatch_ok,
     _gated,
 )
-from colony_hostworker.store import (
+from apsimo_hostworker.store import (
     ActionStoreError,
 )
-from colony_hostworker.worker import DEFAULT_ACTION_TYPE
+from apsimo_hostworker.worker import DEFAULT_ACTION_TYPE
 
 
 @pytest.fixture()

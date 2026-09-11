@@ -24,20 +24,20 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from colony_sidecar.api.routers import task_queue as tq_router
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.events import broadcaster
-from colony_sidecar.initiatives import standing_approvals
-from colony_sidecar.initiatives.action_registry import (
+from apsimo.api.routers import task_queue as tq_router
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.events import broadcaster
+from apsimo.initiatives import standing_approvals
+from apsimo.initiatives.action_registry import (
     ACTION_REGISTRY,
     RiskTier,
     classify_agent_action,
     get_action,
     get_approval_policy,
 )
-from colony_sidecar.initiatives.approval_policy import is_authorized_target
-from colony_sidecar.task_queue.models import JobStatus
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+from apsimo.initiatives.approval_policy import is_authorized_target
+from apsimo.task_queue.models import JobStatus
+from apsimo.task_queue.queue_manager import TaskQueueManager
 
 
 # ---------------------------------------------------------------------------

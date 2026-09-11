@@ -2,8 +2,8 @@
 
 import pytest
 
-from colony_hostworker.contract import sha256_json_ascii
-from colony_hostworker.intent import (
+from apsimo_hostworker.contract import sha256_json_ascii
+from apsimo_hostworker.intent import (
     HermesActionIntentError,
     HermesToolActionIntentV1,
 )
@@ -60,7 +60,7 @@ def test_digest_convention_is_ascii(golden_vectors):
     assert intent.args_sha256 == sha256_json_ascii(intent.args)
     # Non-ASCII args make the convention observable: the UTF-8 digest of the
     # same args differs, so a convention swap cannot pass this test.
-    from colony_hostworker.contract import sha256_json_utf8
+    from apsimo_hostworker.contract import sha256_json_utf8
 
     assert intent.args_sha256 != sha256_json_utf8(intent.args)
 

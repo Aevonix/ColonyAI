@@ -3,11 +3,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.goals.config import GoalEngineConfig
-from colony_sidecar.goals.engine import GoalEngine
-from colony_sidecar.goals.models import Goal, GoalDAG, GoalStatus, Subtask, SubtaskStatus
-from colony_sidecar.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
+from apsimo.api.routers import host
+from apsimo.goals.config import GoalEngineConfig
+from apsimo.goals.engine import GoalEngine
+from apsimo.goals.models import Goal, GoalDAG, GoalStatus, Subtask, SubtaskStatus
+from apsimo.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
 
 
 @pytest.mark.parametrize('mode', ['off', 'shadow'])

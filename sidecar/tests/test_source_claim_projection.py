@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.beliefs.source_claims import validated_claims
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.beliefs.source_time import interpret_time_query
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.api.routers import host
+from apsimo.beliefs.source_claims import validated_claims
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.beliefs.source_time import interpret_time_query
+from apsimo.turns import TurnIdempotencyLedger
 from test_turn_source_evidence import source_app
 from test_hermes_turn_outbox import _load_client, _payload
 
@@ -128,7 +128,7 @@ async def test_newer_report_does_not_win_and_conflict_is_atomic(source_app, tmp_
     hits = projection.ledger.search_sources("workshop", contact_id="contact-a", session_id="s")
     _, rows = projection.prepare_context([], hits, contact_id="contact-a", session_id="s",
         time_query=interpret_time_query("workshop", now=datetime.now(timezone.utc)))
-    from colony_sidecar.intelligence.graph.recall import pack_memory_context
+    from apsimo.intelligence.graph.recall import pack_memory_context
     assert pack_memory_context(rows, max_chars=500) == ([], "")
 
 
@@ -330,9 +330,9 @@ def test_expired_worker_cannot_commit_or_complete_reclaimed_job(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_extraction_disables_router_escalation(monkeypatch):
-    from colony_sidecar.beliefs.source_claims import local_tier
-    from colony_sidecar.router.router import LLMRouter
-    from colony_sidecar.router.tiers import ModelTier
+    from apsimo.beliefs.source_claims import local_tier
+    from apsimo.router.router import LLMRouter
+    from apsimo.router.tiers import ModelTier
     router = LLMRouter(self_learner=SimpleNamespace())
     router._litellm_call = AsyncMock(side_effect=TimeoutError())
     router._fallback = SimpleNamespace(should_escalate=lambda *args: True,
@@ -348,13 +348,13 @@ async def test_local_extraction_disables_router_escalation(monkeypatch):
 
 
 def test_unicode_values_stay_distinct():
-    from colony_sidecar.beliefs.source_claims import norm_value
+    from apsimo.beliefs.source_claims import norm_value
     assert norm_value("東京") != norm_value("京都")
     assert norm_value("CAFÉ") == norm_value("Cafe\u0301")
 
 
 def test_unsupported_time_range_is_not_silently_current():
-    from colony_sidecar.beliefs.source_time import filter_unstructured
+    from apsimo.beliefs.source_time import filter_unstructured
     for text in ("office last month", "office before 2026-03-12", "office between March 1, 2026 and March 5, 2026"):
         query = interpret_time_query(text, now=datetime.now(timezone.utc))
         assert query.mode == "unresolved_time"

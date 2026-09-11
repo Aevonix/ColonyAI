@@ -133,7 +133,8 @@ finally:agent.close()
 '''
 
 
-def test_native_executor_read_only_review(tmp_path):
+@pytest.mark.parametrize('canonical', [False, True])
+def test_native_executor_read_only_review(tmp_path, canonical):
     python = os.environ.get('AEVA_HERMES_TEST_PYTHON')
     native = os.environ.get('AEVA_HERMES_TEST_SOURCE')
     if not python or not native:
@@ -146,7 +147,13 @@ def test_native_executor_read_only_review(tmp_path):
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result = subprocess.run([python,'-I','-B','-c',PROBE,native,str(root/'sidecar'),
+    probe = PROBE
+    if canonical:
+        probe = probe.replace("'colony_hermes'", "'apsimo_hermes'").replace('from colony_hermes.', 'from apsimo_hermes.')
+        probe = probe.replace("'colony'", "'apsimo'").replace("'colony_review'", "'apsimo_review'")
+        for name in ('colony_read_work_source', 'colony_review_report'):
+            probe = probe.replace(name, name.replace('colony_', 'apsimo_'))
+    result = subprocess.run([python,'-I','-B','-c',probe,native,str(root/'sidecar'),
                              str(root/'plugins/hermes-plugin')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=120)
     assert result.returncode == 0,result.stdout+result.stderr

@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.server import _attach_cognition_spine
-from colony_sidecar.chain.node import get_or_create_node_id
+from apsimo.server import _attach_cognition_spine
+from apsimo.chain.node import get_or_create_node_id
 
 
 class _ProjectStore:

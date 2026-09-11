@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Repository entry point for the offline competence reconciliation tool."""
 
-from colony_sidecar.self_model.reconcile import main
+from apsimo.self_model.reconcile import main
 
 
 if __name__ == "__main__":

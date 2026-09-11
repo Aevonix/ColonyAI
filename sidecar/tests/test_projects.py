@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.directives import DirectiveManager, DirectiveStore
-from colony_sidecar.projects import (
+from apsimo.directives import DirectiveManager, DirectiveStore
+from apsimo.projects import (
     Project, ProjectEngine, ProjectStore, Step, plan_project, validate_steps,
 )
-from colony_sidecar.proposals import ProposalStore
+from apsimo.proposals import ProposalStore
 
 
 class FakeRouter:
@@ -259,8 +259,8 @@ async def test_boundary_blocked_step_blocks_project(monkeypatch):
 async def test_owner_goal_negated_boundary_constraint_does_not_self_block(
     monkeypatch,
 ):
-    from colony_sidecar.directives import Directive, Polarity
-    from colony_sidecar.directives.models import Level
+    from apsimo.directives import Directive, Polarity
+    from apsimo.directives.models import Level
 
     class RecordingAdapter:
         def __init__(self):
@@ -484,7 +484,7 @@ async def test_off_mode_does_nothing(monkeypatch):
 async def test_trust_graduation_lifts_shadow(monkeypatch):
     """Env shadow is a calibration stage: a graduated trust domain makes the
     engine pursue for real (Amendment 1.2)."""
-    from colony_sidecar.self_model import (
+    from apsimo.self_model import (
         ActionJournal, CompetenceStore, SelfModel, TrustEngine,
     )
     monkeypatch.setenv("COLONY_PROJECTS_MODE", "shadow")

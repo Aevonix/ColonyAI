@@ -9,12 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.api.routers import host
-from colony_sidecar.server import _attach_p8_runtime
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.visibility import content_digest
+from apsimo.autonomy.config import AutonomyConfig
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.api.routers import host
+from apsimo.server import _attach_p8_runtime
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.visibility import content_digest
 
 
 def _now() -> datetime:

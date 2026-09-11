@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from colony_sidecar.beliefs.source_claims import validated_claims
-from colony_sidecar.beliefs.source_time import source_event_time
-from colony_sidecar.intelligence.graph.recall import pack_memory_context, source_candidates
+from apsimo.beliefs.source_claims import validated_claims
+from apsimo.beliefs.source_time import source_event_time
+from apsimo.intelligence.graph.recall import pack_memory_context, source_candidates
 from test_source_claim_projection import claim
 
 

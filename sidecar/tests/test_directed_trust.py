@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.directed import DirectedActionService, ScopedTaskStore
-from colony_sidecar.self_model import (
+from apsimo.directed import DirectedActionService, ScopedTaskStore
+from apsimo.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
 

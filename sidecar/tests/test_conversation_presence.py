@@ -13,10 +13,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.schemas.host import (
+from apsimo.api.routers import host as host_mod
+from apsimo.api.schemas.host import (
     HostIdentity, HostMessage, HostSender, HostTurnContext, TurnSyncRequest)
-from colony_sidecar.channels.presence import (
+from apsimo.channels.presence import (
     STRONG_METHODS, ConversationPresenceStore, conv_presence_enabled)
 
 

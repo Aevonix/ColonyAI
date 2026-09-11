@@ -4,11 +4,11 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import source_message_hash
-from colony_sidecar.turns.source_vectors import merge_source_hits
-from colony_sidecar.turns.source_read import read
-from colony_sidecar.intelligence.graph.recall import source_candidates
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import source_message_hash
+from apsimo.turns.source_vectors import merge_source_hits
+from apsimo.turns.source_read import read
+from apsimo.intelligence.graph.recall import source_candidates
 from test_source_audio import message as audio_message
 from test_turn_source_evidence import source_app, recalled
 
@@ -143,7 +143,7 @@ def test_duplicate_projection_rows_do_not_hide_other_canonical_messages(tmp_path
 
 
 def test_ownership_reconstruction_only_reads_scoped_matches_and_hashes_each_message_once(tmp_path, monkeypatch):
-    from colony_sidecar.turns import idempotency
+    from apsimo.turns import idempotency
     ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
     retained = {"role": "user", "content": "Violet marker. " * 400}
     ledger.record_source("kept", contact_id="person", session_id="work",

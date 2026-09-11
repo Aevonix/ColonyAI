@@ -12,12 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.channels.presence import ConversationPresenceStore
-from colony_sidecar.tom.eligibility import (
+from apsimo.channels.presence import ConversationPresenceStore
+from apsimo.tom.eligibility import (
     EligibilityDecision, eligible_inferences, evaluate_inference,
     l2_approval_mode, mutual_window_days)
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.tom2 import Tom2Store, render_inference_for_contact
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.tom2 import Tom2Store, render_inference_for_contact
 
 OWNER = "cid-owner"
 READER = "cid-alice"

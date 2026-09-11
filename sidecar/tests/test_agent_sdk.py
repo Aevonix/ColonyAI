@@ -17,8 +17,8 @@ if 'websockets' not in sys.modules:
             return MockWebsockets
     sys.modules['websockets'] = MockWebsockets()
 
-from colony_sidecar.agent import AgentClient, AgentConfig
-from colony_sidecar.agent.models import NodeCertificate
+from apsimo.agent import AgentClient, AgentConfig
+from apsimo.agent.models import NodeCertificate
 
 
 class TestAgentConfig:

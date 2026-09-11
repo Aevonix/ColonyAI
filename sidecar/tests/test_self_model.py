@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from colony_sidecar.self_model import (
+from apsimo.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine, floor_class,
     self_brief,
 )
@@ -228,7 +228,7 @@ def test_delivery_cap_earned_and_bounded(monkeypatch):
 
 
 def test_rate_limiter_uses_cap_provider():
-    from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
+    from apsimo.delivery.rate_limiter import DeliveryRateLimiter
     rl = DeliveryRateLimiter(max_per_day=1, cooldown_hours=0,
                              quiet_start_hour=0, quiet_end_hour=0,
                              cap_provider=lambda base: base + 1)

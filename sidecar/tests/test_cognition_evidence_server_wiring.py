@@ -3,16 +3,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.api.authority import required_scope
-from colony_sidecar.cognition.evidence_pipeline import CognitionEvidenceStore
-from colony_sidecar.execution_results import ExecutionResultV1
-from colony_sidecar.projects.models import Project, Step
-from colony_sidecar.projects.store import ProjectStore
-from colony_sidecar.self_model.expectations import ExpectationEngine, ExpectationStore
-from colony_sidecar.self_model.store import CompetenceStore, SelfModel
-from colony_sidecar.server import _attach_cognition_evidence
-from colony_sidecar.work_orders import WorkOrderV1
+from apsimo.api.routers import host
+from apsimo.api.authority import required_scope
+from apsimo.cognition.evidence_pipeline import CognitionEvidenceStore
+from apsimo.execution_results import ExecutionResultV1
+from apsimo.projects.models import Project, Step
+from apsimo.projects.store import ProjectStore
+from apsimo.self_model.expectations import ExpectationEngine, ExpectationStore
+from apsimo.self_model.store import CompetenceStore, SelfModel
+from apsimo.server import _attach_cognition_evidence
+from apsimo.work_orders import WorkOrderV1
 
 
 class FakeScheduler:
@@ -308,6 +308,6 @@ async def test_http_never_returns_unverifiable_evidence_trace(monkeypatch):
 
     assert result["trace"] == []
     assert result["status"]["healthy"] is False
-    assert result["status"]["last_error"] == \
+    assert result["status"]["last_error"] ==\
         "evidence_ledger_integrity_failed"
     assert "integrity failure" in result["trace_error"]

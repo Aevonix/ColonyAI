@@ -7,27 +7,27 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.cognition.goal_spine import (
+from apsimo.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtOutputV1,
     ThoughtProposalPresentationSink,
 )
-from colony_sidecar.proposals import ProposalStore
-from colony_sidecar.cognition.runtime import CognitionRuntimeContractV1
-from colony_sidecar.self_model.workspace import ConcernStore
-from colony_sidecar.task_queue.handlers.inference import (
+from apsimo.proposals import ProposalStore
+from apsimo.cognition.runtime import CognitionRuntimeContractV1
+from apsimo.self_model.workspace import ConcernStore
+from apsimo.task_queue.handlers.inference import (
     InferenceHandler,
     ThoughtOnlyInferenceHandler,
 )
-from colony_sidecar.task_queue.handlers.registry import build_default_handlers
-from colony_sidecar.task_queue.models import Job, JobType
-from colony_sidecar.task_queue.worker import JobHandler, WorkerNode
-from colony_sidecar.server import (
+from apsimo.task_queue.handlers.registry import build_default_handlers
+from apsimo.task_queue.models import Job, JobType
+from apsimo.task_queue.worker import JobHandler, WorkerNode
+from apsimo.server import (
     _cognition_owner_spec,
     _cognition_worker_profile,
 )
-from colony_sidecar.autonomy.loop import _record_p3_thinker_candidates
+from apsimo.autonomy.loop import _record_p3_thinker_candidates
 
 
 NOW = datetime(2026, 7, 12, 18, 0, tzinfo=timezone.utc)
@@ -374,7 +374,7 @@ async def test_self_directed_shadow_provenance_is_not_laundered_by_live_workspac
     monkeypatch.setenv("COLONY_WORKSPACE", "live")
     concerns = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = SimpleNamespace()
-    from colony_sidecar.self_model.workspace import WorkspaceEngine
+    from apsimo.self_model.workspace import WorkspaceEngine
 
     workspace = WorkspaceEngine(concerns)
     initiative = SimpleNamespace(

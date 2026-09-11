@@ -4,10 +4,10 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from colony_sidecar.agents.store import AgentStore
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.initiatives.assignment import AssignmentEngine
-from colony_sidecar.initiatives.models import StoredInitiative
+from apsimo.agents.store import AgentStore
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.initiatives.assignment import AssignmentEngine
+from apsimo.initiatives.models import StoredInitiative
 
 
 class TestAssignmentEngine:
@@ -307,24 +307,24 @@ class TestInitiativeCapabilities:
 
     def test_follow_up_needs_no_capabilities(self) -> None:
         """Test that follow_up allows any agent."""
-        from colony_sidecar.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert INITIATIVE_CAPABILITIES.get("follow_up") == []
 
     def test_relationship_needs_messaging(self) -> None:
         """Test that relationship needs messaging capability."""
-        from colony_sidecar.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert "messaging" in INITIATIVE_CAPABILITIES.get("relationship", [])
 
     def test_scheduling_needs_calendar(self) -> None:
         """Test that scheduling needs calendar capability."""
-        from colony_sidecar.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert "calendar" in INITIATIVE_CAPABILITIES.get("scheduling", [])
 
     def test_coding_needs_coding(self) -> None:
         """Test that coding needs coding capability."""
-        from colony_sidecar.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert "coding" in INITIATIVE_CAPABILITIES.get("coding", [])

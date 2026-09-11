@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from fastapi import HTTPException, Request
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.api.authority import legacy_authority
+from apsimo.api.routers import host
+from apsimo.api.authority import legacy_authority
 
 
 def _legacy_request() -> Request:

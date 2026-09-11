@@ -9,8 +9,8 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.commitments.local_work import LocalWork
-from colony_sidecar.turns.local_work import local_work_view
+from apsimo.commitments.local_work import LocalWork
+from apsimo.turns.local_work import local_work_view
 from test_accepted_local_work import body, local_api, native_run, post
 
 

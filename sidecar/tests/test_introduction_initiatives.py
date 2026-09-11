@@ -7,10 +7,10 @@ agent_action, so it is surfaced, never auto-executed.
 
 import pytest
 
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.identity.resolver import reset_identity_resolver
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.identity.resolver import reset_identity_resolver
+from apsimo.intelligence.components.initiative_engine import (
     InitiativeEngine,
     InitiativeType,
 )
@@ -105,7 +105,7 @@ def _engine():
 
 
 def _init(type_, priority, n, action_hint=None):
-    from colony_sidecar.intelligence.components.initiative_engine import Initiative
+    from apsimo.intelligence.components.initiative_engine import Initiative
     return Initiative(
         id=f"{type_.value}-{n}", type=type_, description=f"{type_.value} {n}",
         priority=priority, rationale="x", dedup_key=f"{type_.value}:{n}",

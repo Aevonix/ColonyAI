@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.cognition.goal_spine import (
+from apsimo.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtJobV1,
@@ -19,12 +19,12 @@ from colony_sidecar.cognition.goal_spine import (
     cognition_spine_mode,
     parse_thought_output,
 )
-from colony_sidecar.projects import Project, ProjectEngine, ProjectStore, Step
-from colony_sidecar.router.tiers import ModelTier
-from colony_sidecar.self_model.workspace import ConcernStore, WorkspaceEngine
-from colony_sidecar.task_queue.handlers.inference import InferenceHandler
-from colony_sidecar.task_queue.models import Job, JobResult, JobStatus, JobType
-from colony_sidecar.work_orders import QueueWorkOrderAdapter
+from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
+from apsimo.router.tiers import ModelTier
+from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
+from apsimo.task_queue.handlers.inference import InferenceHandler
+from apsimo.task_queue.models import Job, JobResult, JobStatus, JobType
+from apsimo.work_orders import QueueWorkOrderAdapter
 
 
 class FakeQueue:
@@ -726,7 +726,7 @@ async def test_non_action_thought_routes_once_without_execution(
 
 
 def _revisioned_runtime(spine, revision_state):
-    from colony_sidecar.cognition.runtime import CognitionRuntimeContractV1
+    from apsimo.cognition.runtime import CognitionRuntimeContractV1
 
     spine._enforce_runtime_contract = True
     spine._runtime_contract_provider = lambda: CognitionRuntimeContractV1.compose(

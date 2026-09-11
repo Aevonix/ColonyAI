@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.commitments.store import CommitmentStore
+from apsimo.commitments.store import CommitmentStore
 
 
 # Deployment evidence: rollback floor

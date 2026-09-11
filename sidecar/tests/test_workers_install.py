@@ -1,7 +1,7 @@
 """Scheduled agent workers (v0.20.0).
 
 Covers:
-- the packaged worker modules (colony_sidecar.workers.*): import, config
+- the packaged worker modules (apsimo.workers.*): import, config
   resolution from env, --dry-run main() paths (no network), and the pure
   scan/claim/payload helpers
 - the wizard's cron helpers: command construction (console script vs
@@ -21,8 +21,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar import setup as wizard
-from colony_sidecar.setup import (
+from apsimo import setup as wizard
+from apsimo.setup import (
     WORKER_SPECS,
     build_cron_lines,
     build_worker_command,
@@ -30,7 +30,7 @@ from colony_sidecar.setup import (
     merge_crontab,
     run_workers_step,
 )
-from colony_sidecar.workers import colony_worker, queue_worker, skills_sync
+from apsimo.workers import colony_worker, queue_worker, skills_sync
 
 
 @pytest.fixture(autouse=True)
@@ -265,7 +265,7 @@ def _which_console(name):
 
 def test_build_worker_command_prefers_console_script():
     cmd = build_worker_command(
-        "colony-queue-worker", "colony_sidecar.workers.queue_worker",
+        "colony-queue-worker", "apsimo.workers.queue_worker",
         which=_which_console,
     )
     assert cmd == "/usr/local/bin/colony-queue-worker"
@@ -273,15 +273,15 @@ def test_build_worker_command_prefers_console_script():
 
 def test_build_worker_command_falls_back_to_module():
     cmd = build_worker_command(
-        "colony-queue-worker", "colony_sidecar.workers.queue_worker",
+        "colony-queue-worker", "apsimo.workers.queue_worker",
         which=_which_none, python="/opt/venv/bin/python",
     )
-    assert cmd == "/opt/venv/bin/python -m colony_sidecar.workers.queue_worker"
+    assert cmd == "/opt/venv/bin/python -m apsimo.workers.queue_worker"
 
 
 def test_build_worker_command_default_python_is_current_interpreter():
     cmd = build_worker_command("colony-skills-sync",
-                               "colony_sidecar.workers.skills_sync",
+                               "apsimo.workers.skills_sync",
                                which=_which_none)
     assert cmd.startswith(sys.executable + " -m ")
 
@@ -312,8 +312,8 @@ def test_build_cron_lines_module_fallback():
         env_file="/e/.env", log_dir="/l", workdir="/w",
         which=_which_none, python="/opt/venv/bin/python",
     )
-    assert "/opt/venv/bin/python -m colony_sidecar.workers.queue_worker" in lines[0]
-    assert "/opt/venv/bin/python -m colony_sidecar.workers.skills_sync" in lines[1]
+    assert "/opt/venv/bin/python -m apsimo.workers.queue_worker" in lines[0]
+    assert "/opt/venv/bin/python -m apsimo.workers.skills_sync" in lines[1]
 
 
 # ---------------------------------------------------------------------------
@@ -350,7 +350,7 @@ def test_merge_is_idempotent():
 def test_merge_skips_worker_already_referenced_in_other_form():
     # Hand-installed `python -m` entry must block the console-script line
     # for the same worker (and vice versa) — never schedule a worker twice.
-    existing = "*/2 * * * * /opt/venv/bin/python -m colony_sidecar.workers.queue_worker\n"
+    existing = "*/2 * * * * /opt/venv/bin/python -m apsimo.workers.queue_worker\n"
     merged, added = merge_crontab(existing, _lines(which=_which_console))
     assert len(added) == 1
     assert "colony-skills-sync" in added[0]
@@ -452,8 +452,8 @@ def test_workers_step_installs_cron_on_yes(step_env, tmp_path, capsys):
     run_workers_step(step_env, ask=make_ask(["y", "y"]), run=fake, which=_step_which)
     out = capsys.readouterr().out
     assert "Installed 2 crontab entries" in out
-    assert "colony_sidecar.workers.queue_worker" in fake.written
-    assert "colony_sidecar.workers.skills_sync" in fake.written
+    assert "apsimo.workers.queue_worker" in fake.written
+    assert "apsimo.workers.skills_sync" in fake.written
     # env file is sourced with export, from the state-dir parent
     assert f". {step_env.resolve()}; set +a;" in fake.written
     assert f"cd {tmp_path / 'colony-home'} && set -a" in fake.written
@@ -478,7 +478,7 @@ def test_workers_step_agent_elsewhere_prints_manual_lines(step_env, capsys):
     assert fake.calls == []  # no crontab interaction at all
     assert "crontab -e" in out
     assert "*/5 * * * *" in out and "0 9 * * *" in out
-    assert "colony_sidecar.workers.queue_worker" in out
+    assert "apsimo.workers.queue_worker" in out
 
 
 def test_workers_step_no_crontab_prints_manual_lines(step_env, capsys):

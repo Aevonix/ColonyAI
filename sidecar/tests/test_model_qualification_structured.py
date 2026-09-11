@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.qualification.cases import json_fields, select_cases
-from colony_sidecar.qualification.cli import run
-from colony_sidecar.qualification.records import read
-from colony_sidecar.qualification.structured_cases import CASES
+from apsimo.qualification.cases import json_fields, select_cases
+from apsimo.qualification.cli import run
+from apsimo.qualification.records import read
+from apsimo.qualification.structured_cases import CASES
 from test_function_routing import config, endpoint
 
 

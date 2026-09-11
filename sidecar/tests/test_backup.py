@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-import colony_sidecar.backup as backup_module
-from colony_sidecar.backup import (
+import apsimo.backup as backup_module
+from apsimo.backup import (
     create_full_backup,
     restore_full_backup,
     _scrub_env_file,

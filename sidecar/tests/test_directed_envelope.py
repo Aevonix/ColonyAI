@@ -6,8 +6,8 @@ import asyncio
 import hashlib
 import hmac
 
-from colony_sidecar.directed import DirectedActionService, ScopedTaskStore
-from colony_sidecar.directed.service import report_token_for
+from apsimo.directed import DirectedActionService, ScopedTaskStore
+from apsimo.directed.service import report_token_for
 
 
 def _service():

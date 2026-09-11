@@ -9,21 +9,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.cognition.goal_spine import (
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtQueueAdapter,
 )
-from colony_sidecar.projects import Project, ProjectEngine, ProjectStore, Step
-from colony_sidecar.self_model.event_concerns import (
+from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
+from apsimo.self_model.event_concerns import (
     ConversationTurnConcernReducer,
     project_turn_concern_hold_reason,
     project_conversation_turn,
     turn_concern_mode,
 )
-from colony_sidecar.self_model.workspace import ConcernStore, WorkspaceEngine
-from colony_sidecar.task_queue.models import JobResult, JobStatus, JobType
+from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
+from apsimo.task_queue.models import JobResult, JobStatus, JobType
 
 
 NOW = "2026-08-07T12:00:00+00:00"
@@ -479,7 +479,7 @@ def test_duplicate_delivery_and_restart_are_idempotent(tmp_path, monkeypatch):
 
 
 def test_turn_reducer_has_an_independent_cursor(tmp_path, monkeypatch):
-    from colony_sidecar.self_model.event_concerns import EventConcernReducer
+    from apsimo.self_model.event_concerns import EventConcernReducer
 
     monkeypatch.setenv("COLONY_EVENT_CONCERNS", "live")
     monkeypatch.setenv("COLONY_EVENT_CONCERNS_BOOTSTRAP", "replay")

@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.self_model.expectations import ExpectationStore, ExpectationEngine
-from colony_sidecar.self_model import runtime_forecasts
-from colony_sidecar.world_model.expectation_resolvers import register_world_resolvers, CAUSAL_PREFIX
+from apsimo.self_model.expectations import ExpectationStore, ExpectationEngine
+from apsimo.self_model import runtime_forecasts
+from apsimo.world_model.expectation_resolvers import register_world_resolvers, CAUSAL_PREFIX
 
 
 def issue(store, key='one', **changes):

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from colony_sidecar.intelligence.synthesis.insight_store import InsightStore
+from apsimo.intelligence.synthesis.insight_store import InsightStore
 
 
 def test_dismiss_then_list(tmp_path):

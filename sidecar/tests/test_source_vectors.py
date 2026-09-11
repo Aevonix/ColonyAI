@@ -11,12 +11,12 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_vectors import SourceVectors, merge_source_hits
-from colony_sidecar.vector import Collection
-from colony_sidecar.vector.indexes import EmbeddingIdentity, IndexCatalog, IncompatibleIndex
-from colony_sidecar.vector.migrate import migrate_tier
-from colony_sidecar.vector.store import VectorStore
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_vectors import SourceVectors, merge_source_hits
+from apsimo.vector import Collection
+from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog, IncompatibleIndex
+from apsimo.vector.migrate import migrate_tier
+from apsimo.vector.store import VectorStore
 from test_turn_source_evidence import source_app, recalled, envelope
 from test_recall_unified_context import Reranker, calibrate
 
@@ -59,7 +59,7 @@ async def drain(projection):
 
 
 def test_semantic_hydration_marks_chunks_without_changing_source_or_projection(tmp_path):
-    from colony_sidecar.turns.source_vectors import chunks, hydrate
+    from apsimo.turns.source_vectors import chunks, hydrate
     ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db')
     text = 'The office labeler reset has three steps. ' + 'Inspect its amber indicator. ' * 100
     for turn, content in [('long', text), ('short', 'The office labeler is ready.')]:
@@ -80,9 +80,9 @@ def test_semantic_hydration_marks_chunks_without_changing_source_or_projection(t
 
 @pytest.mark.asyncio
 async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_erasure(tmp_path, monkeypatch):
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-    from colony_sidecar.beliefs.source_time import MemoryTimeQuery
-    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_time import MemoryTimeQuery
+    from apsimo.intelligence.graph.selection import RecallSelector
     ledger, _, _, projection = await setup(tmp_path)
     query = 'Where is my office and how do I enter?'
     for i in range(5):
@@ -130,9 +130,9 @@ async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_e
 
 @pytest.mark.asyncio
 async def test_quote_dedup_preserves_author_role_scope_and_assertion_bundles(tmp_path):
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-    from colony_sidecar.beliefs.source_time import MemoryTimeQuery
-    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_time import MemoryTimeQuery
+    from apsimo.intelligence.graph.selection import RecallSelector
     ledger, _, _, projection = await setup(tmp_path)
     text = 'My office is beside the orchard.'
     for turn, contact, role, scope in [('a', 'a', 'user', 'person'), ('a-copy', 'a', 'user', 'person'),
@@ -158,9 +158,9 @@ async def test_quote_dedup_preserves_author_role_scope_and_assertion_bundles(tmp
 
 @pytest.mark.asyncio
 async def test_dated_repeated_quote_is_filtered_before_deduplication(tmp_path):
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-    from colony_sidecar.beliefs.source_time import MemoryTimeQuery
-    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_time import MemoryTimeQuery
+    from apsimo.intelligence.graph.selection import RecallSelector
     ledger, _, _, projection = await setup(tmp_path)
     for day in (1, 2):
         ledger.record_source(f'day-{day}', contact_id='c', session_id=f's-{day}',
@@ -185,9 +185,9 @@ async def test_dated_repeated_quote_is_filtered_before_deduplication(tmp_path):
 
 @pytest.mark.asyncio
 async def test_ordinary_ingest_worker_semantic_context_and_one_abstention(source_app, tmp_path, monkeypatch):
-    import colony_sidecar.vector as vectors
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.beliefs.source_projection import run_source_claim_worker
+    import apsimo.vector as vectors
+    from apsimo.api.routers import host
+    from apsimo.beliefs.source_projection import run_source_claim_worker
     ledger, store, pipeline, projection = await setup(tmp_path)
     monkeypatch.setattr(vectors, '_store', store)
     monkeypatch.setattr(vectors, '_pipeline', pipeline)
@@ -340,7 +340,7 @@ async def test_large_checkpoint_yields_between_batches_to_new_source(tmp_path):
 @pytest.mark.asyncio
 async def test_caption_semantics_keeps_exact_asset_and_shared_source_erasure(tmp_path):
     from test_source_media import message, Vision, image_bytes
-    from colony_sidecar.turns.media import SourceMedia
+    from apsimo.turns.media import SourceMedia
     ledger, store, pipeline, projection = await setup(tmp_path)
     for person in ('a', 'b'):
         ledger.record_source(person, contact_id=person, session_id='s', messages=[message()])
@@ -363,8 +363,8 @@ async def test_caption_semantics_keeps_exact_asset_and_shared_source_erasure(tmp
 @pytest.mark.asyncio
 async def test_semantic_candidates_still_use_temporal_conflict_and_correction_bundles(source_app, tmp_path, monkeypatch):
     from test_source_claim_projection import Model, claim, ingest
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-    from colony_sidecar.beliefs.source_time import interpret_time_query
+    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_time import interpret_time_query
     ledger, store, pipeline, projection = await setup(tmp_path)
     claims = SourceClaimProjection(ledger)
     a, b = 'My office is in River.', 'My office is in Lake.'
@@ -381,8 +381,8 @@ async def test_semantic_candidates_still_use_temporal_conflict_and_correction_bu
         bundles = [json.loads(row['content']) for row in rows if row.get('atomic_evidence')]
         assert bundles[0]['status'] == 'unresolved_conflict'
         assert {row['value'] for row in bundles[0]['assertions']} == {'River', 'Lake'}
-        from colony_sidecar.intelligence.graph.selection import RecallSelector
-        from colony_sidecar.intelligence.graph.recall import provider_calibration_metadata
+        from apsimo.intelligence.graph.selection import RecallSelector
+        from apsimo.intelligence.graph.recall import provider_calibration_metadata
         reranker = Reranker(); calibrate(monkeypatch, reranker)
         selector = RecallSelector(reranker.rerank, calibration_metadata=lambda: provider_calibration_metadata(reranker))
         selected, context = await selector.select_context('workplace', [], rows)

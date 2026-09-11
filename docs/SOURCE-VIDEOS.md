@@ -1,14 +1,14 @@
 # Selected video sources
 
-Colony can retain explicitly supplied short MP4 clips, describe bounded samples through the existing vision role, and reopen a clip-relative frame through the canonical source reader. It does not continuously record cameras, track objects, transcribe embedded audio or infer capture time from upload time. Private adapters own camera connections and choose which clips become sources.
+Apsimo can retain explicitly supplied short MP4 clips, describe bounded samples through the existing vision role, and reopen a clip-relative frame through the canonical source reader. It does not continuously record cameras, track objects, transcribe embedded audio or infer capture time from upload time. Private adapters own camera connections and choose which clips become sources.
 
 Install the optional decoder in the same environment as the sidecar:
 
 ```sh
-python -m pip install 'colonyai[video]'
+python -m pip install 'apsimo[video]'
 ```
 
-The extra selects PyAV 18.1.0. `colony doctor` reports whether this optional decoder imports in its local interpreter and offers the extra when absent. It does not claim to have tested a clip, model or camera. No decoder is installed automatically by a worker. Without it, the original remains retained with `video_unsupported` and `video_decoder_unavailable`; installing a dependency does not silently rerun prior terminal work. Enable the extra before admitting clips. An already retained original can still be opened explicitly after installation, independently of the terminal caption status. Do not repeatedly re-admit the same clip to select a successful caption.
+The extra selects PyAV 18.1.0. `apsimo doctor` reports whether this optional decoder imports in its local interpreter and offers the extra when absent. It does not claim to have tested a clip, model or camera. No decoder is installed automatically by a worker. Without it, the original remains retained with `video_unsupported` and `video_decoder_unavailable`; installing a dependency does not silently rerun prior terminal work. Enable the extra before admitting clips. An already retained original can still be opened explicitly after installation, independently of the terminal caption status. Do not repeatedly re-admit the same clip to select a successful caption.
 
 ## Admission and storage
 
@@ -36,6 +36,6 @@ The native authentic read receipt retains the initial text/frame pair and frame 
 
 ## Dependencies and evidence
 
-PyAV's own code is BSD-3-Clause. Its binary wheels bundle FFmpeg and other libraries with separate licenses. The reviewed 18.1.0 Linux wheel's FFmpeg reports LGPLv3-or-later; both reviewed Linux and macOS builds enable additional codec libraries, including x264/x265. The wheels' license directory contains PyAV notices, not a complete attribution bundle for all linked components. Colony declares an optional dependency and does not vendor these wheels or label the whole decoder stack BSD. Any future binary redistribution must address the exact bundled components. See [PyAV license](https://github.com/PyAV-Org/PyAV/blob/v18.1.0/LICENSE.txt), [selected release metadata](https://pypi.org/pypi/av/18.1.0/json), [published FFmpeg build selection](https://github.com/PyAV-Org/PyAV/blob/v18.1.0/scripts/ffmpeg-8.1.json), and [FFmpeg licensing](https://ffmpeg.org/legal.html).
+PyAV's own code is BSD-3-Clause. Its binary wheels bundle FFmpeg and other libraries with separate licenses. The reviewed 18.1.0 Linux wheel's FFmpeg reports LGPLv3-or-later; both reviewed Linux and macOS builds enable additional codec libraries, including x264/x265. The wheels' license directory contains PyAV notices, not a complete attribution bundle for all linked components. Apsimo declares an optional dependency and does not vendor these wheels or label the whole decoder stack BSD. Any future binary redistribution must address the exact bundled components. See [PyAV license](https://github.com/PyAV-Org/PyAV/blob/v18.1.0/LICENSE.txt), [selected release metadata](https://pypi.org/pypi/av/18.1.0/json), [published FFmpeg build selection](https://github.com/PyAV-Org/PyAV/blob/v18.1.0/scripts/ffmpeg-8.1.json), and [FFmpeg licensing](https://ffmpeg.org/legal.html).
 
 Controlled tests decode real variable-timestamp MP4 frames, use authenticated source HTTP routes, and check corrections/erasure, shared originals, backup/restore, caption provenance, unsupported decoder and subprocess lifetime. Native SDK tests separately check actual payload conversion and stale-frame withholding. These checks are not evidence that a particular live camera is enrolled or that a model answered a real visual question correctly. Grade sampled-caption utility, automatic source recall, authentic original-frame open, actual downstream pixels and first answer independently in a separately frozen trial.

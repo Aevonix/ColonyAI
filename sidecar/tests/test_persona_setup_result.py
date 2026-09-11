@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.persona.engine import PersonaEngine
-from colony_sidecar.persona.manifest import load_manifest
+from apsimo.persona.engine import PersonaEngine
+from apsimo.persona.manifest import load_manifest
 
 
 @pytest.fixture
@@ -55,7 +55,7 @@ def test_setup_saves_manifest_and_channels_without_claiming_host_install(deploym
 
 
 def test_cli_reports_unapplied_host_settings_from_actual_setup(deployment, monkeypatch, capsys):
-    from colony_sidecar import cli
+    from apsimo import cli
     repo, state, host = deployment
     config = repo / 'variables.yaml'
     config.write_text('variables: {}\nsecrets: {}\n')

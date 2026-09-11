@@ -10,28 +10,28 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.api.routers import task_queue as queue_router
-from colony_sidecar.cognition.goal_spine import ThoughtJobV1
-from colony_sidecar.task_queue.models import (
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.api.routers import task_queue as queue_router
+from apsimo.cognition.goal_spine import ThoughtJobV1
+from apsimo.task_queue.models import (
     Job,
     JobCapabilityRequirement,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.action_receipts import (
+from apsimo.task_queue.action_receipts import (
     ActionReceiptAttestationV1,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
-from colony_sidecar.task_queue.routing import (
+from apsimo.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.routing import (
     ACTION_PLANE_ROUTE,
     AGENT_SYNC_ROUTE,
     HERMES_RUN_ROUTE,
     WORK_ORDER_ROUTE,
     THOUGHT_ROUTE,
 )
-from colony_sidecar.work_orders import WorkOrderV1
+from apsimo.work_orders import WorkOrderV1
 
 
 @pytest.fixture(autouse=True)

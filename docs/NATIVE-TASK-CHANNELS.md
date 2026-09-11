@@ -4,7 +4,7 @@ The optional `colony_task` tool lets an authenticated owner start a task and
 continue the foreground conversation. Another channel currently mapped to that
 same owner can inspect, steer or stop the retained task ID. The gateway runs
 the work through its normal adapter, agent loop, session store, interruption
-and recovery path. Colony supplies source provenance and durable associations.
+and recovery path. Apsimo supplies source provenance and durable associations.
 
 This feature does not create another executor or network endpoint. Hardware
 adapters can subclass the public native adapter and supply their existing
@@ -13,7 +13,7 @@ results for inspection; it does not send unsolicited completion messages.
 
 ## Enable
 
-Configure the ordinary Colony plugin, owner identity, source ledger and memory
+Configure the ordinary Apsimo plugin, owner identity, source ledger and memory
 provider first. Then enable both the tool and its native execution platform:
 
 ```yaml

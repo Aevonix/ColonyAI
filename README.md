@@ -1,12 +1,12 @@
-# Colony
+# Apsimo
 
 Persistent memory and shared work for a personal agent, using your own models.
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/Aevonix/ColonyAI/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/ColonyAI/actions/workflows/ci.yml)
+[![CI](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml)
 
-Colony runs beside [Hermes](https://github.com/NousResearch/hermes-agent).
-Hermes handles conversations, tools, scheduling and delegation. Colony retains
+Apsimo runs beside [Hermes](https://github.com/NousResearch/hermes-agent).
+Hermes handles conversations, tools, scheduling and delegation. Apsimo retains
 source evidence, recalls relevant information before a turn, and shares work
 across sessions. Your private instance supplies its identity, credentials,
 channels, model endpoints and optional hardware adapters.
@@ -42,6 +42,10 @@ checks. Current limitations include unsupported model claims and incomplete
 ordinary-use evidence for useful autonomous learning. The
 [changelog](CHANGELOG.md) records implementation changes and qualification limits.
 
+Existing deployments: read the [Apsimo migration guide](docs/APSIMO-MIGRATION.md)
+before changing the selected environment. Old state paths and historical names
+remain valid.
+
 ## Start with Hermes
 
 The current qualification target is Hermes 0.21.1; 0.21.0 attachment remains supported.
@@ -55,14 +59,14 @@ Python 3.12 is exercised by native integration CI. One local OpenAI-compatible
 chat endpoint is sufficient. The lightweight profile needs no Docker, Neo4j,
 embedding model or external account.
 
-Install the matching published packages in a private environment. A Colony
+Install the matching release packages in a private environment. An Apsimo
 checkout is not required:
 
 ```bash
-python3 -m venv "$HOME/.local/share/colony/venv"
-source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.2.0" "colony-hermes[native-memory]==1.2.0"
-colony init --hermes-python /path/to/hermes/.venv/bin/python
+python3 -m venv "$HOME/.local/share/apsimo/venv"
+source "$HOME/.local/share/apsimo/venv/bin/activate"
+python -m pip install "apsimo[hermes]==1.3.0" "apsimo-hermes[native-memory]==1.3.0"
+apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
 The wizard lists existing Hermes profiles, selects one home, asks for your name, agent name, model, values, timezone and quiet hours, and
@@ -75,13 +79,13 @@ patches Hermes core nor restarts an existing gateway.
 Choose a private `--hermes-home` outside Git checkouts. The
 [setup guide](docs/LOCAL-HERMES-SETUP.md) covers existing profiles, directory
 permissions, user services, upgrades and development from a checkout.
-Run `colony init --help` for unattended setup and optional task features.
+Run `apsimo init --help` for unattended setup and optional task features.
 
 Accept the wizard's startup option, or run:
 
 ```bash
-colony --instance /path/to/private/colony start --detach
-colony --instance /path/to/private/colony status
+apsimo --instance /path/to/private/apsimo start --detach
+apsimo --instance /path/to/private/apsimo status
 ```
 
 Start a new Hermes session, give it a harmless fact, then ask for that fact in a
@@ -92,20 +96,20 @@ The wizard can also enable [accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md):
 ask for a summary or comparison of selected local text files, and the native
 Hermes Kanban worker completes it in the background with a retained cited report.
 This requires a local model with function calling and a running Hermes gateway.
-For general persistent tasks, opt in separately with `colony init --native-goals`
+For general persistent tasks, opt in separately with `apsimo init --native-goals`
 for the selected home. This enables native Kanban tools on the existing profile
 and observes its selected boards. The wizard does not start the Hermes gateway.
 Native task tools and consequential-action consent remain governed by that
 profile; see the [setup guide](docs/LOCAL-HERMES-SETUP.md#persistent-native-tasks).
 For login startup and automatic process recovery, stop a detached instance and
-run `colony --instance /path/to/private/colony service install`, then
-`colony --instance /path/to/private/colony service start`. Linux systemd user
+run `apsimo --instance /path/to/private/apsimo service install`, then
+`apsimo --instance /path/to/private/apsimo service start`. Linux systemd user
 services and macOS LaunchAgents use the selected environment and private state.
 This follows the user session's lifetime, not a guarantee of operation before
 login. See the setup guide for status, stop, uninstall and recovery.
 
-When upgrading an existing attachment, update the matching Colony packages,
-then run `colony init --refresh-adapter` for the selected Hermes home while its
+When upgrading an existing attachment, update the matching Apsimo packages,
+then run `apsimo init --refresh-adapter` for the selected Hermes home while its
 runtimes are stopped. This refreshes a copied adapter that a package upgrade
 alone would leave behind. It preserves private identity and state and retains
 the previous adapter for recovery. Follow the
@@ -194,7 +198,7 @@ for native package installations and service bindings.
   Attested completion summaries can also become retained assistant evidence for
   later recall, with supplied source dependencies and erasure. They remain
   unverified machine reports, not owner facts or proof of an external effect.
-- **Measured model consumers.** Opt-in `colony models inspect`, `evaluate` and
+- **Measured model consumers.** Opt-in `apsimo models inspect`, `evaluate` and
   `compare` record bounded results without changing deployed bindings. Direct
   completion and actual memory-consumer cases stay separate, with failed and
   interrupted attempts retained. [Model qualification](docs/MODEL-QUALIFICATION.md)
@@ -241,7 +245,7 @@ for native package installations and service bindings.
 
 Models are interchangeable processors over shared canonical evidence,
 commitments and working views. Hermes owns native task scheduling and execution;
-Colony observes those tasks and supplies context through its existing adapter.
+Apsimo observes those tasks and supplies context through its existing adapter.
 One sidecar owns canonical state and a bounded context selector. SQLite supports
 the minimum deployment. Neo4j remains the extended deployment's legacy memory
 store; Lance is a replaceable search projection. Legacy graph records are not
@@ -291,7 +295,7 @@ Install the sidecar development dependencies, then run its tests from `sidecar`:
 ```bash
 python -m pip install -e './sidecar[dev]'
 cd sidecar
-python -m pytest -q tests colony_sidecar
+python -m pytest -q tests apsimo
 ```
 
 `tests/hermes_adapter` qualifies built packages against the pinned native

@@ -10,7 +10,7 @@ owner-only context section).
 
 import pytest
 
-from colony_sidecar.intelligence.components.preference_learner import PreferenceLearner
+from apsimo.intelligence.components.preference_learner import PreferenceLearner
 
 
 # ---------------------------------------------------------------------------
@@ -93,8 +93,8 @@ def test_legacy_constructor_still_accepts_graph_positional():
 @pytest.mark.asyncio
 async def test_host_endpoints_and_owner_only_surfacing(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner:test")
-    import colony_sidecar.api.routers.host as host
-    from colony_sidecar.api.schemas.host import (
+    import apsimo.api.routers.host as host
+    from apsimo.api.schemas.host import (
         ContextAssembleRequest, HostIdentity, HostTurnContext, HostMessage,
     )
 

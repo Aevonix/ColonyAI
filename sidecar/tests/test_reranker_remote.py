@@ -10,7 +10,7 @@ import json
 
 import pytest
 
-from colony_sidecar.vector.reranker import (
+from apsimo.vector.reranker import (
     OpenAIAPIRerankerProvider,
     QWEN3_RERANK_PREFIX,
     QWEN3_RERANK_SUFFIX,

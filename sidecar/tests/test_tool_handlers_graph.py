@@ -16,7 +16,7 @@ from typing import Optional
 
 import pytest
 
-from colony_sidecar.tools.handlers import (
+from apsimo.tools.handlers import (
     handle_memory_search,
     handle_query_entities,
 )
@@ -115,5 +115,5 @@ async def test_query_entities_passes_specific_type():
 
 @pytest.mark.asyncio
 async def test_registry_exposes_world_model():
-    from colony_sidecar.autonomy.registry import SubsystemRegistry
+    from apsimo.autonomy.registry import SubsystemRegistry
     assert hasattr(SubsystemRegistry, "world_model")

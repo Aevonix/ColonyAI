@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from colony_sidecar.channels.phone_gateways import set_channel_store_ref
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
+from apsimo.channels.phone_gateways import set_channel_store_ref
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
 
 
 async def _store(tmp_path) -> SQLiteContactStore:

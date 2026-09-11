@@ -5,12 +5,12 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.beliefs.source_time import interpret_time_query
-from colony_sidecar.intelligence.graph.recall import pack_memory_context
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_read import read
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.beliefs.source_time import interpret_time_query
+from apsimo.intelligence.graph.recall import pack_memory_context
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_read import read
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_claim_projection import Model, claim
 from test_turn_source_evidence import source_app

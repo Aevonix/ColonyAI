@@ -2,9 +2,9 @@
 from contextlib import closing
 import json
 import pytest
-from colony_sidecar.directives import DirectiveManager, DirectiveStore, Action
-from colony_sidecar.directives.extractor import extract_directives
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.directives import DirectiveManager, DirectiveStore, Action
+from apsimo.directives.extractor import extract_directives
+from apsimo.turns import TurnIdempotencyLedger
 
 @pytest.fixture
 def setup(tmp_path):
@@ -131,11 +131,11 @@ async def test_real_owner_turn_ingestion_and_manual_api(monkeypatch, tmp_path):
     """Exercise the actual producer, source write, capture and future context."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.api.middleware import ApiKeyMiddleware
-    from colony_sidecar import identity
-    from colony_sidecar.events import broadcaster
-    from colony_sidecar.turns import get_turn_idempotency_ledger
+    from apsimo.api.routers import host
+    from apsimo.api.middleware import ApiKeyMiddleware
+    from apsimo import identity
+    from apsimo.events import broadcaster
+    from apsimo.turns import get_turn_idempotency_ledger
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
     monkeypatch.setenv('COLONY_DIRECTIVE_LLM_ASSIST', 'true')  # Retired setting has no model consumer.
     monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')

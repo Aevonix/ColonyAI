@@ -13,14 +13,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.directives import (
+from apsimo.directives import (
     Action,
     DirectiveManager,
     DirectiveStore,
     DirectiveStoreUnavailable,
 )
-from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
-from colony_sidecar.reasoning.tool_policy import ToolActorPolicy
+from apsimo.reasoning import ReasoningLoop, ToolExecutor
+from apsimo.reasoning.tool_policy import ToolActorPolicy
 
 
 def _definition(name: str) -> dict:

@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.beliefs.source_claims import extraction_diagnostics
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.beliefs.source_claims import extraction_diagnostics
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns import TurnIdempotencyLedger
 from test_source_claim_projection import Model, claim
 
 

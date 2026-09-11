@@ -13,14 +13,14 @@ import re
 
 import pytest
 
-from colony_sidecar.api.routers.host import router as host_router
-from colony_sidecar.api.routers.observations import router as observations_router
-from colony_sidecar.api.routers.task_queue import router as task_queue_router
-from colony_sidecar.api.routers.executions import router as executions_router
-from colony_sidecar.api.routers.commitment_work import router as commitment_work_router
-from colony_sidecar.api.routers.initiative_work import router as initiative_work_router
+from apsimo.api.routers.host import router as host_router
+from apsimo.api.routers.observations import router as observations_router
+from apsimo.api.routers.task_queue import router as task_queue_router
+from apsimo.api.routers.executions import router as executions_router
+from apsimo.api.routers.commitment_work import router as commitment_work_router
+from apsimo.api.routers.initiative_work import router as initiative_work_router
 
-from colony_sidecar.api.routers import social_state, temporal_followups, transport, followup_plans
+from apsimo.api.routers import social_state, temporal_followups, transport, followup_plans
 
 # Every router the app mounts under /v1/host — the plugin may hit any of them.
 _HOST_ROUTERS = (host_router, task_queue_router, observations_router, executions_router, commitment_work_router, initiative_work_router, social_state.router, temporal_followups.router, transport.router, followup_plans.router)

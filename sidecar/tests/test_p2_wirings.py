@@ -8,9 +8,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.briefings.aggregators import ConnectorCalendarAggregator
-from colony_sidecar.connectors.base import Observation
+import apsimo.api.routers.host as host_mod
+from apsimo.briefings.aggregators import ConnectorCalendarAggregator
+from apsimo.connectors.base import Observation
 
 
 class _FakeCalendarConnector:
@@ -88,7 +88,7 @@ async def _client():
 
 
 async def test_context_assemble_self_knowledge_section(monkeypatch):
-    import colony_sidecar.identity_bootstrap.self_query as sq
+    import apsimo.identity_bootstrap.self_query as sq
     monkeypatch.setattr(sq, "build_self_context_from_corpus",
                         lambda: "## Colony architecture\n7 layers")
 
@@ -124,7 +124,7 @@ class _FakeSecretsManager:
 
 
 def test_connector_config_secrets_fallback(monkeypatch):
-    from colony_sidecar.connectors.base import ConnectorConfig
+    from apsimo.connectors.base import ConnectorConfig
 
     mgr = _FakeSecretsManager({
         "connector/calendar/ics_url": "https://cal.example/secret.ics",
@@ -149,7 +149,7 @@ def test_connector_config_secrets_fallback(monkeypatch):
 
 
 def test_connector_config_no_secrets_manager(monkeypatch):
-    from colony_sidecar.connectors.base import ConnectorConfig
+    from apsimo.connectors.base import ConnectorConfig
     monkeypatch.setattr(host_mod, "_secrets_manager", None)
     monkeypatch.delenv("COLONY_CONNECTOR_IMAP_HOST", raising=False)
     assert ConnectorConfig("imap").get("HOST", "") == ""
@@ -158,7 +158,7 @@ def test_connector_config_no_secrets_manager(monkeypatch):
 # --- multi-account connectors -------------------------------------------------
 
 def test_connector_account_namespacing(monkeypatch):
-    from colony_sidecar.connectors.imap_email import IMAPEmailConnector
+    from apsimo.connectors.imap_email import IMAPEmailConnector
 
     monkeypatch.setattr(host_mod, "_secrets_manager", None)
     c = IMAPEmailConnector(account="Aevonix!")     # slugged to [a-z0-9_]
@@ -173,7 +173,7 @@ def test_connector_account_namespacing(monkeypatch):
 
 
 def test_manager_expands_accounts(monkeypatch):
-    from colony_sidecar.connectors.manager import ConnectorManager
+    from apsimo.connectors.manager import ConnectorManager
 
     monkeypatch.setattr(host_mod, "_secrets_manager", None)
     for var in list(__import__("os").environ):
@@ -193,7 +193,7 @@ def test_manager_expands_accounts(monkeypatch):
 def test_env_backend_get_reads_file(tmp_path, monkeypatch):
     """set() writes the .env file; get() from a FRESH process (no dotenv load)
     must read it back — it used to consult os.environ only and return None."""
-    from colony_sidecar.secrets.backends.env import EnvBackend
+    from apsimo.secrets.backends.env import EnvBackend
     b = EnvBackend(env_path=str(tmp_path / ".env"))
     b.set("connector/imap/password", "s3cr3t")
     monkeypatch.delenv("connector/imap/password", raising=False)

@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.auth_telemetry import AuthTelemetry
-from colony_sidecar.api.authority import KeyringError, load_keyring
-from colony_sidecar.api.contact_grants import ContactGrantRegistry
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
+from apsimo.api.auth_telemetry import AuthTelemetry
+from apsimo.api.authority import KeyringError, load_keyring
+from apsimo.api.contact_grants import ContactGrantRegistry
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
 
 
 OWNER = "cid-owner"
@@ -258,8 +258,8 @@ async def test_server_resolver_projects_exact_contact_without_body_broadening(
     ):
         monkeypatch.setattr(host, name, None)
 
-    from colony_sidecar.identity import participants
-    from colony_sidecar.identity.participants import Resolution
+    from apsimo.identity import participants
+    from apsimo.identity.participants import Resolution
 
     class _Resolver:
         def __init__(self, _store):
@@ -510,7 +510,7 @@ def test_websocket_auth_is_included_in_legacy_migration_evidence(tmp_path, monke
 
 
 def test_doctor_reports_auth_migration_evidence(monkeypatch):
-    from colony_sidecar import doctor
+    from apsimo import doctor
 
     healthy = {
         "auth": {"legacy_configured": False, "scoped_configured": True, "dual_accept": False},

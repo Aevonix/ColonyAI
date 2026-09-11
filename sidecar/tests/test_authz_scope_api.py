@@ -9,9 +9,9 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
+from apsimo.api.routers import host as host_mod
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
 
 # Framework test fixtures only (555-prefix numbers are reserved/non-routable).
 OWNER = "+15550000001"

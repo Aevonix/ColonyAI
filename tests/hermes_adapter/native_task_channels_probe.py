@@ -16,11 +16,11 @@ if dependencies:
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import executions, host
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.turns import get_turn_idempotency_ledger
 
 home = Path(os.environ['HERMES_HOME'])
 home.mkdir(mode=0o700)
@@ -124,8 +124,8 @@ def respond(request):
         # Release controlled provider work during cleanup without replacing an
         # earlier test failure with an assertion from a cancelled request.
         return answer(body, 'Fixture cleanup after qualification ended.')
-    from colony_hermes.native_task_platform import ACTIVE
-    from colony_hermes.input_provenance import current
+    from apsimo_hermes.native_task_platform import ACTIVE
+    from apsimo_hermes.input_provenance import current
     active = ACTIVE.get()
     if active is not None:
         row = adapter.handoffs.get(active['id'])

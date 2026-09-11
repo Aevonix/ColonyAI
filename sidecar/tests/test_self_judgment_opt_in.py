@@ -1,7 +1,7 @@
 """Unqualified opinions stay inactive without losing sources or owner controls."""
 import pytest
 
-from colony_sidecar.self_model.perspective import SelfPerspective
+from apsimo.self_model.perspective import SelfPerspective
 from test_self_judgments import Processor, judgments, run_row, source
 
 

@@ -116,7 +116,7 @@ the previous observation is stale, not that work completed.
 
 The owner current-work view also reads bounded claimed/running records directly
 from the existing task queue. It includes a short task description, worker ID,
-canonical claim attempt, status and heartbeat age. This covers Colony workers
+canonical claim attempt, status and heartbeat age. This covers Apsimo workers
 and the private action executor while they use that queue protocol. No duplicate
 worker observations or heartbeat writer are introduced. Guest views receive no
 global queue rows. Missing heartbeats mean unknown liveness, never completion.

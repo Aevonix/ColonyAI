@@ -1,11 +1,11 @@
-"""Unit tests for colony_sidecar.util.temporal (v0.21.0)."""
+"""Unit tests for apsimo.util.temporal (v0.21.0)."""
 
 import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.util import temporal as T
+from apsimo.util import temporal as T
 
 
 @pytest.fixture(autouse=True)

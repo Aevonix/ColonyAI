@@ -9,7 +9,7 @@ import subprocess
 import pytest
 import yaml
 
-from colony_sidecar import setup
+from apsimo import setup
 
 
 URL = "http://127.0.0.1:7777"
@@ -52,17 +52,17 @@ def test_stage_targets_only_selected_home(selection, tmp_path, monkeypatch, isol
         target = default
     assert setup._setup_hermes_plugin("new-private-key", URL, contact_id="owner", **kwargs)
     config = yaml.safe_load((target / "config.yaml").read_text())
-    assert config["memory"]["provider"] == "colony-memory"
-    assert config["memory"]["config"]["api_key"] == "${COLONY_API_KEY}"
+    assert config["memory"]["provider"] == "apsimo-memory"
+    assert config["memory"]["config"]["api_key"] == "${APSIMO_API_KEY}"
     assert "enabled" not in config["plugins"]
     assert "context_engine" not in config and "context" not in config
     for relative in (
-        "colony-memory/provider.py", "colony-memory/plugin.yaml", "colony/__init__.py",
-        "colony/evidence.py",
-        "colony/local_work_runner.py", "colony/model_response.py",
-        "colony/request_memory.py", "colony/request_work.py",
-        "colony/review.py", "colony/review_evaluation.py",
-        "colony/colony_hostworker/catalog.py", "colony/colony_hostworker/contract.py",
+        "apsimo-memory/provider.py", "apsimo-memory/plugin.yaml", "apsimo/__init__.py",
+        "apsimo/evidence.py",
+        "apsimo/local_work_runner.py", "apsimo/model_response.py",
+        "apsimo/request_memory.py", "apsimo/request_work.py",
+        "apsimo/review.py", "apsimo/review_evaluation.py",
+        "apsimo/apsimo_hostworker/catalog.py", "apsimo/apsimo_hostworker/contract.py",
     ):
         assert (target / "plugins" / relative).is_file()
     assert not (target / "plugins/context_engine").exists()
@@ -88,13 +88,13 @@ def test_preserve_nested_values_identity_and_existing_secret(tmp_path, capsys):
         "channels": {"voice": {"enabled": True}},
         "context": {"engine": "default", "limit": 9000},
         "context_engine": "legacy-setting-preserved",
-        "memory": {"provider": "colony", "limit": 20, "config": {
+        "memory": {"provider": "apsimo", "limit": 20, "config": {
             "url": URL, "contact_id": "existing-owner", "api_key": "existing-secret",
             "custom": {"retain": ["nested", "values"]},
         }},
-        "plugins": {"enabled": ["unrelated", "colony"], "unrelated": {
+        "plugins": {"enabled": ["unrelated", "apsimo"], "unrelated": {
             "routes": {"private": ["one", "two"]}, "secret": "${PRIVATE_KEY}",
-        }, "colony": {"url": URL, "contact_id": "existing-owner", "api_key": "${OLD_KEY}"}},
+        }, "apsimo": {"url": URL, "contact_id": "existing-owner", "api_key": "${OLD_KEY}"}},
     }
     raw = "# Preserve this recovery copy\n" + yaml.safe_dump(before, sort_keys=False)
     config_path.write_text(raw)
@@ -102,7 +102,7 @@ def test_preserve_nested_values_identity_and_existing_secret(tmp_path, capsys):
     (home / "SOUL.md").write_text("Existing private identity")
     assert setup._setup_hermes_plugin("do-not-copy-key", URL, hermes_home=home)
     after = yaml.safe_load(config_path.read_text())
-    before["memory"]["provider"] = "colony-memory"
+    before["memory"]["provider"] = "apsimo-memory"
     before['hooks'] = {'output_spill': {'max_chars': 65536}}
     assert after == before
     assert (home / "SOUL.md").read_text() == "Existing private identity"
@@ -149,7 +149,7 @@ def test_canonical_owner_binding_is_preserved_or_conflict_rejected(tmp_path):
     assert snapshot(home) == before
     assert setup._setup_hermes_plugin("key", URL, hermes_home=home)
     config = yaml.safe_load(config_path.read_text())
-    assert config["plugins"]["colony"]["owner_contact_id"] == "existing-owner"
+    assert config["plugins"]["apsimo"]["owner_contact_id"] == "existing-owner"
     assert config["memory"]["config"]["contact_id"] == "existing-owner"
 
 
@@ -168,11 +168,11 @@ def test_blank_key_uses_private_environment_reference(blank, tmp_path):
     home.mkdir()
     path = home / "config.yaml"
     path.write_text(yaml.safe_dump({"memory": {"config": {"api_key": blank}},
-                                    "plugins": {"colony": {"api_key": blank}}}))
+                                    "plugins": {"apsimo": {"api_key": blank}}}))
     assert setup._setup_hermes_plugin("never-persist", URL, contact_id="owner", hermes_home=home)
     config = yaml.safe_load(path.read_text())
-    assert config["memory"]["config"]["api_key"] == "${COLONY_API_KEY}"
-    assert config["plugins"]["colony"]["api_key"] == "${COLONY_API_KEY}"
+    assert config["memory"]["config"]["api_key"] == "${APSIMO_API_KEY}"
+    assert config["plugins"]["apsimo"]["api_key"] == "${APSIMO_API_KEY}"
 
 
 @pytest.mark.parametrize("raw", [
@@ -211,7 +211,7 @@ def test_missing_resources_are_detected_before_any_copy(tmp_path, monkeypatch):
     home.mkdir()
     (home / "config.yaml").write_text("model: keep-me\n")
     before = snapshot(home)
-    monkeypatch.setattr(setup, "__file__", str(tmp_path / "missing/sidecar/colony_sidecar/setup.py"))
+    monkeypatch.setattr(setup, "__file__", str(tmp_path / "missing/sidecar/apsimo/setup.py"))
     assert not setup._setup_hermes_plugin("key", URL, contact_id="owner", hermes_home=home)
     assert snapshot(home) == before
     assert not (home / "plugins").exists()
@@ -219,7 +219,7 @@ def test_missing_resources_are_detected_before_any_copy(tmp_path, monkeypatch):
 
 def test_existing_different_plugin_blocks_all_writes(tmp_path):
     home = tmp_path / "hermes"
-    plugin = home / "plugins/colony-memory/provider.py"
+    plugin = home / "plugins/apsimo-memory/provider.py"
     plugin.parent.mkdir(parents=True)
     plugin.write_text("# currently installed revision\n")
     before = snapshot(home)
@@ -281,7 +281,7 @@ def test_yaml_alias_does_not_mutate_unrelated_configuration(tmp_path):
 
 
 def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch):
-    from colony_sidecar import setup_hermes
+    from apsimo import setup_hermes
     seen = []
     def fail(root_dir, args):
         seen.append((root_dir, args.hermes_home))
@@ -293,13 +293,13 @@ def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch
 
 
 def test_cli_threads_home_and_preserves_failure_exit(monkeypatch, tmp_path):
-    from colony_sidecar import cli
+    from apsimo import cli
     selected = str(tmp_path / "chosen")
     def fail_init(root_dir, args):
         assert args.hermes_home == selected
         return 1
     monkeypatch.setattr(setup, "run_init", fail_init)
-    monkeypatch.setattr("sys.argv", ["colony", "init", "--agent-harness", "hermes", "--hermes-home", selected])
+    monkeypatch.setattr("sys.argv", ["apsimo", "init", "--agent-harness", "hermes", "--hermes-home", selected])
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 1

@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from neo4j import AsyncGraphDatabase
-from colony_sidecar.intelligence.components.initiative_engine import InitiativeEngine, InitiativeConfig
+from apsimo.intelligence.components.initiative_engine import InitiativeEngine, InitiativeConfig
 
 
 class SimpleGraph:

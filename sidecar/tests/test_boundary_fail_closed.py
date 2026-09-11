@@ -18,10 +18,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.directed import DirectedActionService, ScopedTaskStore
-from colony_sidecar.directives.guard import boundary_fail_closed
+from apsimo.autonomy.config import AutonomyConfig
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.directed import DirectedActionService, ScopedTaskStore
+from apsimo.directives.guard import boundary_fail_closed
 
 
 class _ExplodingDirectives:
@@ -96,7 +96,7 @@ def test_delivery_boundary_error_refuses_by_default(monkeypatch, caplog):
 
     loop = _loop(_ExplodingDirectives())
     delivery = _FakeDelivery()
-    with caplog.at_level(logging.WARNING, logger="colony_sidecar.autonomy.loop"):
+    with caplog.at_level(logging.WARNING, logger="apsimo.autonomy.loop"):
         ok = asyncio.run(loop._route_reachout_delivery(_payload(), delivery))
 
     assert ok is False
@@ -144,7 +144,7 @@ def test_directed_boundary_error_refuses_by_default(monkeypatch, caplog):
     monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
 
     svc = _service(_ExplodingDirectives())
-    with caplog.at_level(logging.WARNING, logger="colony_sidecar.directed.service"):
+    with caplog.at_level(logging.WARNING, logger="apsimo.directed.service"):
         task = asyncio.run(svc.intake("summarize recent changes"))
 
     assert task.status == "refused"

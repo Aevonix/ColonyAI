@@ -12,10 +12,10 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar import doctor
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.gate.guard_audit import GuardAuditStore
-from colony_sidecar.tom.levels import clear_level_cache, set_evidence_probe
+from apsimo import doctor
+from apsimo.api.routers import host as host_mod
+from apsimo.gate.guard_audit import GuardAuditStore
+from apsimo.tom.levels import clear_level_cache, set_evidence_probe
 
 
 @pytest.fixture(autouse=True)
@@ -39,7 +39,7 @@ def _arm_l2_flags(monkeypatch):
 
 
 def _seed_evidence(tmp_path, gateway="dm", n=3):
-    from colony_sidecar.gate.surface_policy import POLICY_ID
+    from apsimo.gate.surface_policy import POLICY_ID
 
     audit = GuardAuditStore(db_path=str(tmp_path / "colony-guard-audit.db"))
     for _ in range(n):

@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.mining import (
+from apsimo.mining import (
     EscalationMiner,
     EscalationRecord,
     MinedTurn,
@@ -175,7 +175,7 @@ def test_local_attempt_and_outcome_followup(miner, store):
 def test_live_mode_feeds_distiller(store, monkeypatch):
     monkeypatch.setenv("COLONY_ESCALATION_MINING", "live")
     monkeypatch.setenv("COLONY_SKILLS_DISTILL", "live")
-    from colony_sidecar.skills_memory import SkillStore
+    from apsimo.skills_memory import SkillStore
     skills = SkillStore()
     router = FakeRouter(json.dumps({
         "title": "Escalate adapter fixes",
@@ -308,7 +308,7 @@ class TestMiningApi:
     def client(self, store, tmp_path, monkeypatch):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        import colony_sidecar.api.routers.mining as mining_router
+        import apsimo.api.routers.mining as mining_router
 
         monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
         app = FastAPI()
@@ -341,7 +341,7 @@ class TestMiningApi:
     def test_uninitialized_501(self, monkeypatch):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        import colony_sidecar.api.routers.mining as mining_router
+        import apsimo.api.routers.mining as mining_router
         app = FastAPI()
         app.include_router(mining_router.router)
         mining_router.set_mining(None, None, None)

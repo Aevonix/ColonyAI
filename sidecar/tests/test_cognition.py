@@ -4,8 +4,8 @@ import os
 import pytest
 from unittest.mock import patch
 
-from colony_sidecar.cognition.prompt import build_cognition_prompt, COGNITION_SYSTEM_PROMPT
-from colony_sidecar.cognition.trigger import trigger_cognition, _cognition_enabled, _cognition_model
+from apsimo.cognition.prompt import build_cognition_prompt, COGNITION_SYSTEM_PROMPT
+from apsimo.cognition.trigger import trigger_cognition, _cognition_enabled, _cognition_model
 
 
 class TestCognitionPrompt:
@@ -91,7 +91,7 @@ class TestCognitionTrigger:
 
     @pytest.mark.asyncio
     async def test_high_priority_bypasses_throttle(self):
-        import colony_sidecar.cognition.trigger as trig
+        import apsimo.cognition.trigger as trig
         # Set a recent trigger time
         trig._last_trigger_time = 9999999999.0
 
@@ -109,7 +109,7 @@ class TestCognitionTrigger:
 
     @pytest.mark.asyncio
     async def test_normal_priority_throttled(self):
-        import colony_sidecar.cognition.trigger as trig
+        import apsimo.cognition.trigger as trig
         trig._last_trigger_time = 9999999999.0
 
         with patch.dict(os.environ, {

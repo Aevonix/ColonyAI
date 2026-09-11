@@ -9,8 +9,8 @@ import os
 
 import pytest
 
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
 
 
 def test_from_env_defaults_to_state_dir(monkeypatch, tmp_path):

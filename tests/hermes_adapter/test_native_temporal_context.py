@@ -11,6 +11,7 @@ import json, os, socket, sys
 from pathlib import Path
 from types import SimpleNamespace
 sys.path.insert(0, sys.argv[1])
+if sys.argv[2]:sys.path.insert(0,sys.argv[2])
 import httpx
 from agent.memory_manager import MemoryManager
 from agent.turn_context import (
@@ -66,7 +67,7 @@ _sync_agent_to_session(cli,'conversation-two',parent_session_id='compressed',rea
 assert provider._session_id==agent.session_id=='conversation-two'
 assert 'Gap before current turn:' not in render(3713)
 assert 'Gap before current turn: 1s.' in render(3714)
-assert manager.get_provider('colony') is provider
+assert manager.get_provider('apsimo') is provider
 assert requests.count('/v1/host/context/temporal')==2,requests
 # Later requests may reuse or refresh this turn's prefetched context. The gap
 # remains its measured interval, never an assertion that the message is 1s old.
@@ -91,5 +92,6 @@ def test_native_reused_provider_temporal_context(artifacts, tmp_path):
         COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system',
         HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1',
         COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result = run_python('-I', '-B', '-c', PROBE, artifacts[3], cwd=tmp_path, env=env)
+    result = run_python('-I', '-B', '-c', PROBE, artifacts[3],
+        os.environ.get('HERMES_TEST_SOURCE', ''), cwd=tmp_path, env=env)
     assert '"native_request_content": true' in result.stdout

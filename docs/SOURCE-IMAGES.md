@@ -85,7 +85,7 @@ part and one `image_url` part containing the original data URL. The text does
 not duplicate base64 image data. Hermes applies the active processor's vision
 and tool-result capability rules. If it selects the text fallback, the result
 explicitly says no visual inspection occurred and `image_bytes_included` is
-false. Colony does not select a new model or silently recaption the original.
+false. Apsimo does not select a new model or silently recaption the original.
 
 Qualify the model identifier on the constructed native request, including any
 explicit voice or CLI override. A named provider may resolve its default model
@@ -96,7 +96,7 @@ model and its capability declaration through the deployment's existing publisher
 a successful description call alone does not verify this native boundary.
 
 Before each actual model dispatch containing an authenticated image read,
-Colony verifies the exact source, ownership, asset and read revision again.
+Apsimo verifies the exact source, ownership, asset and read revision again.
 That metadata-only call shares the existing 250 ms request freshness budget
 and never downloads the pixels again. A new applicable correction changes the
 read revision even without erasure. Unavailability, changed ownership,
@@ -116,7 +116,7 @@ the original.
 
 The source tests exercise actual image files, source API ingestion, scope isolation, durable reopening, canonical hash preservation, checkpoint/outbox erasure agreement, late-description rejection and cleanup of originals/thumbnails. The native packaged adapter test uses Hermes' actual `build_native_content_parts` and lifecycle hooks, then checks the durable outbox and client serializer preserve the content list.
 
-The packaged source-reader test uses installed Colony tools, the real scoped
+The packaged source-reader test uses installed Apsimo tools, the real scoped
 source API, actual native tool dispatch and Hermes' Chat, Responses and
 Anthropic conversion paths. It verifies exact original bytes in supported
 image parts, honest nonvision/unsupported-adapter fallbacks, and erasure before

@@ -15,7 +15,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
+from apsimo.api.routers import host as host_mod
 
 
 @asynccontextmanager
@@ -38,7 +38,7 @@ async def _client_with(patches: dict):
 
 
 def test_host_identity_accepts_colony_fields():
-    from colony_sidecar.api.schemas.host import HostIdentity
+    from apsimo.api.schemas.host import HostIdentity
     ident = HostIdentity(
         host_id="h",
         colony_id="c1",
@@ -52,7 +52,7 @@ def test_host_identity_accepts_colony_fields():
 
 
 def test_identity_status_response_has_new_fields():
-    from colony_sidecar.api.schemas.host import IdentityStatusResponse
+    from apsimo.api.schemas.host import IdentityStatusResponse
     resp = IdentityStatusResponse(
         colony_id="c1",
         trust_tier="REGULAR",
@@ -71,19 +71,19 @@ async def test_identity_status_returns_trust_tier_when_genesis(monkeypatch):
     chain = SimpleNamespace(colony_id="col-1", _key_manager=key_mgr)
 
     monkeypatch.setattr(
-        "colony_sidecar.chain.identity.is_genesis",
+        "apsimo.chain.identity.is_genesis",
         lambda _cid, _pk: True,
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.identity.get_genesis_manifest",
+        "apsimo.chain.identity.get_genesis_manifest",
         lambda: {"colony_id": "col-1"},
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.node.get_node_info",
+        "apsimo.chain.node.get_node_info",
         lambda _sd: {"node_id": "n1", "node_public_key": "pk1"},
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.node.load_node_certificate",
+        "apsimo.chain.node.load_node_certificate",
         lambda _sd: {"signature": "sig", "node_public_key": "pk1"},
     )
 
@@ -105,11 +105,11 @@ async def test_identity_status_null_trust_when_no_anchor(monkeypatch):
     key_mgr = SimpleNamespace(public_key_hex=lambda: "deadbeef")
     chain = SimpleNamespace(colony_id="col-1", _key_manager=key_mgr)
     monkeypatch.setattr(
-        "colony_sidecar.chain.identity.is_genesis",
+        "apsimo.chain.identity.is_genesis",
         lambda _cid, _pk: False,
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.identity.get_genesis_manifest",
+        "apsimo.chain.identity.get_genesis_manifest",
         lambda: None,
     )
 
@@ -128,19 +128,19 @@ async def test_enriched_context_includes_identity_section(monkeypatch):
     chain = SimpleNamespace(colony_id="col-42", _key_manager=key_mgr)
 
     monkeypatch.setattr(
-        "colony_sidecar.chain.identity.is_genesis",
+        "apsimo.chain.identity.is_genesis",
         lambda _cid, _pk: True,
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.identity.get_genesis_manifest",
+        "apsimo.chain.identity.get_genesis_manifest",
         lambda: {"colony_id": "col-42"},
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.node.get_node_info",
+        "apsimo.chain.node.get_node_info",
         lambda _sd: {"node_id": "node-7", "node_public_key": "pk"},
     )
     monkeypatch.setattr(
-        "colony_sidecar.chain.node.load_node_certificate",
+        "apsimo.chain.node.load_node_certificate",
         lambda _sd: None,
     )
 

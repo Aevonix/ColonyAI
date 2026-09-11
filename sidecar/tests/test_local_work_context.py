@@ -7,11 +7,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.turns.local_work import local_work_view
-from colony_sidecar.turns.executions import format_view, request_work_context
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions, host
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.turns.local_work import local_work_view
+from apsimo.turns.executions import format_view, request_work_context
 
 
 @pytest.mark.asyncio
@@ -49,7 +49,7 @@ async def test_accepted_local_work_and_result_are_visible_only_to_actual_owner(t
                 assert 'must-not-project' not in json.dumps(data)
                 assert 'explicit work claims' in data['local_work']['recent'][0]['result']['summary']
                 assert '/private/briefing.md' in format_view(data)
-                from colony_sidecar.api.schemas.host import ContextAssembleRequest
+                from apsimo.api.schemas.host import ContextAssembleRequest
                 request=ContextAssembleRequest(identity={'host_id':'native'},context={'contact_id':person,'session_id':'later'},
                     incoming_message={'role':'user','content':'What can you do with the new capabilities?'})
                 context=await host.context_assemble(request,SimpleNamespace(state=SimpleNamespace(colony_authority=authority[0])))
@@ -163,7 +163,7 @@ def test_request_forecast_is_observation_without_action_or_private_processor_con
 
 
 def test_review_contract_mismatch_does_not_project_a_forecast():
-    from colony_sidecar.turns.local_work import _review_forecast
+    from apsimo.turns.local_work import _review_forecast
     context={'native_review':{'contract_sha256':'old'}}
     assert _review_forecast({},context,{'available':True,'contract_sha256':'new'},now=100)=={
         'status':'review_contract_changed','suggestion_enabled':False}

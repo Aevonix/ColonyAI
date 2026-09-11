@@ -9,10 +9,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority, required_scope
-from colony_sidecar.api.routers import executions
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.executions import ExecutionRegistry, format_view
+from apsimo.api.authority import RequestAuthority, required_scope
+from apsimo.api.routers import executions
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.executions import ExecutionRegistry, format_view
 from test_hermes_general_governance import runtime
 
 
@@ -115,7 +115,7 @@ async def test_anonymous_and_legacy_cannot_claim_owner(store):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.get("/v1/host/executions", params={"contact_id": "owner"})).status_code == 403
         assert (await client.post("/v1/host/executions/observe", json=observation())).status_code == 403
-    from colony_sidecar.api.authority import legacy_authority
+    from apsimo.api.authority import legacy_authority
     request = SimpleNamespace(state=SimpleNamespace(colony_authority=legacy_authority()))
     with pytest.raises(Exception) as error:
         executions.authorized_viewer(request, "owner", scope="context:read")
@@ -201,8 +201,8 @@ def test_native_child_stop_closes_only_exact_bound_child_after_rotation(store, s
 
 @pytest.mark.asyncio
 async def test_owner_context_observes_other_sessions_but_guest_context_omits_them(store, monkeypatch):
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.api.schemas.host import ContextAssembleRequest
+    from apsimo.api.routers import host
+    from apsimo.api.schemas.host import ContextAssembleRequest
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
     monkeypatch.setattr(host, "_p8_runtime", None)
     # Other producer behavior is outside this focused read-view test.

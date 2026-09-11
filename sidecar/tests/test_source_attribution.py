@@ -3,8 +3,8 @@ import json
 
 import pytest
 
-from colony_sidecar.turns.idempotency import TurnIdempotencyLedger, SourceErased, canonical_turn_digest
-from colony_sidecar.turns.source_attribution import correct, history, visible_hits
+from apsimo.turns.idempotency import TurnIdempotencyLedger, SourceErased, canonical_turn_digest
+from apsimo.turns.source_attribution import correct, history, visible_hits
 
 
 def add(ledger, sid, text, **kwargs):

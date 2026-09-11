@@ -14,14 +14,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.self_model import (
+from apsimo.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
-from colony_sidecar.self_model.supervised import reversible
-from colony_sidecar.world_model.llm_extract import (
+from apsimo.self_model.supervised import reversible
+from apsimo.world_model.llm_extract import (
     WorldLLMExtractor, world_supervised_max_writes,
 )
-from colony_sidecar.world_model.relationships import WorldRelationship
+from apsimo.world_model.relationships import WorldRelationship
 
 
 class FakeWorld:

@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.intelligence.components.initiative_engine import Initiative, InitiativeType
-from colony_sidecar.self_model.perspective import SelfPerspective
-from colony_sidecar.self_model.store import CompetenceStore, SelfModel
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.autonomy.config import AutonomyConfig, AutonomyMode
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.intelligence.components.initiative_engine import Initiative, InitiativeType
+from apsimo.self_model.perspective import SelfPerspective
+from apsimo.self_model.store import CompetenceStore, SelfModel
+from apsimo.turns import TurnIdempotencyLedger
 
 
 def test_selected_configuration_is_explicit_and_rejects_misspellings(monkeypatch):
@@ -31,7 +31,7 @@ def test_selected_configuration_is_explicit_and_rejects_misspellings(monkeypatch
 
 @pytest.mark.asyncio
 async def test_real_timer_persists_ranked_proposals_and_restarts_without_dispatch(tmp_path, monkeypatch):
-    from colony_sidecar.identity import resolver
+    from apsimo.identity import resolver
     monkeypatch.setattr(resolver, 'get_identity_resolver', lambda: SimpleNamespace(
         owner_identities=AsyncMock(return_value=['fixture-owner'])))
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')

@@ -3,9 +3,9 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "colony-hermes"
-version = "1.2.1"
-description = "Native Hermes general and memory adapters for a Colony sidecar"
+name = "apsimo-hermes"
+version = "1.3.0"
+description = "Native Hermes general and memory adapters for Apsimo"
 readme = "docs/HERMES-ADAPTER.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
@@ -17,23 +17,29 @@ test = ["build>=1.2", "pytest>=8", "setuptools>=77", "wheel"]
 native-memory = ["nemo-relay>=0.8.3,<0.9"]
 
 [project.entry-points."hermes_agent.plugins"]
-colony = "colony_hermes"
+apsimo = "apsimo_hermes"
+colony = "apsimo_hermes"
 
 [project.entry-points."hermes_agent.memory_providers"]
-colony-memory = "colony_memory"
+apsimo-memory = "apsimo_memory"
+colony-memory = "apsimo_memory"
 
 [tool.setuptools]
-packages = ["colony_hermes", "colony_hermes.colony_hostworker", "colony_memory"]
+packages = ["apsimo_hermes", "apsimo_hermes.apsimo_hostworker", "apsimo_memory", "colony_hermes", "colony_memory"]
 include-package-data = false
 
 [tool.setuptools.package-dir]
-colony_hermes = "plugins/hermes-plugin"
-"colony_hermes.colony_hostworker" = "plugins/hermes-plugin/colony_hostworker"
-colony_memory = "plugins/colony-memory"
+apsimo_hermes = "plugins/hermes-plugin"
+"apsimo_hermes.apsimo_hostworker" = "plugins/hermes-plugin/apsimo_hostworker"
+apsimo_memory = "plugins/apsimo-memory"
+colony_hermes = "compat/colony_hermes"
+colony_memory = "compat/colony_memory"
 
 [tool.setuptools.package-data]
-colony_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md"]
-colony_memory = ["plugin.yaml", "SKILL.md"]
+apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md"]
+apsimo_memory = ["plugin.yaml", "SKILL.md"]
+colony_hermes = ["plugin.yaml"]
+colony_memory = ["plugin.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/hermes_adapter"]

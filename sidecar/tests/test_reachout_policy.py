@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from colony_sidecar.delivery import reachout_policy as rp
+from apsimo.delivery import reachout_policy as rp
 
 
 # ---------------------------------------------------------------------------

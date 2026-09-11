@@ -14,13 +14,13 @@ import inspect
 
 import pytest
 
-import colony_sidecar.api.routers.host as host
-from colony_sidecar import doctor
-from colony_sidecar.api.schemas.host import (
+import apsimo.api.routers.host as host
+from apsimo import doctor
+from apsimo.api.schemas.host import (
     ContextAssembleRequest, HostIdentity, HostMessage, HostTurnContext,
 )
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.tom2 import (
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.tom2 import (
     Tom2Store, render_for_contact, render_inference_for_contact,
     tom2_cross_context_enabled,
 )

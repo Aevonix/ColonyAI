@@ -2,7 +2,7 @@
 non-loopback interface (COLONY_API_KEY unset + bind 0.0.0.0/LAN = open to net)."""
 import pytest
 
-from colony_sidecar.cli import _guard_bind_auth, _is_loopback_host
+from apsimo.cli import _guard_bind_auth, _is_loopback_host
 
 
 @pytest.mark.parametrize("host", ["127.0.0.1", "::1", "localhost", ""])

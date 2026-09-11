@@ -2,11 +2,11 @@
 from contextlib import closing
 import json
 import pytest
-from colony_sidecar.api.routers import host
-from colony_sidecar.self_model.expectations import ExpectationStore, ExpectationEngine
-from colony_sidecar.self_model import execution_forecasts as forecasts
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.executions import ExecutionRegistry
+from apsimo.api.routers import host
+from apsimo.self_model.expectations import ExpectationStore, ExpectationEngine
+from apsimo.self_model import execution_forecasts as forecasts
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.executions import ExecutionRegistry
 from test_execution_registry import observation
 
 @pytest.fixture
@@ -63,7 +63,7 @@ def test_ledger_cycle_improves_next_estimate_and_erasure_removes_sample(runtime)
         rows = db.execute('SELECT messages_json FROM turn_sources').fetchall()
         assert rows and all(json.loads(row[0])[0]['content'] == '' for row in rows)
         assert db.execute('SELECT count(*) FROM turn_source_search').fetchone()[0] == 0
-        from colony_sidecar.turns.source_vectors import chunks
+        from apsimo.turns.source_vectors import chunks
         assert all(list(chunks(db, source)) == [] for source in db.execute('SELECT * FROM turn_sources'))
     assert not ledger.search_sources('model-a', contact_id='contact-a', session_id='')
     ledger.erase_sources(contact_id='contact-a', turn_ids=[outcome['receipt_ref'].removeprefix('receipt:')])

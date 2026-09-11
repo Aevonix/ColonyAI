@@ -21,16 +21,16 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from colony_sidecar.api.authority import legacy_authority
-from colony_sidecar.api.routers import task_queue as tq_router
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.task_queue.models import (
+from apsimo.api.authority import legacy_authority
+from apsimo.api.routers import task_queue as tq_router
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.task_queue.models import (
     Job,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.queue_manager import TaskQueueManager
 
 
 # ---------------------------------------------------------------------------
@@ -420,7 +420,7 @@ class _RecordingFeedback:
 
 @pytest.mark.asyncio
 async def test_initiative_approve_response_unblocks_job(tmp_path):
-    from colony_sidecar.api.routers import host as host_router
+    from apsimo.api.routers import host as host_router
 
     mgr = await _make_mgr(tmp_path)
     old_store = host_router._initiative_store
@@ -446,7 +446,7 @@ async def test_initiative_approve_response_unblocks_job(tmp_path):
 
 @pytest.mark.asyncio
 async def test_initiative_dismiss_response_rejects_job(tmp_path):
-    from colony_sidecar.api.routers import host as host_router
+    from apsimo.api.routers import host as host_router
 
     mgr = await _make_mgr(tmp_path)
     old_store = host_router._initiative_store
@@ -471,7 +471,7 @@ async def test_initiative_dismiss_response_rejects_job(tmp_path):
 @pytest.mark.asyncio
 async def test_denied_initiative_approval_has_no_status_or_feedback_side_effects(
         tmp_path, monkeypatch):
-    from colony_sidecar.api.routers import host as host_router
+    from apsimo.api.routers import host as host_router
 
     monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
     mgr = await _make_mgr(tmp_path)

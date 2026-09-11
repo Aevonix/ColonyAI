@@ -4,11 +4,11 @@ first-class, restrictively-gated trust tier (not a silent peripheral fallback).
 
 import pytest
 
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.gate.layers.l4_trust_tier import TrustTierChecker
-from colony_sidecar.gate.models import GatePayload
-from colony_sidecar.intelligence.relationships.trust_tiers import (
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.gate.layers.l4_trust_tier import TrustTierChecker
+from apsimo.gate.models import GatePayload
+from apsimo.intelligence.relationships.trust_tiers import (
     TIER_CAPABILITIES,
     TrustTier,
 )
@@ -121,7 +121,7 @@ async def test_promote_never_lowers_standing(store):
 
 
 def test_config_flag_from_env(monkeypatch):
-    from colony_sidecar.contacts.config import ContactsConfig
+    from apsimo.contacts.config import ContactsConfig
     monkeypatch.setenv("COLONY_AUTO_PROMOTE_GROUP_TO_1ON1", "true")
     monkeypatch.setenv("COLONY_GROUP_PROMOTE_MIN_INTERACTIONS", "3")
     cfg = ContactsConfig.from_env()

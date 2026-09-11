@@ -5,12 +5,12 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.intelligence.graph.recall import (
+from apsimo.api.routers import host
+from apsimo.intelligence.graph.recall import (
     calibration_fingerprint, pack_memory_context, provider_calibration_metadata,
     source_candidates,
 )
-from colony_sidecar.intelligence.graph.selection import RecallSelector
+from apsimo.intelligence.graph.selection import RecallSelector
 from test_recall_ranking import RecallFixture, _Hit, _node
 from test_turn_source_evidence import source_app, envelope, recalled
 

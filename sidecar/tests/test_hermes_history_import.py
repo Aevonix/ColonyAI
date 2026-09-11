@@ -6,9 +6,9 @@ import sqlite3
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.hermes_history import import_history, mapping_document
-from colony_sidecar.turns.idempotency import source_message_hash
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.hermes_history import import_history, mapping_document
+from apsimo.turns.idempotency import source_message_hash
 from test_turn_source_evidence import source_app, recalled
 
 

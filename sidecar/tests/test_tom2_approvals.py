@@ -9,9 +9,9 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.proposals import ProposalStore
-from colony_sidecar.tom.approvals import (
+from apsimo.api.routers import host as host_mod
+from apsimo.proposals import ProposalStore
+from apsimo.tom.approvals import (
     APPROVED, PENDING, REVOKED, Tom2ApprovalRegistry, approval_ttl_days)
 
 READER, SUBJECT = "cid-alice", "cid-bob"
@@ -140,7 +140,7 @@ async def test_endpoint_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_registry_feeds_eligibility_pipeline(monkeypatch):
-    from tests.test_tom2_eligibility import World
+    from test_tom2_eligibility import World
 
     monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
     monkeypatch.delenv("COLONY_TOM2_L2_APPROVAL", raising=False)

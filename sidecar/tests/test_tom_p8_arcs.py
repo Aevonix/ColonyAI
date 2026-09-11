@@ -9,13 +9,13 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.tom.arcs import (
+from apsimo.tom.arcs import (
     ArcConflictError,
     ArcEventV1,
     ArcReducer,
     ArcStore,
 )
-from colony_sidecar.tom.visibility import ViewerContextV1
+from apsimo.tom.visibility import ViewerContextV1
 
 
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)

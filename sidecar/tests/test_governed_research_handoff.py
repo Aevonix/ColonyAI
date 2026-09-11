@@ -12,9 +12,9 @@ from types import SimpleNamespace
 from fastapi import Request
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority, legacy_authority
-from colony_sidecar.api.routers import host
-from colony_sidecar.governed_actions import (
+from apsimo.api.authority import RequestAuthority, legacy_authority
+from apsimo.api.routers import host
+from apsimo.governed_actions import (
     ColonySubsystemActionExecutor,
     GovernedActionLedger,
     GovernedActionService,
@@ -23,8 +23,8 @@ from colony_sidecar.governed_actions import (
     parse_execution_request,
     sha256_json,
 )
-from colony_sidecar.projects import Project, ProjectEngine, ProjectStore, Step
-from colony_sidecar.work_orders import (
+from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
+from apsimo.work_orders import (
     QueueWorkOrderAdapter,
     WorkOrderV1,
     action_authority,
@@ -570,7 +570,7 @@ async def test_governed_capabilities_narrow_initial_plan_replan_and_dispatch(
         )]
 
     monkeypatch.setattr(
-        "colony_sidecar.projects.planner.plan_project", directed_plan
+        "apsimo.projects.planner.plan_project", directed_plan
     )
     assert await engine._plan_pending("live") == 0
     planned = engine.store.get_project(project.id)
@@ -691,7 +691,7 @@ async def test_autonomy_results_are_prompt_and_match_observed_state():
 
 @pytest.mark.asyncio
 async def test_governed_stop_wrapper_uses_prompt_loop_signal_not_host_join():
-    import colony_sidecar.server as server
+    import apsimo.server as server
 
     class Loop:
         def __init__(self):

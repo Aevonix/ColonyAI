@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
+from apsimo.intelligence.graph import client as client_mod
 
 
 # --- fakes -------------------------------------------------------------------

@@ -6,9 +6,9 @@ import sqlite3
 import httpx
 import pytest
 
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.media import SourceMedia
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.media import SourceMedia
 from test_source_media import message, image_bytes
 from test_source_claim_projection import Model, claim
 from test_turn_source_evidence import source_app

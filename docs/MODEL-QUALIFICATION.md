@@ -1,14 +1,14 @@
 # Model qualification
 
-The opt-in `colony models` command records bounded observations through existing consumers. It does not select or publish a deployment, start services, change model roles on a running agent, or create an evaluation database.
+The opt-in `apsimo models` command records bounded observations through existing consumers. It does not select or publish a deployment, start services, change model roles on a running agent, or create an evaluation database.
 
 ```sh
-colony models inspect interactive --config /private/model-config.json
-colony models evaluate interactive --config /private/model-config.json --roles chat,extraction --output /private/results/candidate-01
-colony models compare /private/results/incumbent-01 /private/results/candidate-01
+apsimo models inspect interactive --config /private/model-config.json
+apsimo models evaluate interactive --config /private/model-config.json --roles chat,extraction --output /private/results/candidate-01
+apsimo models compare /private/results/incumbent-01 /private/results/candidate-01
 ```
 
-`--config` is an existing Colony host model configuration, including its existing `modelPool`, role and network declarations. Credentials are consumed through that private configuration and are not copied into recipes or result records. Inspect reads declarations without querying endpoints. Evaluate makes model requests through an isolated router configured from a private copy; it never edits the supplied configuration. The selected case role is pinned to the requested binding. Supporting roles, such as semantic memory admission review, retain their configured bindings and appear in call observations. This is a recipe and consumer comparison, not an intrinsic score for isolated model weights.
+`--config` is an existing Apsimo host model configuration, including its existing `modelPool`, role and network declarations. Credentials are consumed through that private configuration and are not copied into recipes or result records. Inspect reads declarations without querying endpoints. Evaluate makes model requests through an isolated router configured from a private copy; it never edits the supplied configuration. The selected case role is pinned to the requested binding. Supporting roles, such as semantic memory admission review, retain their configured bindings and appear in call observations. This is a recipe and consumer comparison, not an intrinsic score for isolated model weights.
 
 A case can declare `target_tasks` when its real consumer normally chooses a function through a task mapping. Only those named tasks are redirected to the case's qualification role in the isolated router. For example, memory cases bind `source_claim_extraction` to their extraction candidate even when production routes that task through reasoning. The original routing snapshot, frozen case declarations and per-attempt `qualification_routing` record show that isolation explicitly. Judging and unrelated task mappings remain configured as supplied. A role deadline also remains the qualification role's configured deadline; this is not a replay of a different production role's timing policy.
 
@@ -32,7 +32,7 @@ Four additional direct cases cover specific text decisions:
 Select them explicitly; the default remains `chat,extraction`:
 
 ```sh
-colony models evaluate interactive --config /private/model-config.json --roles reasoning,planning,judging,coding --output /private/results/structured-01
+apsimo models evaluate interactive --config /private/model-config.json --roles reasoning,planning,judging,coding --output /private/results/structured-01
 ```
 
 Each case makes one existing-router completion call, with a 60-second case deadline, 1,024 requested output tokens and a 16 KiB result bound. Four cases declare at most 240 seconds in total, excluding setup and report writing; configured role deadlines can be shorter. No fallback is requested. These limits measure fitness for that declared recipe, not a model's unlimited-time capability. Eight completion calls across two bindings form one small paired comparison; hidden SDK retries are not counted as separate suite attempts. Freeze both runs' source, case/oracle identities and role budgets before observing results, preserve first attempts and compare individual checks. A timeout is a deadline failure, not evidence that another model reasons better.

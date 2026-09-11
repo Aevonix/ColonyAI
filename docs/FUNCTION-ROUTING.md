@@ -1,6 +1,6 @@
 # Function routing on the existing model pool
 
-Colony's shared `LLMRouter` now selects a named function and tries only that
+Apsimo's shared `LLMRouter` now selects a named function and tries only that
 function's eligible local candidates. It keeps its object identity when host
 configuration changes, so retained extractors, thinkers, planners and workers
 see updates. An active request retains its old model, endpoint, credentials,
@@ -42,7 +42,7 @@ their existing selection. Capability hints, outer extraction budgets and actual
 dispatch use the same selector. An explicit per-call `function_role` takes
 priority. Omission or an empty map preserves existing behavior; unknown tasks or
 roles reject the configuration. Supported task names are declared in
-`colony_sidecar/router/functions.py` as `TASK_ROLES`. Routing status reports
+`apsimo/router/functions.py` as `TASK_ROLES`. Routing status reports
 the overrides as `task_roles`; each active request keeps its selected snapshot.
 
 `source_appraisal` and `self_judgment` can also be assigned independently. Their
@@ -140,7 +140,7 @@ and provide its compatible `/v1` URL, or configure that compatible endpoint as
 `provider: "local"`. Native Ollama or other provider-specific protocols are
 rejected during configuration; they are not accepted as unusable candidates.
 The older direct-construction tier router API remains for its existing callers.
-No Colony consumer currently requests router streaming. `stream=True` is
+No Apsimo consumer currently requests router streaming. `stream=True` is
 rejected before a function call, and Hermes retains its own streaming behavior.
 
 ## Reload and fallback

@@ -11,15 +11,15 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 from starlette.requests import Request
 
-from colony_sidecar.api.authority import (
+from apsimo.api.authority import (
     RequestAuthority,
     anonymous_authority,
     legacy_authority,
     required_scope,
 )
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.api.schemas.host import (
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.api.schemas.host import (
     ContextAssembleRequest,
     EnrichedContextRequest,
     HostIdentity,
@@ -31,18 +31,18 @@ from colony_sidecar.api.schemas.host import (
     SharedFactUpdateRequest,
     ToolInvokeRequest,
 )
-from colony_sidecar.server import (
+from apsimo.server import (
     _attach_p8_runtime,
     _build_research_pipeline,
 )
-from colony_sidecar.intelligence.relationships.profiler import (
+from apsimo.intelligence.relationships.profiler import (
     RelationshipProfiler,
 )
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.integration import P8Runtime
-from colony_sidecar.tom.leveled import render_level1
-from colony_sidecar.tom.tom2 import Tom2Store
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.integration import P8Runtime
+from apsimo.tom.leveled import render_level1
+from apsimo.tom.tom2 import Tom2Store
+from apsimo.turns import TurnIdempotencyLedger
 
 
 def current_fact_source(facts, tmp_path, person, text):
@@ -752,7 +752,7 @@ class _ToolDirectives:
 async def test_tool_executor_blocks_mutation_on_boundary_or_guard_failure(
     directives,
 ):
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     calls = []
 
@@ -783,7 +783,7 @@ async def test_tool_executor_blocks_mutation_on_boundary_or_guard_failure(
 async def test_p8_direct_tool_requires_sealed_owner_mutation_authority(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
@@ -832,7 +832,7 @@ async def test_p8_direct_tool_requires_sealed_owner_mutation_authority(
 
 @pytest.mark.asyncio
 async def test_p8_non_owner_retains_public_read_tool_only(tmp_path, monkeypatch):
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
@@ -879,7 +879,7 @@ async def test_p8_non_owner_retains_public_read_tool_only(tmp_path, monkeypatch)
 async def test_p8_model_tool_batch_cannot_call_filtered_mutation(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
+    from apsimo.reasoning import ReasoningLoop, ToolExecutor
 
     class Model:
         def __init__(self):
@@ -945,7 +945,7 @@ async def test_p8_model_tool_batch_cannot_call_filtered_mutation(
 
 @pytest.mark.asyncio
 async def test_tool_executor_rejects_malformed_mutation_verdict():
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     class MalformedDirectives:
         def check(self, _action):
@@ -975,8 +975,8 @@ async def test_tool_executor_rejects_malformed_mutation_verdict():
 
 @pytest.mark.asyncio
 async def test_unknown_dynamic_tool_defaults_to_mutation_authority():
-    from colony_sidecar.reasoning.executor import ToolExecutor
-    from colony_sidecar.reasoning.tool_policy import ToolActorPolicy
+    from apsimo.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.tool_policy import ToolActorPolicy
 
     calls = []
 
@@ -1041,7 +1041,7 @@ def _collision_authority(name):
 async def test_p8_direct_dynamic_collision_fails_before_name_authority(
     tmp_path, monkeypatch, name,
 ):
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
@@ -1080,7 +1080,7 @@ async def test_p8_direct_dynamic_collision_fails_before_name_authority(
 async def test_p8_model_dynamic_collision_fails_before_model_call(
     tmp_path, monkeypatch, name,
 ):
-    from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
+    from apsimo.reasoning import ReasoningLoop, ToolExecutor
 
     class Model:
         async def complete(self, *_args, **_kwargs):
@@ -1124,7 +1124,7 @@ async def test_p8_model_dynamic_collision_fails_before_model_call(
 
 @pytest.mark.asyncio
 async def test_p8_off_direct_dynamic_tool_contract_is_unchanged():
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     host._p8_runtime = None
     calls = []
@@ -1153,7 +1153,7 @@ async def test_p8_off_direct_dynamic_tool_contract_is_unchanged():
 async def test_p8_legacy_bearer_cannot_body_claim_private_tool_authority(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.reasoning.executor import ToolExecutor
+    from apsimo.reasoning.executor import ToolExecutor
 
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
@@ -1258,7 +1258,7 @@ def test_research_wiring_preserves_off_ownership_and_borrows_only_for_p8(
         def __init__(self, *args, **kwargs):
             calls.append((args, kwargs))
 
-    import colony_sidecar.research.pipeline as pipeline_module
+    import apsimo.research.pipeline as pipeline_module
     monkeypatch.setattr(
         pipeline_module, "ResearchPipeline", PipelineSpy)
     graph = object()
@@ -1824,7 +1824,7 @@ async def test_p8_multimodal_memory_search_filters_before_content_response(
     graph = Graph()
     host._embedder = Embedder()
     host._graph = graph
-    import colony_sidecar.vector as vector_module
+    import apsimo.vector as vector_module
     monkeypatch.setattr(vector_module, "get_store", lambda: store)
 
     response = await host.memory_search_multimodal(

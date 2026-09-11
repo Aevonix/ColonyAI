@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.directives import Verdict
-from colony_sidecar.connectors import ConnectorManager, Observation, EntityHint
-from colony_sidecar.connectors.base import Connector
-from colony_sidecar.connectors.imap_email import IMAPEmailConnector
-from colony_sidecar.connectors.caldav_calendar import CalendarConnector, _parse_ics
-from colony_sidecar.connectors.fs_documents import FSDocumentsConnector
-from colony_sidecar.connectors.webhook_pull import WebhookPullConnector, _dig
+from apsimo.directives import Verdict
+from apsimo.connectors import ConnectorManager, Observation, EntityHint
+from apsimo.connectors.base import Connector
+from apsimo.connectors.imap_email import IMAPEmailConnector
+from apsimo.connectors.caldav_calendar import CalendarConnector, _parse_ics
+from apsimo.connectors.fs_documents import FSDocumentsConnector
+from apsimo.connectors.webhook_pull import WebhookPullConnector, _dig
 
 
 # -- IMAP email -----------------------------------------------------------

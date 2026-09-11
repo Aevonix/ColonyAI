@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.task_queue.models import JobResult, JobStatus
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.task_queue.models import JobResult, JobStatus
 
 
 def _job(job_id="j1"):

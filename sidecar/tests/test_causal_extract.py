@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.world_model.llm_extract import (
+from apsimo.world_model.llm_extract import (
     WorldLLMExtractor, causal_extract_mode,
 )
 

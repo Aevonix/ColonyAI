@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
-from colony_sidecar.util.quiet_hours import in_quiet_window
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.delivery.rate_limiter import DeliveryRateLimiter
+from apsimo.util.quiet_hours import in_quiet_window
 
 
 # --- shared predicate --------------------------------------------------------

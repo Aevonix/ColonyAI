@@ -2,7 +2,7 @@
 import json
 import pytest
 
-from colony_sidecar.initiatives.native_work import contract
+from apsimo.initiatives.native_work import contract
 from test_hermes_general_governance import runtime, _Context, _pre, _tool
 from test_accepted_local_work import local_api
 
@@ -33,9 +33,14 @@ def test_historical_binding_keeps_original_body_and_new_binding_keeps_bounded_co
     old = contract({**row, 'context': json.dumps(context)})
     assert old['sha256'] == historical_digest
     assert 'Complete through kanban_complete' in old['body']
+    bounded_digest = '0c46a4029c7820caa4ab465ab7359d4aee43a5c10acdc7b258923a895d033584'
+    context['native_review'] = {'contract_sha256': bounded_digest}
+    previous = contract({**row, 'context': json.dumps(context)})
+    assert previous['sha256'] == bounded_digest
+    assert 'Complete with colony_review_report' in previous['body']
     current = contract(row)
-    assert current['sha256'] != historical_digest
-    assert 'Complete with colony_review_report' in current['body']
+    assert current['sha256'] not in {historical_digest, bounded_digest}
+    assert 'Complete with apsimo_review_report' in current['body']
     assert 'no artifact file, repair' in current['body']
     context['native_review'] = {'contract_sha256': current['sha256'], 'native_task_id': 'bound'}
     assert contract({**row, 'context': json.dumps(context)}) == current
@@ -81,7 +86,7 @@ def test_review_tool_uses_real_owner_system_turn_and_rejects_guest_and_extra_arg
 
 
 def test_existing_scoped_credentials_reach_only_owner_review_routes(local_api):
-    from colony_sidecar.api.routers import initiative_work
+    from apsimo.api.routers import initiative_work
     api, _, initiatives, _, _ = local_api
     api.app.include_router(initiative_work.router)
     item = initiatives.create(type='operational',source_type='operational',created_by='autonomy_loop',

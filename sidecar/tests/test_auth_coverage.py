@@ -23,12 +23,12 @@ def _api_paths(app):
 @pytest.fixture
 def app(monkeypatch):
     monkeypatch.setenv("COLONY_API_KEY", "test-secret-key")
-    from colony_sidecar.server import create_app
+    from apsimo.server import create_app
     return create_app()
 
 
 def test_all_http_routes_reject_unauthenticated_requests(app):
-    from colony_sidecar.api.middleware import _DEV_MODE_ALLOWED
+    from apsimo.api.middleware import _DEV_MODE_ALLOWED
 
     client = TestClient(app, raise_server_exceptions=False)
     checked = 0
@@ -47,7 +47,7 @@ def test_all_http_routes_reject_unauthenticated_requests(app):
 
 
 def test_allowlisted_paths_do_not_require_auth(app):
-    from colony_sidecar.api.middleware import _DEV_MODE_ALLOWED
+    from apsimo.api.middleware import _DEV_MODE_ALLOWED
 
     client = TestClient(app, raise_server_exceptions=False)
     for path in _DEV_MODE_ALLOWED:

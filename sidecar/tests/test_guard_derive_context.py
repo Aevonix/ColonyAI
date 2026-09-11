@@ -14,11 +14,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.schemas.host import ResponseGuardCheckRequest
-from colony_sidecar.gate.context_provenance import (
+from apsimo.api.routers import host as host_mod
+from apsimo.api.schemas.host import ResponseGuardCheckRequest
+from apsimo.gate.context_provenance import (
     ContextProvenanceStore, ProvenanceCrossContextGuard)
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
 
 
 class _SpyGuard:

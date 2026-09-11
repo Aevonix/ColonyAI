@@ -17,17 +17,17 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.authority import KeyringError, load_keyring, required_scope
-from colony_sidecar.api.routers import task_queue as queue_router
-from colony_sidecar.task_queue.models import (
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.authority import KeyringError, load_keyring, required_scope
+from apsimo.api.routers import task_queue as queue_router
+from apsimo.task_queue.models import (
     Job,
     JobCapabilityRequirement,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.queue_manager import TaskQueueManager
 
 
 def _worker_principal(

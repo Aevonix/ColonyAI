@@ -11,21 +11,21 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.tom import recipient_audit
-from colony_sidecar.tom.recipient_audit import (
+from apsimo.tom import recipient_audit
+from apsimo.tom.recipient_audit import (
     RecipientAuditConflictError,
     RecipientSimulationAuditStore,
     evaluation_event_from_result,
     open_recipient_simulation_audit_store,
     sample_event,
 )
-from colony_sidecar.tom.recipient_simulator import (
+from apsimo.tom.recipient_simulator import (
     RecipientSimulationRequestV1,
     RecipientSimulationResultV1,
     RepairSuggestionV1,
     SimulationRiskV1,
 )
-from colony_sidecar.tom.visibility import ViewerContextV1, content_digest
+from apsimo.tom.visibility import ViewerContextV1, content_digest
 
 
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)

@@ -7,8 +7,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.self_model.benchmark import (
+import apsimo.api.routers.host as host_mod
+from apsimo.self_model.benchmark import (
     BenchmarkStore, SelfhoodBenchmark, previous_week, week_window,
 )
 

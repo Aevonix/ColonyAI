@@ -5,9 +5,9 @@ import sqlite3
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import SourceErased
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import SourceErased
 from test_scoped_api_authority import _principal, _write_keyring
 from test_turn_source_evidence import source_app
 
@@ -92,8 +92,8 @@ def add(ledger, **changes):
 
 
 def test_correction_ranking_preserves_complete_attributed_output_and_all_notes(annotated_app):
-    from colony_sidecar.intelligence.graph.recall import source_candidates
-    from colony_sidecar.turns.source_annotations import expand
+    from apsimo.intelligence.graph.recall import source_candidates
+    from apsimo.turns.source_annotations import expand
     _, ledger = annotated_app
     first = add(ledger)
     conflicting = 'A separate report says 09:14 was measured. This conflicts with the first correction.'
@@ -119,8 +119,8 @@ def test_correction_ranking_preserves_complete_attributed_output_and_all_notes(a
 
 @pytest.mark.asyncio
 async def test_correction_representation_invalidates_previous_cutoff(monkeypatch):
-    from colony_sidecar.intelligence.graph.recall import calibration_fingerprint, provider_calibration_metadata
-    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    from apsimo.intelligence.graph.recall import calibration_fingerprint, provider_calibration_metadata
+    from apsimo.intelligence.graph.selection import RecallSelector
     class Provider:
         def calibration_metadata(self):
             return {'provider': 'fixture', 'model': 'fixture', 'weights_revision': 'fixed'}
@@ -144,7 +144,7 @@ async def test_correction_representation_invalidates_previous_cutoff(monkeypatch
 
 def test_append_failure_is_atomic_and_session_scope_cannot_widen(annotated_app, monkeypatch):
     _, ledger = annotated_app
-    from colony_sidecar.turns import source_vectors
+    from apsimo.turns import source_vectors
     with monkeypatch.context() as patch:
         patch.setattr(source_vectors, 'enqueue', lambda *args: (_ for _ in ()).throw(RuntimeError('fixture')))
         with pytest.raises(RuntimeError):
@@ -194,7 +194,7 @@ async def test_erasure_invalidates_derived_answers_and_late_delivery_without_rev
 @pytest.mark.asyncio
 async def test_old_derived_answer_and_semantic_only_hit_expand_to_current_correction(annotated_app, monkeypatch):
     app, ledger = annotated_app
-    from colony_sidecar.turns.source_vectors import SourceVectors
+    from apsimo.turns.source_vectors import SourceVectors
     origin = ledger.source_references(['report'], contact_id='person', session_id='later')[0]
     ledger.record_source('old-answer', contact_id='person', session_id='previous', messages=[
         {'role': 'assistant', 'content': 'The earlier verification happened at 09:14.', '_supplied_sources': [origin]}])
@@ -215,8 +215,8 @@ async def test_old_derived_answer_and_semantic_only_hit_expand_to_current_correc
 @pytest.mark.parametrize('semantic', [False, True])
 async def test_recalled_message_does_not_inherit_its_assistant_siblings_sources(annotated_app, monkeypatch, semantic):
     app, ledger = annotated_app
-    from colony_sidecar.turns.idempotency import source_message_hash
-    from colony_sidecar.turns.source_vectors import SourceVectors
+    from apsimo.turns.idempotency import source_message_hash
+    from apsimo.turns.source_vectors import SourceVectors
     parent = ledger.source_references(['report'], contact_id='person', session_id='later')[0]
     independent = {'role': 'assistant', 'content': 'The hydrofoil rendezvous marker is cobalt.'}
     ledger.record_source('mixed-answers', contact_id='person', session_id='previous', messages=[
@@ -240,7 +240,7 @@ async def test_recalled_message_does_not_inherit_its_assistant_siblings_sources(
 
 def test_direct_annotation_applies_only_to_the_recalled_message_and_keeps_its_frontier(annotated_app):
     _, ledger = annotated_app
-    from colony_sidecar.turns.source_annotations import expand, current_candidates
+    from apsimo.turns.source_annotations import expand, current_candidates
     independent = 'The hydrofoil rendezvous marker is cobalt.'
     ledger.record_source('two-reports', contact_id='person', session_id='work', messages=[
         {'role': 'assistant', 'content': REPORT}, {'role': 'assistant', 'content': independent}])
@@ -266,9 +266,9 @@ def test_direct_annotation_applies_only_to_the_recalled_message_and_keeps_its_fr
 async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_published(annotated_app, monkeypatch, change):
     app, ledger = annotated_app
     result = add(ledger)
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.intelligence.graph.selection import RecallSelector
-    from colony_sidecar.turns.source_annotations import expand
+    from apsimo.api.routers import host
+    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.turns.source_annotations import expand
     original = {'id': 'belief-bundle', 'content': REPORT, 'source_turn_ids': ['report'],
                 'kind': 'source_quote', 'atomic_evidence': True, 'relevance': 1}
     expanded = expand(ledger, [original], contact_id='person', session_id='later')
@@ -296,8 +296,8 @@ async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_publish
 @pytest.mark.parametrize('same_message', [True, False])
 async def test_first_annotation_during_selection_cannot_publish_uncorrected_evidence(annotated_app, monkeypatch, same_message):
     app, ledger = annotated_app
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.intelligence.graph.selection import RecallSelector
+    from apsimo.api.routers import host
+    from apsimo.intelligence.graph.selection import RecallSelector
     sibling = 'The independent compass is green.'
     report = 'Quartz ledger report: ' + REPORT
     ledger.record_source('mixed-report', contact_id='person', session_id='work', messages=[
@@ -331,7 +331,7 @@ async def test_first_annotation_during_selection_cannot_publish_uncorrected_evid
 
 def test_multiple_attributed_notes_remain_conflicting_evidence_and_metadata_cannot_forge_one(annotated_app):
     _, ledger = annotated_app
-    from colony_sidecar.turns.source_annotations import expand
+    from apsimo.turns.source_annotations import expand
     first = add(ledger)
     second = add(ledger, annotation_id='audit-2', correction='Another reviewer reports the time was measured.')
     candidate = {'id': 'report-hit', 'kind': 'source_quote', 'content': REPORT, 'source_turn_id': 'report'}
@@ -351,7 +351,7 @@ def test_multiple_attributed_notes_remain_conflicting_evidence_and_metadata_cann
 
 def test_annotation_echo_dedup_keeps_distinct_original_excerpts(annotated_app):
     _, ledger = annotated_app
-    from colony_sidecar.turns.source_annotations import expand
+    from apsimo.turns.source_annotations import expand
     result = add(ledger)
     hits = [dict(id='first', source_turn_id='report', content='The archive digest matched its receipt.'),
             dict(id='second', source_turn_id='report', content='Verified at 09:14.'),
@@ -365,7 +365,7 @@ def test_annotation_echo_dedup_keeps_distinct_original_excerpts(annotated_app):
 
 def test_partial_erasure_does_not_reapply_an_old_revision_or_hide_unrelated_survivor(annotated_app):
     _, ledger = annotated_app
-    from colony_sidecar.turns.source_annotations import expand
+    from apsimo.turns.source_annotations import expand
     ledger.record_source('removable', contact_id='person', session_id='mixed-session',
                          messages=[{'role': 'assistant', 'content': 'An independent source.'}])
     removable = ledger.source_references(['removable'], contact_id='person', session_id='mixed-session')[0]

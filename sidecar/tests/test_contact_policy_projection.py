@@ -10,10 +10,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import required_scope
-from colony_sidecar.api.contact_grants import ContactGrantRegistry
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
+from apsimo.api.authority import required_scope
+from apsimo.api.contact_grants import ContactGrantRegistry
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
 
 
 def _write_private(path, value) -> None:
@@ -409,7 +409,7 @@ async def test_denied_standing_normalizes_an_outreach_recommendation(
         }
 
     monkeypatch.setattr(
-        "colony_sidecar.contacts.comms.evaluate_outreach", recommend
+        "apsimo.contacts.comms.evaluate_outreach", recommend
     )
     app = _app(keyring, ContactGrantRegistry(None))
     async with AsyncClient(

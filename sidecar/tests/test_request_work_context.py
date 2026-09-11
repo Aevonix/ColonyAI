@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from colony_sidecar.turns.executions import request_work_context
+from apsimo.turns.executions import request_work_context
 from test_hermes_turn_outbox import _load_plugin
 
 

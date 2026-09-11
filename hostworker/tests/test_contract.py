@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from colony_hostworker import contract
-from colony_hostworker.contract import (
+from apsimo_hostworker import contract
+from apsimo_hostworker.contract import (
     GovernedContractError,
     canonical_json_ascii,
     canonical_json_utf8,
@@ -123,21 +123,21 @@ def test_field_sets_are_pinned():
 
 
 def test_package_is_stdlib_only_and_server_free():
-    """The distribution must never import FastAPI or colony_sidecar.
+    """The distribution must never import FastAPI or apsimo.
 
     This is one half of the deliberate-redundancy rule documented in
     contract.py; the other half (the endpoint never importing this package)
     is enforced by sidecar/tests/test_hostworker_agreement.py.
     """
 
-    import colony_hostworker  # noqa: F401
-    import colony_hostworker.catalog  # noqa: F401
-    import colony_hostworker.gate  # noqa: F401
-    import colony_hostworker.intent  # noqa: F401
+    import apsimo_hostworker  # noqa: F401
+    import apsimo_hostworker.catalog  # noqa: F401
+    import apsimo_hostworker.gate  # noqa: F401
+    import apsimo_hostworker.intent  # noqa: F401
 
-    for forbidden in ("fastapi", "colony_sidecar", "httpx", "pydantic"):
+    for forbidden in ("fastapi", "apsimo", "httpx", "pydantic"):
         assert forbidden not in sys.modules, (
-            "colony_hostworker must stay stdlib-only but imported %s"
+            "apsimo_hostworker must stay stdlib-only but imported %s"
             % forbidden
         )
 

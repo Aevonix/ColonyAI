@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from colony_sidecar.initiatives import approval_authority as authority
+from apsimo.initiatives import approval_authority as authority
 
 
 def _payload() -> dict:
@@ -105,7 +105,7 @@ def test_default_grant_envelope_preserves_30_day_100_use_caps(
     assert uses_error.value.code == "invalid_grant_uses"
 
     from pydantic import ValidationError
-    from colony_sidecar.api.routers.task_queue import BoundedGrantRequest
+    from apsimo.api.routers.task_queue import BoundedGrantRequest
 
     with pytest.raises(ValidationError):
         BoundedGrantRequest(expires_in_seconds=envelope.max_ttl_seconds + 1)
@@ -148,7 +148,7 @@ def test_configured_finite_grant_envelope_is_honoured(tmp_path, monkeypatch):
         )
     assert uses_error.value.code == "invalid_grant_uses"
 
-    from colony_sidecar.api.routers.task_queue import BoundedGrantRequest
+    from apsimo.api.routers.task_queue import BoundedGrantRequest
 
     assert BoundedGrantRequest(
         expires_in_seconds=45 * 24 * 60 * 60,
@@ -249,9 +249,9 @@ def test_non_grantable_tool_is_refused_under_standing_envelope(monkeypatch):
 
     repo_root = Path(__file__).resolve().parents[2]
     monkeypatch.syspath_prepend(str(repo_root / "hostworker"))
-    from colony_hostworker.catalog import GRANT_AUTHORIZABLE_TOOL_NAMES
-    from colony_hostworker.conformance.harness import sqlite_harness
-    from colony_hostworker.conformance.suite import (
+    from apsimo_hostworker.catalog import GRANT_AUTHORIZABLE_TOOL_NAMES
+    from apsimo_hostworker.conformance.harness import sqlite_harness
+    from apsimo_hostworker.conformance.suite import (
         check_non_grantable_tool_with_grant_proof,
     )
 

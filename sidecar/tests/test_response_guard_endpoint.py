@@ -5,12 +5,12 @@ import hashlib
 import pytest
 from pydantic import ValidationError
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.authority import compatible_scopes, required_scope
-from colony_sidecar.api.schemas.host import ResponseGuardCheckRequest
-from colony_sidecar.gate.context_provenance import (
+from apsimo.api.routers import host as host_mod
+from apsimo.api.authority import compatible_scopes, required_scope
+from apsimo.api.schemas.host import ResponseGuardCheckRequest
+from apsimo.gate.context_provenance import (
     ContextProvenanceStore, ProvenanceCrossContextGuard)
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
 
 
 def test_outbound_evaluator_scope_does_not_grant_guard_audit_access():

@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.tom.fact_adapters import (
+from apsimo.tom.fact_adapters import (
     FactAuthorityBoundaryError,
     FactPayloadV1,
     ServerFactAuthorityV1,
     build_fact_candidate,
 )
-from colony_sidecar.tom.visibility import content_digest
+from apsimo.tom.visibility import content_digest
 
 
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)

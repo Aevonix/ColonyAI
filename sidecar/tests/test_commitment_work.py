@@ -8,10 +8,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import commitment_work, executions, host
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.commitments.work import CommitmentWork
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import commitment_work, executions, host
+from apsimo.commitments.store import CommitmentStore
+from apsimo.commitments.work import CommitmentWork
 from test_hermes_general_governance import runtime, _pre, _tool
 from test_scoped_api_authority import _principal, _write_keyring
 
@@ -159,8 +159,8 @@ def test_explicit_stop_after_terminal_or_superseded_claim_allows_next_work(runti
 
 @pytest.mark.asyncio
 async def test_canonical_worker_queue_view_has_descriptions_and_truthful_liveness(tmp_path, monkeypatch):
-    from colony_sidecar.task_queue.queue_manager import QueueManager
-    from colony_sidecar.task_queue.models import Job, JobType, JobStatus, WorkerCapabilities
+    from apsimo.task_queue.queue_manager import QueueManager
+    from apsimo.task_queue.models import Job, JobType, JobStatus, WorkerCapabilities
     clock = [datetime.now(timezone.utc)]
     queue = QueueManager(tmp_path / 'queue.db', clock=lambda: clock[0])
     await queue.start()
@@ -191,8 +191,8 @@ async def test_canonical_worker_queue_view_has_descriptions_and_truthful_livenes
 
 @pytest.mark.asyncio
 async def test_context_names_obligation_and_other_session_holder(tmp_path, monkeypatch):
-    from colony_sidecar.api.authority import RequestAuthority
-    from colony_sidecar.api.schemas.host import ContextAssembleRequest
+    from apsimo.api.authority import RequestAuthority
+    from apsimo.api.schemas.host import ContextAssembleRequest
     store = CommitmentStore(tmp_path / 'commitments.db')
     obligation = store.create('owner', 'Compare repair options', due_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat())
     CommitmentWork(store).operate(obligation['id'], operation='claim', **holder('voice'))

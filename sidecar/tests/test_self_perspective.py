@@ -8,12 +8,12 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.intelligence.components.preference_learner import PreferenceLearner
-from colony_sidecar.self_model.perspective import SelfPerspective
-from colony_sidecar.self_model.store import CompetenceStore, SelfModel
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.api.routers import host
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.intelligence.components.preference_learner import PreferenceLearner
+from apsimo.self_model.perspective import SelfPerspective
+from apsimo.self_model.store import CompetenceStore, SelfModel
+from apsimo.turns import TurnIdempotencyLedger
 from test_turn_source_evidence import source_app
 
 
@@ -28,7 +28,7 @@ def perspective(source_app, tmp_path, monkeypatch):
     sm.perspective = perspective
     monkeypatch.setattr(host, '_preference_learner', learner)
     monkeypatch.setattr(host, '_self_model', sm)
-    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    from apsimo.api.middleware import ApiKeyMiddleware
     from test_scoped_api_authority import _principal, _write_keyring
     principals = [_principal(principal=who, secret=who+'-key', viewer=person,
         scopes=['context:read', 'memory:write', 'turns:write'])
@@ -166,9 +166,9 @@ async def phase(sm, items):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('runtime_outcome', ['completed_wrong_count', 'timeout'])
 async def test_actual_runtime_outcomes_do_not_change_priority_or_claim_quality(perspective, source_app, tmp_path, runtime_outcome):
-    from colony_sidecar.initiatives.store import InitiativeStore
-    from colony_sidecar.reasoning.loop import ReasoningResult
-    from colony_sidecar.services.initiative_executor import InitiativeExecutorService
+    from apsimo.initiatives.store import InitiativeStore
+    from apsimo.reasoning.loop import ReasoningResult
+    from apsimo.services.initiative_executor import InitiativeExecutorService
     state, learner, sm = perspective
     store = InitiativeStore(tmp_path / 'initiatives')
     executor = InitiativeExecutorService(store, None, None, self_model=sm)

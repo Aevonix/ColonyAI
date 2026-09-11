@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from colony_sidecar.workers import agent_bridge, queue_worker
+from apsimo.workers import agent_bridge, queue_worker
 
 
 def _work_order_params():
@@ -229,7 +229,7 @@ def test_poller_fires_pending_initiatives(tmp_path, monkeypatch):
             def __exit__(self, *a): pass
         return Resp()
 
-    with patch.object(agent_bridge, "_get", side_effect=fake_get), \
+    with patch.object(agent_bridge, "_get", side_effect=fake_get),\
          patch.object(urllib.request, "urlopen", side_effect=fake_urlopen):
         count = poller.poll(cfg)
 
@@ -261,13 +261,13 @@ def test_poller_dedup_by_id_and_key(tmp_path, monkeypatch):
         {"id": "i1", "status": "pending", "dedup_key": "dk1", "initiative_type": "x", "created_at": ""},
     ]
 
-    with patch.object(agent_bridge, "_get", return_value={"initiatives": initiatives}), \
+    with patch.object(agent_bridge, "_get", return_value={"initiatives": initiatives}),\
          patch.object(urllib.request, "urlopen", side_effect=fake_urlopen):
         poller.poll(cfg)
     assert call_count == 1
 
     # Same id again
-    with patch.object(agent_bridge, "_get", return_value={"initiatives": initiatives}), \
+    with patch.object(agent_bridge, "_get", return_value={"initiatives": initiatives}),\
          patch.object(urllib.request, "urlopen", side_effect=fake_urlopen):
         poller.poll(cfg)
     assert call_count == 1  # not incremented
@@ -276,7 +276,7 @@ def test_poller_dedup_by_id_and_key(tmp_path, monkeypatch):
     initiatives2 = [
         {"id": "i2", "status": "pending", "dedup_key": "dk1", "initiative_type": "x", "created_at": ""},
     ]
-    with patch.object(agent_bridge, "_get", return_value={"initiatives": initiatives2}), \
+    with patch.object(agent_bridge, "_get", return_value={"initiatives": initiatives2}),\
          patch.object(urllib.request, "urlopen", side_effect=fake_urlopen):
         poller.poll(cfg)
     assert call_count == 1  # still not incremented
@@ -308,7 +308,7 @@ def test_cycle_runs_all_phases(tmp_path, monkeypatch):
             return {"initiatives": []}
         return {}
 
-    with patch.object(agent_bridge, "_get", side_effect=fake_get), \
+    with patch.object(agent_bridge, "_get", side_effect=fake_get),\
          patch.object(agent_bridge, "_post", return_value=None):
         result = bridge.cycle()
 

@@ -8,9 +8,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.api.schemas.host import TurnSyncRequest
-from colony_sidecar.turns import TurnIdempotencyLedger, canonical_turn_digest
+from apsimo.api.routers import host
+from apsimo.api.schemas.host import TurnSyncRequest
+from apsimo.turns import TurnIdempotencyLedger, canonical_turn_digest
 
 
 @pytest.fixture
@@ -115,7 +115,7 @@ async def test_media_references_retained_but_not_lexically_indexed(source_app, t
         stored = json.loads(conn.execute("SELECT messages_json FROM turn_sources").fetchone()[0])[0]
         assert stored["content"][0] == blocks[0]
         assert stored["content"][1]["type"] == "image_unretained"
-        from colony_sidecar.turns.idempotency import source_message_hash
+        from apsimo.turns.idempotency import source_message_hash
         assert source_message_hash("session-a", stored) == source_message_hash("session-a", {"role": "user", "content": blocks})
 
 

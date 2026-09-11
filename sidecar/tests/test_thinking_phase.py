@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
+from apsimo.autonomy.loop import AutonomyLoop
 
 
 def _payload():

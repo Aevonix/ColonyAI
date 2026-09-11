@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.beliefs.source_time import MemoryTimeQuery
-from colony_sidecar.intelligence.graph.selection import RecallSelector, current_work_query
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import source_message_hash
-from colony_sidecar.turns.source_annotations import expand
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.beliefs.source_time import MemoryTimeQuery
+from apsimo.intelligence.graph.selection import RecallSelector, current_work_query
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import source_message_hash
+from apsimo.turns.source_annotations import expand
 from test_turn_source_evidence import source_app
 
 

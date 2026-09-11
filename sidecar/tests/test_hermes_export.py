@@ -18,7 +18,7 @@ import yaml
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.skills.hermes_export import (
+from apsimo.skills.hermes_export import (
     HERMES_AUTHOR,
     PROVENANCE_MARKER,
     export_approved_skill,
@@ -27,7 +27,7 @@ from colony_sidecar.skills.hermes_export import (
     load_body_source,
     render_skill_md,
 )
-from colony_sidecar.skills.models import SkillManifest, SkillStatus
+from apsimo.skills.models import SkillManifest, SkillStatus
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +274,7 @@ class _FakeRegistry:
 
 @asynccontextmanager
 async def _client_with_registry(registry):
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
 
     prev = host_mod._skills_registry
     host_mod._skills_registry = registry
@@ -336,7 +336,7 @@ class TestApprovalHook:
     async def test_export_failure_does_not_block_approval(self, tmp_path, monkeypatch):
         monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
         monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path))
-        import colony_sidecar.skills.hermes_export as hx
+        import apsimo.skills.hermes_export as hx
 
         def _boom(*a, **k):
             raise RuntimeError("disk on fire")
@@ -380,8 +380,8 @@ class TestSkillsObservationDomain:
     @pytest.fixture
     def client(self, tmp_path):
         from fastapi.testclient import TestClient
-        from colony_sidecar.api.routers import observations as obs_router
-        from colony_sidecar.observations.store import ObservationStore
+        from apsimo.api.routers import observations as obs_router
+        from apsimo.observations.store import ObservationStore
 
         store = ObservationStore(state_dir=tmp_path)
         app = FastAPI()
@@ -392,7 +392,7 @@ class TestSkillsObservationDomain:
         store.close()
 
     def test_skills_domain_is_known(self):
-        from colony_sidecar.observations.store import (
+        from apsimo.observations.store import (
             OBSERVATION_DOMAINS,
             OBSERVATION_SYNC_INTERVALS,
         )
@@ -433,6 +433,6 @@ class TestSkillsObservationDomain:
         assert by_id["pdf-tools"]["reported_by"] == "hermes-plugin"
 
     def test_skills_domain_never_gets_sync_action(self):
-        from colony_sidecar.initiatives.action_registry import OBSERVATION_SYNC_ACTIONS
+        from apsimo.initiatives.action_registry import OBSERVATION_SYNC_ACTIONS
 
         assert "skills" not in OBSERVATION_SYNC_ACTIONS

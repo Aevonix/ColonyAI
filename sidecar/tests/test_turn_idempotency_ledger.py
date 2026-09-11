@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from colony_sidecar.turns import (
+from apsimo.turns import (
     ReservationOutcome,
     TurnIdempotencyLedger,
     canonical_turn_digest,

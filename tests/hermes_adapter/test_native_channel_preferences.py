@@ -5,7 +5,7 @@ import socket
 import pytest
 import yaml
 
-from colony_sidecar.setup_hermes import _receipt_preference
+from apsimo.setup_hermes import _receipt_preference
 
 
 LAYOUTS = [

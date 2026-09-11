@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
-from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.intelligence.relationships.trust_tiers import TrustTier
 
 SECRET = "the ssn is 123-45-6789"               # trips secret_leak (PII scan)
 DISCLOSURE = "his home address is on file"      # trips disclosure_tier at group_guest

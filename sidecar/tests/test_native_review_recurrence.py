@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from colony_sidecar.initiatives import native_work, store as stores
-from colony_sidecar.intelligence.components import initiative_engine as engine_module
+from apsimo.initiatives import native_work, store as stores
+from apsimo.intelligence.components import initiative_engine as engine_module
 
 
 @pytest.fixture

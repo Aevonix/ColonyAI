@@ -1,10 +1,10 @@
-# Contributing to Colony
+# Contributing to Apsimo
 
-Thanks for your interest in Colony! This guide covers how to contribute.
+Thanks for your interest in Apsimo! This guide covers how to contribute.
 
 ## Development setup
 
-Colony is Python-only (the former TypeScript/npm plugin was removed along with
+Apsimo is Python-only (the former TypeScript/npm plugin was removed along with
 OpenClaw support in v0.21.14).
 
 ```bash
@@ -21,12 +21,12 @@ unless a selected qualification explicitly requires a real model or service.
 
 | Path | Purpose |
 |---|---|
-| `sidecar/colony_sidecar/` | The Python package: FastAPI sidecar, CLI, all subsystems |
-| `sidecar/colony_sidecar/api/` | Pydantic schemas and routers — the single source of truth for the HTTP contract |
-| `sidecar/colony_sidecar/intelligence/` | Graph memory, mind model, cognition components |
-| `sidecar/colony_sidecar/workers/` | Worker daemons (`colony-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
+| `sidecar/apsimo/` | The Python package: FastAPI sidecar, CLI, all subsystems |
+| `sidecar/apsimo/api/` | Pydantic schemas and routers — the single source of truth for the HTTP contract |
+| `sidecar/apsimo/intelligence/` | Graph memory, mind model, cognition components |
+| `sidecar/apsimo/workers/` | Worker daemons (`colony-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
 | `sidecar/tests/` | Sidecar test suite, kept out of the installed product package |
-| `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `colony-memory` (memory provider), `feeds-manage` |
+| `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `apsimo-memory` (memory provider), `feeds-manage` |
 | `docs/` | Public docs (harness integration, channel framework, feeds, prompts) |
 
 ## Making changes
@@ -94,18 +94,18 @@ document it in `.env.example` instead of hardcoding it.
 
 ## Versioning
 
-Colony uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
+Apsimo uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
 features, PATCH for fixes and documentation, and MAJOR for incompatible public
-contracts. The `colonyai` sidecar and `colony-hermes` integration are published
-together on PyPI with the same version. The former npm package is retired.
+contracts. The `apsimo` sidecar and `apsimo-hermes` integration are published together
+on PyPI with the same version. `apsimo-hostworker` has its own package version. The former npm package is retired.
 
 ## Release flow
 
-1. Bump `version` in both `pyproject.toml` and `sidecar/pyproject.toml`
+1. Bump `version` in `pyproject.toml`, `sidecar/pyproject.toml` and `hostworker/pyproject.toml`
 2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z — title`, prose + bullets)
 3. Commit and tag: `git tag vX.Y.Z && git push --tags`
 4. CI (`.github/workflows/release.yml`) publishes to PyPI, pushes the Docker
-   image to GHCR (`ghcr.io/aevonix/colony`), and creates the GitHub release
+   image to GHCR (`ghcr.io/aevonix/apsimo`), and creates the GitHub release
    from the changelog entry — all automatically on the tag push
 
 ## Architecture notes

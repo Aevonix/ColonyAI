@@ -3,11 +3,11 @@ import asyncio
 
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.vector.collections import Collection
-from colony_sidecar.vector.indexes import EmbeddingIdentity, IndexCatalog, IncompatibleIndex
-from colony_sidecar.vector.migrate import migrate_tier
-from colony_sidecar.vector.store import VectorStore
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.vector.collections import Collection
+from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog, IncompatibleIndex
+from apsimo.vector.migrate import migrate_tier
+from apsimo.vector.store import VectorStore
 
 
 class Pipeline:
@@ -157,7 +157,7 @@ def test_cli_migration_stops_truthfully(monkeypatch, capsys, status_code, status
     import httpx
     import sys
     import time
-    from colony_sidecar import cli
+    from apsimo import cli
     monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
     monkeypatch.setattr(sys, 'argv', ['colony', 'migrate-tier', '--wait-seconds', str(wait)])
     clock = [0.]
@@ -178,10 +178,10 @@ def test_cli_migration_stops_truthfully(monkeypatch, capsys, status_code, status
 @pytest.mark.asyncio
 async def test_multimodal_api_has_explicit_endpoint_without_losing_text_provider(monkeypatch):
     import httpx
-    from colony_sidecar.vector.config import EmbeddingConfig
-    from colony_sidecar.vector.embedder import EmbeddingPipeline
-    from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
-    from colony_sidecar.vector.multimodal_provider import make_multimodal_provider
+    from apsimo.vector.config import EmbeddingConfig
+    from apsimo.vector.embedder import EmbeddingPipeline
+    from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
+    from apsimo.vector.multimodal_provider import make_multimodal_provider
     config = EmbeddingConfig(provider='openai_api', model_id='neutral', dimensions=2)
     with pytest.raises(ValueError, match='explicit endpoint'):
         make_multimodal_provider(config)
@@ -208,9 +208,9 @@ async def test_multimodal_api_has_explicit_endpoint_without_losing_text_provider
 @pytest.mark.asyncio
 async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
     import httpx
-    from colony_sidecar.vector.config import EmbeddingConfig
-    from colony_sidecar.vector.embedder import EmbeddingPipeline
-    from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
+    from apsimo.vector.config import EmbeddingConfig
+    from apsimo.vector.embedder import EmbeddingPipeline
+    from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
     import json
 
     requests = []
@@ -245,8 +245,8 @@ async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
 async def test_migration_api_and_forget_cover_retained_files_without_graph(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    import colony_sidecar.vector as vector_module
-    from colony_sidecar.api.routers import host
+    import apsimo.vector as vector_module
+    from apsimo.api.routers import host
 
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
@@ -291,8 +291,8 @@ def test_vector_cli_request_matches_current_host_contract(monkeypatch, capsys, c
     import httpx
     import sys
     import time
-    from colony_sidecar import cli
-    from colony_sidecar.api.schemas import host
+    from apsimo import cli
+    from apsimo.api.schemas import host
     monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
     monkeypatch.setattr(sys, 'argv', ['colony', command, '--batch-size', '32'])
     monkeypatch.setattr(time, 'sleep', lambda _: None)

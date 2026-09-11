@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.events import broadcaster
-from colony_sidecar.events.broadcaster import emit, reset_broadcaster_for_tests
+from apsimo.events import broadcaster
+from apsimo.events.broadcaster import emit, reset_broadcaster_for_tests
 
 
 class _Collector:
@@ -54,7 +54,7 @@ def test_emit_swallows_broadcaster_exceptions(collector):
 
 @pytest.mark.asyncio
 async def test_consolidator_emits_memory_consolidated(collector):
-    from colony_sidecar.intelligence.graph.consolidator import MemoryConsolidator
+    from apsimo.intelligence.graph.consolidator import MemoryConsolidator
 
     class _FakeGraph:
         async def execute(self, *_args, **_kwargs):
@@ -79,8 +79,8 @@ async def _empty_list():
 
 
 def test_briefing_save_broadcasts_briefing(collector, tmp_path, monkeypatch):
-    from colony_sidecar.briefings.store import BriefingStore
-    from colony_sidecar.briefings.models import (
+    from apsimo.briefings.store import BriefingStore
+    from apsimo.briefings.models import (
         Briefing, BriefingPriority, BriefingStatus, BriefingType,
     )
 
@@ -105,8 +105,8 @@ def test_briefing_save_broadcasts_briefing(collector, tmp_path, monkeypatch):
 
 
 def test_goal_save_broadcasts_goal_update(collector, tmp_path):
-    from colony_sidecar.goals.store import GoalStore
-    from colony_sidecar.goals.models import (
+    from apsimo.goals.store import GoalStore
+    from apsimo.goals.models import (
         Goal, GoalPriority, GoalSource, GoalStatus,
     )
 
@@ -135,7 +135,7 @@ def test_goal_save_broadcasts_goal_update(collector, tmp_path):
 
 @pytest.mark.asyncio
 async def test_world_model_upsert_entity_broadcasts(collector):
-    from colony_sidecar.world_model.store import WorldModelStore
+    from apsimo.world_model.store import WorldModelStore
 
     class _FakeBackend:
         async def upsert_entity(self, e):
@@ -156,7 +156,7 @@ async def test_world_model_upsert_entity_broadcasts(collector):
 async def test_skill_approve_broadcasts_skill_draft_approved(collector):
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
 
     class _FakeRegistry:
         def __init__(self):

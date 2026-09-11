@@ -6,9 +6,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.beliefs.source_claims import extraction_timeout_seconds, projection_timeout_seconds, extract_claims
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.turns.idempotency import TurnIdempotencyLedger
+from apsimo.beliefs.source_claims import extraction_timeout_seconds, projection_timeout_seconds, extract_claims
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns.idempotency import TurnIdempotencyLedger
 from test_function_routing import config, endpoint, router
 from test_source_claim_projection import claim, Model
 
@@ -50,7 +50,7 @@ async def test_actual_role_request_uses_configured_outer_deadline(monkeypatch, t
 
 @pytest.mark.asyncio
 async def test_long_multi_message_job_renews_after_role_reload(tmp_path, monkeypatch):
-    from colony_sidecar.beliefs import source_projection as module
+    from apsimo.beliefs import source_projection as module
     clock = [1000.0]
     monkeypatch.setattr(module, 'time', SimpleNamespace(time=lambda: clock[0]))
     ledger = TurnIdempotencyLedger(tmp_path / 'turns.db')

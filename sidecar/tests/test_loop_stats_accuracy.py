@@ -5,10 +5,10 @@ task-queue manager, not the memory consolidator.
 
 from __future__ import annotations
 
-from colony_sidecar.autonomy.loop import AutonomyLoop, LoopStats
-from colony_sidecar.autonomy.registry import SubsystemRegistry
-from colony_sidecar.events.bus import EventBus
-from colony_sidecar.events.types import Event
+from apsimo.autonomy.loop import AutonomyLoop, LoopStats
+from apsimo.autonomy.registry import SubsystemRegistry
+from apsimo.events.bus import EventBus
+from apsimo.events.types import Event
 
 
 def _bare_loop(bus):
@@ -68,8 +68,8 @@ async def test_tick_liveness_stamp_requires_a_completed_tick(monkeypatch):
     """last_tick_at is stamped at the END of _tick: a tick that dies in a
     phase (or is cancelled on budget) must not report fresh liveness."""
     import pytest
-    import colony_sidecar.api.routers.host as host_mod
-    from colony_sidecar.telemetry import TelemetryStore
+    import apsimo.api.routers.host as host_mod
+    from apsimo.telemetry import TelemetryStore
 
     telemetry = TelemetryStore()
     monkeypatch.setattr(host_mod, "_telemetry", telemetry)
@@ -98,7 +98,7 @@ async def test_tick_liveness_stamp_requires_a_completed_tick(monkeypatch):
 
 
 def test_registry_queue_is_task_queue(monkeypatch):
-    import colony_sidecar.api.routers.host as host_mod
+    import apsimo.api.routers.host as host_mod
 
     sentinel_queue = object()
     sentinel_consolidator = object()

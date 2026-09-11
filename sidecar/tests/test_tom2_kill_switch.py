@@ -12,23 +12,23 @@ from types import SimpleNamespace
 
 import pytest
 
-import colony_sidecar.api.routers.host as host
-from colony_sidecar.api.schemas.host import (
+import apsimo.api.routers.host as host
+from apsimo.api.schemas.host import (
     ContextAssembleRequest, ContextSection, HostIdentity, HostMessage,
     HostTurnContext,
 )
-from colony_sidecar.channels.presence import ConversationPresenceStore
-from colony_sidecar.gate.layers.tom2_epistemic import Tom2EpistemicGuard
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
-from colony_sidecar.gate.taint import TaintRegistry
-from colony_sidecar.proposals import ProposalStore
-from colony_sidecar.tom.approvals import Tom2ApprovalRegistry
-from colony_sidecar.tom.exposure import Tom2ExposureStore
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.levels import (
+from apsimo.channels.presence import ConversationPresenceStore
+from apsimo.gate.layers.tom2_epistemic import Tom2EpistemicGuard
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.gate.taint import TaintRegistry
+from apsimo.proposals import ProposalStore
+from apsimo.tom.approvals import Tom2ApprovalRegistry
+from apsimo.tom.exposure import Tom2ExposureStore
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.levels import (
     clear_level_cache, resolve_effective_level, set_evidence_probe)
-from colony_sidecar.tom.tom2 import Tom2Store
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.tom.tom2 import Tom2Store
+from apsimo.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 READER = "cid-alice"

@@ -9,11 +9,11 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.intelligence.graph.client import ColonyGraph
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import SourceErased
+from apsimo.api.routers import host
+from apsimo.intelligence.graph.client import ColonyGraph
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import SourceErased
 from test_turn_source_evidence import source_app, envelope, recalled
 
 

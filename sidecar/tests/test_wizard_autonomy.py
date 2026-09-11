@@ -11,9 +11,9 @@ import json
 
 import pytest
 
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.setup import (
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.setup import (
     _prompt,
     apply_llm_config_fixes,
     build_owner_contact,

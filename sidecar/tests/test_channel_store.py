@@ -2,8 +2,8 @@
 
 import pytest
 
-from colony_sidecar.channels.manifest import ChannelManifest
-from colony_sidecar.channels.store import ChannelStore
+from apsimo.channels.manifest import ChannelManifest
+from apsimo.channels.store import ChannelStore
 
 
 @pytest.fixture
@@ -159,6 +159,6 @@ class TestAuth:
 
 class TestMigrationIntegration:
     def test_schema_version_tracked(self, store):
-        from colony_sidecar.migrations import applied_versions_sync
+        from apsimo.migrations import applied_versions_sync
         versions = applied_versions_sync(store._conn)
         assert "001" in versions

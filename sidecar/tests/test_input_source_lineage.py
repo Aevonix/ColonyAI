@@ -6,8 +6,8 @@ import sqlite3
 import httpx
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import SourceErased, SourceInputPending, source_message_hash
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import SourceErased, SourceInputPending, source_message_hash
 from test_answer_source_lineage import stored
 from test_turn_source_evidence import source_app
 from test_source_media import message as image_message
@@ -96,8 +96,8 @@ def test_offline_outbox_removes_input_dependent_answer_before_replay(tmp_path):
 
 @pytest.mark.asyncio
 async def test_predecessor_linked_route_rejects_parent_protocol_before_ingestion(source_app, monkeypatch):
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.api.schemas.host import TurnSyncRequest
+    from apsimo.api.routers import host
+    from apsimo.api.schemas.host import TurnSyncRequest
     from fastapi import HTTPException, Response
     monkeypatch.setattr(host, 'turns_sync_v2', lambda *args, **kwargs: pytest.fail('old route ingested unknown parents'))
     body = TurnSyncRequest.model_validate({'identity': {'host_id': 'fixture'},

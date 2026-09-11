@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.3.0 - Apsimo interfaces and compatible attachment
+
+The public platform uses Apsimo package, command and native adapter names.
+Guided setup creates a private instance and attaches it to a selected Hermes
+profile. Managed refresh retains existing private state, credentials and service
+identity; historical Colony imports and explicit plugin/provider selections
+remain aliases to the same implementation.
+
+- Canonical native tools preserve existing governed action identifiers and
+  task contracts, with one active adapter and one selected memory provider.
+- Memory recall and profile settings survive the name migration, including
+  copied installations and existing per-profile provider configuration.
+- Native reviews retain their bounded evidence tools and existing dispatch
+  lifecycle. This release adds no separate review or approval service.
+
 ## v1.2.1 - bounded native operational reviews
 
 Autonomous operational reviews use an opt-in native profile with two tools:

@@ -8,7 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from colony_sidecar.contextgate import (
+from apsimo.contextgate import (
     GateConfig,
     GateDecision,
     chunk_text,
@@ -18,7 +18,7 @@ from colony_sidecar.contextgate import (
     prepare_context,
     rank_chunks,
 )
-from colony_sidecar.contextgate.retrieve import lexical_scores
+from apsimo.contextgate.retrieve import lexical_scores
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +321,7 @@ def test_prepare_summarizer_failure_degrades():
 
 @pytest.fixture()
 def client():
-    from colony_sidecar.api.routers.context_gate import router as cg_router
+    from apsimo.api.routers.context_gate import router as cg_router
 
     app = FastAPI()
     app.include_router(cg_router)
@@ -371,9 +371,9 @@ def test_api_requires_content(client):
 
 
 def test_api_model_tier_budget(client, monkeypatch):
-    from colony_sidecar.api.routers import host as host_mod
-    from colony_sidecar.router.router import LLMRouter
-    from colony_sidecar.router.tiers import build_tiers_from_host
+    from apsimo.api.routers import host as host_mod
+    from apsimo.router.router import LLMRouter
+    from apsimo.router.tiers import build_tiers_from_host
 
     tiers = build_tiers_from_host(
         {

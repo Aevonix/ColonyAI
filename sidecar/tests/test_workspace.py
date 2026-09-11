@@ -9,12 +9,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.api.authority import RequestAuthority, legacy_authority
-from colony_sidecar.self_model.workspace import (
+import apsimo.api.routers.host as host_mod
+from apsimo.api.authority import RequestAuthority, legacy_authority
+from apsimo.self_model.workspace import (
     ConcernStore, WorkspaceEngine, in_sleep_window,
 )
-from colony_sidecar.self_model.thinker import _parse
+from apsimo.self_model.thinker import _parse
 
 
 def make(tmp_path, thinker=None, journal=None):
@@ -194,7 +194,7 @@ class _FakeRegistry:
         self.benchmark = _FakeBench()
 
 def test_ingest_from_all_sources(tmp_path):
-    from colony_sidecar.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.loop import AutonomyLoop
     ws, store = make(tmp_path)
     fake_self = type("S", (), {"_registry": _FakeRegistry()})()
     AutonomyLoop._workspace_ingest(fake_self, ws)

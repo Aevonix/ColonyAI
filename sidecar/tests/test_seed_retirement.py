@@ -8,8 +8,8 @@ from fastapi import FastAPI
 import httpx
 import pytest
 
-from colony_sidecar import cli, seed, setup
-from colony_sidecar.api.routers import host
+from apsimo import cli, seed, setup
+from apsimo.api.routers import host
 
 
 RETIRED = {
@@ -64,8 +64,8 @@ def test_seed_cli_reports_retirement(extra, monkeypatch, capsys):
 
 @pytest.mark.parametrize('check', ['world_history', 'seed_request'])
 def test_legacy_init_preserves_world_history_and_does_not_request_seed(check, tmp_path, monkeypatch):
-    from colony_sidecar.world_model.store import WorldModelStore
-    from colony_sidecar.world_model.entities import BaseEntity
+    from apsimo.world_model.store import WorldModelStore
+    from apsimo.world_model.entities import BaseEntity
 
     monkeypatch.setattr(os, 'environ', dict(os.environ))
     monkeypatch.setenv('LITELLM_LOCAL_MODEL_COST_MAP', 'True')
@@ -96,7 +96,7 @@ def test_legacy_init_preserves_world_history_and_does_not_request_seed(check, tm
     monkeypatch.setattr(setup.time, 'sleep', lambda *args: None)
     commands = []
     def run(command, **kwargs):
-        assert command[1:4] in (['-m', 'pip', 'install'], ['-m', 'colony_sidecar', 'start'], ['-m', 'colony_sidecar', 'doctor'])
+        assert command[1:4] in (['-m', 'pip', 'install'], ['-m', 'apsimo', 'start'], ['-m', 'apsimo', 'doctor'])
         commands.append(command)
         return SimpleNamespace(returncode=0, stdout='', stderr='')
     monkeypatch.setattr(setup.subprocess, 'run', run)

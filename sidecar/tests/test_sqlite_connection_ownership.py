@@ -2,9 +2,9 @@
 
 import sqlite3
 
-from colony_sidecar.autonomy.scheduler import ScheduleStore
-from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
-from colony_sidecar.intelligence.synthesis.insight_store import InsightStore
+from apsimo.autonomy.scheduler import ScheduleStore
+from apsimo.delivery.rate_limiter import DeliveryRateLimiter
+from apsimo.intelligence.synthesis.insight_store import InsightStore
 
 
 def _track_connections(monkeypatch, module):
@@ -29,7 +29,7 @@ def _track_connections(monkeypatch, module):
 
 
 def test_insight_store_closes_transient_connections(tmp_path, monkeypatch):
-    import colony_sidecar.intelligence.synthesis.insight_store as module
+    import apsimo.intelligence.synthesis.insight_store as module
 
     opened = _track_connections(monkeypatch, module)
     store = InsightStore(tmp_path / "insights.db")
@@ -39,7 +39,7 @@ def test_insight_store_closes_transient_connections(tmp_path, monkeypatch):
 
 
 def test_schedule_store_closes_transient_connections(tmp_path, monkeypatch):
-    import colony_sidecar.autonomy.scheduler as module
+    import apsimo.autonomy.scheduler as module
 
     opened = _track_connections(monkeypatch, module)
     ScheduleStore(str(tmp_path / "schedules.db"))
@@ -48,7 +48,7 @@ def test_schedule_store_closes_transient_connections(tmp_path, monkeypatch):
 
 
 def test_delivery_limiter_closes_transient_connections(tmp_path, monkeypatch):
-    import colony_sidecar.delivery.rate_limiter as module
+    import apsimo.delivery.rate_limiter as module
 
     opened = _track_connections(monkeypatch, module)
     limiter = DeliveryRateLimiter(

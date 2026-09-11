@@ -2,7 +2,7 @@
 
 Backup format 2 includes original source images referenced by the captured
 `turn-idempotency.db`. A caption, asset handle or vector cannot reconstruct the
-original pixels. The existing `colony backup --full` and `colony restore --full`
+original pixels. The existing `apsimo backup --full` and `apsimo restore --full`
 commands use this path; there is no separate memory backup service.
 
 Each database is captured consistently. If SQLite `VACUUM INTO` fails, ordinary
@@ -14,7 +14,7 @@ Originals are selected from the captured ledger, not from a later query of live
 state. Hash and byte length must match. Unowned files and regenerable thumbnails
 are omitted. If concurrent forgetting removes a required original before it is
 copied, backup fails visibly; retry against a new snapshot. This is a consistent
-source-image set, not an atomic snapshot across every Colony database.
+source-image set, not an atomic snapshot across every Apsimo database.
 
 Restore checks all referenced originals before replacing state. Database
 restoration uses SQLite's backup API, so an old destination WAL cannot overlay
@@ -40,7 +40,7 @@ When the current canonical source ledger survives but original-image storage is
 missing or damaged, use the existing restore CLI's bounded memory mode:
 
 ```sh
-colony restore --memory-only --input ./backup.tar.gz \
+apsimo restore --memory-only --input ./backup.tar.gz \
   --current-state ./surviving-current-state --output ./recovered-memory
 ```
 
@@ -82,7 +82,7 @@ hashes, the selected ledger's currentness and the existing scoped source/image
 and erasure-feed reads before resuming those writers. Regenerate the bundle if
 the surviving source or its authority changed after capture. Use the normal
 runtime setup and recovery procedures for the excluded stores; do not start
-the memory bundle as a complete Colony instance. This mode does not certify
+the memory bundle as a complete Apsimo instance. This mode does not certify
 runtime authority or recover current source state when no authoritative ledger
 survives. In that case full archive reconstruction remains isolated pending
 reconciliation; it is not a total-disaster recovery claim.

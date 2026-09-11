@@ -6,11 +6,11 @@ import os
 
 import pytest
 
-from colony_sidecar.initiatives.backup_evidence import backup_review_task
-from colony_sidecar.initiatives.native_work import NativeInitiativeWork
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.intelligence.components.initiative_engine import InitiativeConfig, InitiativeEngine, InitiativeType
+from apsimo.initiatives.backup_evidence import backup_review_task
+from apsimo.initiatives.native_work import NativeInitiativeWork
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.autonomy.config import AutonomyConfig
+from apsimo.intelligence.components.initiative_engine import InitiativeConfig, InitiativeEngine, InitiativeType
 
 
 def publish(path, captured):

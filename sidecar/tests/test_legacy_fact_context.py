@@ -4,10 +4,10 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_annotations import append as annotate_source
+from apsimo.api.routers import host
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_annotations import append as annotate_source
 from test_contact_fact_recall import contact_context, context
 from test_recall_unified_context import Graph, belief
 from test_turn_source_evidence import source_app
@@ -185,7 +185,7 @@ async def test_enriched_estimate_keeps_correction_refs_and_never_revives_erased_
 @pytest.mark.parametrize('change', ['unrelated_query', 'packet_budget', 'compression_budget', 'new_correction'])
 async def test_enriched_omits_irrelevant_incomplete_or_changed_source_packet(
         contact_context, monkeypatch, change):
-    from colony_sidecar import compression
+    from apsimo import compression
     runtime = contact_context
     original = 'The hydrofoil gate is violet.'
     fact = runtime.add(original)

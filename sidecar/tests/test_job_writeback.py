@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.task_queue.models import JobResult, JobStatus
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.task_queue.models import JobResult, JobStatus
 
 
 def _job(job_id="j1", status=JobStatus.COMPLETED, action="coding_check_ci",
@@ -170,7 +170,7 @@ async def test_merge_job_tags_persists_on_terminal_job(tmp_path):
     before merge_job_tags existed the ``memory_synced`` marker never persisted
     and every finished agent_action job was re-processed every cycle forever.
     """
-    from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+    from apsimo.task_queue.queue_manager import TaskQueueManager
 
     TaskQueueManager._instance = None
     mgr = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")
@@ -212,8 +212,8 @@ async def test_writeback_phase_is_idempotent_across_runs(tmp_path):
     """
     from datetime import datetime, timezone
 
-    from colony_sidecar.task_queue.models import WorkerCapabilities
-    from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+    from apsimo.task_queue.models import WorkerCapabilities
+    from apsimo.task_queue.queue_manager import TaskQueueManager
 
     TaskQueueManager._instance = None
     mgr = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")

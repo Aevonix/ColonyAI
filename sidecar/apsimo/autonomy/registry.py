@@ -1,0 +1,339 @@
+"""SubsystemRegistry — lazy access to all wired sidecar subsystems.
+
+The AutonomyLoop uses this instead of taking 18+ constructor arguments.
+Each property reads from the host router's module-level wiring and
+returns None if the subsystem isn't available. Phases that depend on
+a subsystem check for None and skip gracefully.
+"""
+
+from __future__ import annotations
+
+from typing import Any, Optional
+
+
+class SubsystemRegistry:
+    """Provides lazy access to all wired sidecar subsystems.
+
+    Reads from the host router's module-level globals. If a subsystem
+    isn't wired (e.g. Neo4j not configured), the property returns None
+    and any phase depending on it becomes a no-op.
+    """
+
+    @property
+    def graph(self) -> Any:
+        from apsimo.api.routers.host import _graph
+        return _graph
+
+    @property
+    def goals(self) -> Any:
+        from apsimo.api.routers.host import _goals_store
+        return _goals_store
+
+    @property
+    def world_model(self) -> Any:
+        from apsimo.api.routers.host import _world_store
+        return _world_store
+
+    @property
+    def directives(self) -> Any:
+        from apsimo.api.routers.host import _directive_manager
+        return _directive_manager
+
+    @property
+    def research(self) -> Any:
+        from apsimo.api.routers.host import _research_pipeline
+        return _research_pipeline
+
+    @property
+    def proposal_store(self) -> Any:
+        from apsimo.api.routers.host import _proposal_store
+        return _proposal_store
+
+    @property
+    def feedback_store(self) -> Any:
+        from apsimo.api.routers.host import _feedback_store
+        return _feedback_store
+
+    @property
+    def repo_mirrors(self) -> Any:
+        from apsimo.api.routers.host import _repo_mirrors
+        return _repo_mirrors
+
+    @property
+    def directed_service(self) -> Any:
+        from apsimo.api.routers.host import _directed_service
+        return _directed_service
+
+    @property
+    def initiative(self) -> Any:
+        from apsimo.api.routers.host import _metalearner
+        return _metalearner  # InitiativeEngine is part of cognition
+
+    @property
+    def anomalies(self) -> Any:
+        from apsimo.intelligence.components.anomaly_detector import AnomalyDetector
+        from apsimo.api.routers.host import _graph
+        from apsimo.events.bus import EventBus
+        if not hasattr(self, '_anomaly_detector'):
+            graph_client = _graph.driver if _graph and hasattr(_graph, 'driver') else None
+            # Bug 41: Use shared event bus instead of creating new one
+            event_bus = self.events or EventBus()
+            self._anomaly_detector = AnomalyDetector(graph_client, event_bus)
+        return self._anomaly_detector
+
+    @property
+    def queue(self) -> Any:
+        """Task-queue manager (was a copy-paste bug returning the memory
+        consolidator; ``task_queue`` below is the canonical accessor)."""
+        from apsimo.api.routers.host import _task_queue
+        return _task_queue
+
+    @property
+    def briefings(self) -> Any:
+        from apsimo.api.routers.host import _briefings_engine
+        return _briefings_engine
+
+    @property
+    def events(self) -> Any:
+        from apsimo.api.routers.host import _event_subscribers
+        return _event_subscribers
+
+    @property
+    def delivery(self) -> Any:
+        from apsimo.api.routers.host import _delivery_bridge
+        return _delivery_bridge
+
+    @property
+    def p8(self) -> Any:
+        """Shadow-only P8 integration runtime, when explicitly attached."""
+        from apsimo.api.routers.host import _p8_runtime
+        return _p8_runtime
+
+    @property
+    def cognition(self) -> Any:
+        from apsimo.api.routers.host import _metalearner
+        return _metalearner
+
+    @property
+    def connection_discoverer(self) -> Any:
+        from apsimo.api.routers.host import _connection_discoverer
+        return _connection_discoverer
+
+    @property
+    def learner(self) -> Any:
+        from apsimo.api.routers.host import _learner
+        return _learner
+
+    @property
+    def skills(self) -> Any:
+        from apsimo.api.routers.host import _skills_registry
+        return _skills_registry
+
+    @property
+    def chain(self) -> Any:
+        from apsimo.api.routers.host import _chain_manager
+        return _chain_manager
+
+    @property
+    def secrets(self) -> Any:
+        from apsimo.api.routers.host import _secrets_manager
+        return _secrets_manager
+
+    @property
+    def signal_collector(self) -> Any:
+        from apsimo.api.routers.host import _signal_collector
+        return _signal_collector
+
+    @property
+    def embedder(self) -> Any:
+        from apsimo.api.routers.host import _embedder
+        return _embedder
+
+    @property
+    def response_gate(self) -> Any:
+        from apsimo.api.routers.host import _response_gate
+        return _response_gate
+
+    @property
+    def llm_router(self) -> Any:
+        """Get the LLMRouter from the ReasoningLoop if wired."""
+        from apsimo.api.routers.host import _reasoning_loop
+        if _reasoning_loop is not None:
+            return _reasoning_loop._model
+        return None
+
+    @property
+    def scheduler(self) -> Any:
+        from apsimo.api.routers.host import _scheduler
+        return _scheduler
+
+    @property
+    def initiative_engine(self) -> Any:
+        """Get or create the InitiativeEngine (NOT MetaLearner)."""
+        if not hasattr(self, '_initiative_engine'):
+            try:
+                from apsimo.intelligence.components.initiative_engine import InitiativeEngine
+                from apsimo.api.routers.host import _graph, _initiative_store, _goals_store
+
+                self._initiative_engine = InitiativeEngine(
+                    graph_client=_graph if _graph and hasattr(_graph, 'driver') else None,
+                    event_bus=None,  # Not needed for rule-based generation
+                    mind_model=None,
+                    store=_initiative_store,
+                    goal_store=_goals_store,
+                )
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).warning("Failed to create InitiativeEngine: %s", e)
+                self._initiative_engine = None
+        return self._initiative_engine
+
+    @property
+    def commitment_store(self) -> Any:
+        """Get the CommitmentStore."""
+        from apsimo.api.routers.host import _commitment_store  # singular
+        return _commitment_store
+
+    @property
+    def benchmark(self) -> Any:
+        """Get the SelfhoodBenchmark (Mind M0a)."""
+        from apsimo.api.routers.host import _benchmark
+        return _benchmark
+
+    @property
+    def experiments(self) -> Any:
+        """Get the ExperimentEngine (Mind M0b)."""
+        from apsimo.api.routers.host import _experiments
+        return _experiments
+
+    @property
+    def toolsmith(self) -> Any:
+        """Get the Toolsmith engine (Mind M1)."""
+        from apsimo.api.routers.host import _toolsmith
+        return _toolsmith
+
+    @property
+    def workspace(self) -> Any:
+        """Get the WorkspaceEngine (Mind M2)."""
+        from apsimo.api.routers.host import _workspace
+        return _workspace
+
+    @property
+    def expectations(self) -> Any:
+        """Get the ExpectationEngine (Mind M3a)."""
+        from apsimo.api.routers.host import _expectations
+        return _expectations
+
+    @property
+    def affect_store(self) -> Any:
+        """Get the AffectStore."""
+        from apsimo.api.routers.host import _affect_store
+        return _affect_store
+
+    @property
+    def pattern_store(self) -> Any:
+        """Get the PatternStore."""
+        from apsimo.api.routers.host import _pattern_store
+        return _pattern_store
+
+    # === Multi-Agent Properties (v0.7.0) ===
+
+    @property
+    def agent_store(self) -> Any:
+        """Get the AgentStore for multi-agent management."""
+        from apsimo.api.routers.host import _agent_store
+        return _agent_store
+
+    @property
+    def initiative_store(self) -> Any:
+        """Get the InitiativeStore for initiative persistence."""
+        from apsimo.api.routers.host import _initiative_store
+        return _initiative_store
+
+    @property
+    def assignment_engine(self) -> Any:
+        """Get the AssignmentEngine for initiative-to-agent matching."""
+        from apsimo.api.routers.host import _assignment_engine
+        return _assignment_engine
+
+    @property
+    def websocket_manager(self) -> Any:
+        """Get the WebSocketManager for remote agent connections."""
+        from apsimo.api.routers.host import _websocket_manager
+        return _websocket_manager
+
+    @property
+    def task_queue(self) -> Any:
+        """Get the TaskQueueManager for distributed job scheduling."""
+        from apsimo.api.routers.host import _task_queue
+        return _task_queue
+
+    @property
+    def contacts(self) -> Any:
+        """Get the contact store (graduated approval policy, v0.18.0)."""
+        from apsimo.api.routers.host import _contacts_store
+        return _contacts_store
+
+    # === Cognition program (items 1/3/4/7 + Amendment 1) ===
+
+    @property
+    def self_model(self) -> Any:
+        """SelfModel (competence store + trust engine + action journal)."""
+        from apsimo.api.routers.host import _self_model
+        return _self_model
+
+    @property
+    def skill_store(self) -> Any:
+        """Procedure-memory SkillStore (skills_memory, item 3)."""
+        from apsimo.api.routers.host import _skill_store
+        return _skill_store
+
+    @property
+    def project_engine(self) -> Any:
+        """ProjectEngine (goal persistence, item 1)."""
+        from apsimo.api.routers.host import _project_engine
+        return _project_engine
+
+    @property
+    def belief_engine(self) -> Any:
+        """BeliefEngine (belief maintenance, item 7)."""
+        from apsimo.api.routers.host import _belief_engine
+        return _belief_engine
+
+    @property
+    def mining_engine(self) -> Any:
+        """EscalationMiner (escalation mining + corpus capture)."""
+        from apsimo.api.routers.mining import _mining_engine
+        return _mining_engine
+
+    @property
+    def world_llm_extractor(self) -> Any:
+        """LLM-assisted world-model extractor (batch, journaled)."""
+        from apsimo.api.routers.host import _world_llm_extractor
+        return _world_llm_extractor
+
+    @property
+    def tom2_engine(self) -> Any:
+        """Knowledge-asymmetry engine (tom2, refs-not-content)."""
+        from apsimo.api.routers.host import _tom2_engine
+        return _tom2_engine
+
+    # === Cognition program Phase B (items 5/6) ===
+
+    @property
+    def worker_governor(self) -> Any:
+        """WorkerGovernor: server-side claim gate + completion audit (item 5)."""
+        from apsimo.api.routers.host import _worker_governor
+        return _worker_governor
+
+    @property
+    def sandbox(self) -> Any:
+        """SandboxManager: gated, isolated code execution (item 6)."""
+        from apsimo.api.routers.host import _sandbox
+        return _sandbox
+
+    @property
+    def connector_manager(self) -> Any:
+        """ConnectorManager: read-only pull senses (item 2)."""
+        from apsimo.api.routers.host import _connector_manager
+        return _connector_manager

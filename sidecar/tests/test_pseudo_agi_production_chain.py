@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.cognition.drive_governance import (
+from apsimo.api.authority import RequestAuthority
+from apsimo.cognition.drive_governance import (
     CharterRevisionV1,
     DriveGovernance,
     DriveGovernanceStore,
@@ -17,30 +17,30 @@ from colony_sidecar.cognition.drive_governance import (
     RankingBudgetV1,
     ScopeV1,
 )
-from colony_sidecar.cognition.evidence_pipeline import (
+from apsimo.cognition.evidence_pipeline import (
     CognitionEvidenceReducer,
     CognitionEvidenceStore,
 )
-from colony_sidecar.cognition.external_events import (
+from apsimo.cognition.external_events import (
     ExternalCognitionEventV1,
     ExternalEventInboxStore,
     ExternalEventIntake,
 )
-from colony_sidecar.cognition.goal_spine import (
+from apsimo.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtQueueAdapter,
 )
-from colony_sidecar.cognition.runtime import CognitionRuntimeContractV1
-from colony_sidecar.initiatives.approval_authority import ApprovalAuthorityStore
-from colony_sidecar.projects import ProjectEngine, ProjectStore
-from colony_sidecar.projects.event_outbox import ProjectEventProjector
-from colony_sidecar.self_model.event_concerns import ExternalEventConcernReducer
-from colony_sidecar.self_model.store import CompetenceStore, SelfModel
-from colony_sidecar.self_model.workspace import ConcernStore
-from colony_sidecar.server import _compose_p7_charter_admission
-from colony_sidecar.task_queue.models import JobResult, JobStatus, JobType
-from colony_sidecar.work_orders import QueueWorkOrderAdapter
+from apsimo.cognition.runtime import CognitionRuntimeContractV1
+from apsimo.initiatives.approval_authority import ApprovalAuthorityStore
+from apsimo.projects import ProjectEngine, ProjectStore
+from apsimo.projects.event_outbox import ProjectEventProjector
+from apsimo.self_model.event_concerns import ExternalEventConcernReducer
+from apsimo.self_model.store import CompetenceStore, SelfModel
+from apsimo.self_model.workspace import ConcernStore
+from apsimo.server import _compose_p7_charter_admission
+from apsimo.task_queue.models import JobResult, JobStatus, JobType
+from apsimo.work_orders import QueueWorkOrderAdapter
 
 
 NOW = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
@@ -270,7 +270,7 @@ async def test_owner_text_event_reaches_verified_learning_and_settlement(
     monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
     monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
     monkeypatch.setenv("COLONY_COGNITION_EVIDENCE_BOOTSTRAP", "beginning")
-    import colony_sidecar.projects.engine as project_engine_module
+    import apsimo.projects.engine as project_engine_module
     monkeypatch.setattr(project_engine_module, "projects_review_secs", lambda: 0.0)
 
     governance, charter = _activate_owner_charter(tmp_path)

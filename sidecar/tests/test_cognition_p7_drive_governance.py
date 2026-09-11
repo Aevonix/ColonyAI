@@ -15,8 +15,8 @@ import threading
 
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.cognition.drive_governance import (
+from apsimo.api.authority import RequestAuthority
+from apsimo.cognition.drive_governance import (
     CharterRevisionV1,
     DriveGovernance,
     DriveGovernanceError,
@@ -29,11 +29,11 @@ from colony_sidecar.cognition.drive_governance import (
     ScopeV1,
     drive_governance_mode,
 )
-from colony_sidecar.cognition.goal_spine import (
+from apsimo.cognition.goal_spine import (
     CognitionSpineStore,
     PolicyDecisionV1,
 )
-from colony_sidecar.initiatives.approval_authority import (
+from apsimo.initiatives.approval_authority import (
     ApprovalAuthorityError,
     ApprovalAuthorityStore,
     ApprovalSubjectBinding,
@@ -376,7 +376,7 @@ def test_charter_transition_request_has_an_immutable_typed_public_binding(tmp_pa
         "action": "activate",
     }
     assert len(request["subject_digest"]) == 64
-    assert request["presentation"]["action_name"] == \
+    assert request["presentation"]["action_name"] ==\
         "charter_revision_activate"
     assert revision.title in request["presentation"]["summary"]
     assert request["request_digest_version"] == 2
@@ -446,7 +446,7 @@ def test_typed_projection_hides_arbitrary_and_orphan_authority_rows(tmp_path):
     assert [item["request_id"] for item in projections] == [
         canonical["request_id"],
     ]
-    assert projections[0]["schema"] == \
+    assert projections[0]["schema"] ==\
         "ColonyCharterTransitionApprovalProjectionV1"
     assert "scope" not in projections[0]
     assert projections[0]["authority_evidence"] is None
@@ -497,7 +497,7 @@ def test_typed_decision_approves_and_ratifies_once_without_a_grant(tmp_path):
     assert first["status"] == "approved_applied"
     assert first["application"]["status"] == "applied"
     assert replay["status"] == "approved_applied"
-    assert replay["application"]["event_id"] == \
+    assert replay["application"]["event_id"] ==\
         first["application"]["event_id"]
     assert store.active_revision("default", now=NOW) == revision
     assert len(store.lifecycle_events("default")) == 1
@@ -974,7 +974,7 @@ def test_bootstrap_mode_ratifies_only_typed_initial_charter_and_never_applies_ra
     )
 
     assert projection["status"] == "approved_applied"
-    assert store.active_revision("default", now=NOW).revision_id == \
+    assert store.active_revision("default", now=NOW).revision_id ==\
         revision.revision_id
     assert approvals.list_grants() == []
 

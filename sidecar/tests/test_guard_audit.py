@@ -3,8 +3,8 @@ daily total-evaluations counter, and summarizes per-check counts + would_block_r
 over 24h/7d/14d so a false-positive budget can be judged in shadow (H6.1)."""
 import pytest
 
-from colony_sidecar.gate.guard_audit import GuardAuditStore
-from colony_sidecar.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+from apsimo.gate.guard_audit import GuardAuditStore
+from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
 
 def test_records_and_summarizes():
@@ -61,7 +61,7 @@ def test_recent_check_filter():
 async def test_guard_records_any_finding_not_just_cross_context():
     """H6.1: a secret_leak finding produces an audit row; a clean evaluation
     produces none but still bumps the evaluation counter."""
-    from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
+    from apsimo.gate.response_guard import GuardMode, ResponseGuard
 
     a = GuardAuditStore(":memory:")
     guard = ResponseGuard(default_mode=GuardMode.SHADOW, audit_store=a)
@@ -183,7 +183,7 @@ def test_enforce_evidence_requires_an_applied_suppression_verdict():
 
 
 def test_enforce_evidence_min_env(monkeypatch):
-    from colony_sidecar.gate.guard_audit import evidence_min
+    from apsimo.gate.guard_audit import evidence_min
 
     monkeypatch.setenv("COLONY_GUARD_EVIDENCE_MIN", "5")
     assert evidence_min() == 5
@@ -209,7 +209,7 @@ def test_enforce_evidence_fails_closed_on_store_error():
 
 @pytest.mark.asyncio
 async def test_response_guard_threads_gateway_into_audit():
-    from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
+    from apsimo.gate.response_guard import GuardMode, ResponseGuard
 
     a = GuardAuditStore(":memory:")
     guard = ResponseGuard(default_mode=GuardMode.SHADOW, audit_store=a)

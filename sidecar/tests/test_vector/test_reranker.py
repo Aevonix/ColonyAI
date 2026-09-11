@@ -1,7 +1,7 @@
-"""Tests for colony_sidecar.vector.reranker — reranker providers and factory."""
+"""Tests for apsimo.vector.reranker — reranker providers and factory."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from colony_sidecar.vector.reranker import (
+from apsimo.vector.reranker import (
     RerankResult,
     RerankerProvider,
     CUDARerankerProvider,
@@ -11,7 +11,7 @@ from colony_sidecar.vector.reranker import (
     OpenAIAPIRerankerProvider,
     make_reranker_provider,
 )
-from colony_sidecar.vector.tiers import ModelSpec
+from apsimo.vector.tiers import ModelSpec
 
 
 class TestRerankResult:

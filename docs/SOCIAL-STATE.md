@@ -1,6 +1,6 @@
 # Contacts, appraisals and current world state
 
-Colony keeps one canonical contact identity across verified channel handles.
+Apsimo keeps one canonical contact identity across verified channel handles.
 Name similarity creates a proposal, never an authoritative merge. The owner can
 correct an exact handle and selected source attribution through `colony_contacts`.
 The correction preserves its receipt, invalidates dependent projections and

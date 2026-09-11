@@ -12,7 +12,7 @@ acquisition, and behavioral correction:
 import pytest
 from unittest.mock import MagicMock
 
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.intelligence.components.initiative_engine import (
     InitiativeConfig,
     InitiativeEngine,
     InitiativeType,
@@ -347,7 +347,7 @@ class TestEventBusApiUsage:
         """
         import inspect
 
-        from colony_sidecar.skills.executors import data_quality, operational_hygiene
+        from apsimo.skills.executors import data_quality, operational_hygiene
 
         for module in (data_quality, operational_hygiene):
             source = inspect.getsource(module)
@@ -360,7 +360,7 @@ class TestEventBusApiUsage:
                 )
 
     def test_event_bus_has_emit_not_publish(self):
-        from colony_sidecar.events.bus import EventBus
+        from apsimo.events.bus import EventBus
 
         bus = EventBus()
         assert hasattr(bus, "emit")

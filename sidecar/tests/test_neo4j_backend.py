@@ -9,7 +9,7 @@ import pytest
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from colony_sidecar.world_model.neo4j.backend import (
+from apsimo.world_model.neo4j.backend import (
     Neo4jBackend,
     _entity_to_props,
     _props_to_entity,
@@ -17,14 +17,14 @@ from colony_sidecar.world_model.neo4j.backend import (
     _props_to_rel,
     _generate_id,
 )
-from colony_sidecar.world_model.entities import (
+from apsimo.world_model.entities import (
     BaseEntity,
     PersonEntity,
     CompanyEntity,
     ProjectEntity,
     ConceptEntity,
 )
-from colony_sidecar.world_model.relationships import WorldRelationship
+from apsimo.world_model.relationships import WorldRelationship
 
 
 class TestEntitySerialization:

@@ -5,14 +5,14 @@ import hashlib
 
 import pytest
 
-from colony_sidecar.gate.response_guard import (
+from apsimo.gate.response_guard import (
     CrossContextGuard,
     GuardFinding,
     GuardMode,
     ResponseGuard,
     to_gate_tier,
 )
-from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
+from apsimo.intelligence.relationships.trust_tiers import TrustTier
 
 LEAK = "his home address is on file"   # trips L4 private-detail at group_guest/peripheral
 
@@ -165,8 +165,8 @@ def test_tier_coercion():
 
 @pytest.mark.asyncio
 async def test_authorized_cross_context_is_exempt_and_audited():
-    from colony_sidecar.gate.guard_audit import GuardAuditStore
-    from colony_sidecar.gate.response_guard import CrossContextGuard, GuardFinding
+    from apsimo.gate.guard_audit import GuardAuditStore
+    from apsimo.gate.response_guard import CrossContextGuard, GuardFinding
 
     class Leaky(CrossContextGuard):
         async def check(self, **kw):

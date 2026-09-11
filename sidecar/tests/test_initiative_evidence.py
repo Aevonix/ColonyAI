@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.initiatives.context_freshness import is_context_fresh
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.intelligence.components.initiative_engine import InitiativeEngine, InitiativeType
-from colony_sidecar.observations.store import ObservationStore
-from colony_sidecar.self_model.perspective import SelfPerspective
-from colony_sidecar.self_model.store import CompetenceStore, SelfModel
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.autonomy.config import AutonomyConfig, AutonomyMode
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.initiatives.context_freshness import is_context_fresh
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.intelligence.components.initiative_engine import InitiativeEngine, InitiativeType
+from apsimo.observations.store import ObservationStore
+from apsimo.self_model.perspective import SelfPerspective
+from apsimo.self_model.store import CompetenceStore, SelfModel
+from apsimo.turns import TurnIdempotencyLedger
 
 
 @pytest.mark.asyncio
@@ -93,7 +93,7 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
     assert 'Last backup' not in rows[0].description and 'unverified' in rows[0].description
     assert rows[0].trigger_data['evidence_scope']=='legacy_bak_directory_only'
     assert rows[0].trigger_data['latest_file_modified_at']==datetime.fromtimestamp(stamp,timezone.utc).isoformat()
-    from colony_sidecar.initiatives.action_registry import get_action, RiskTier
+    from apsimo.initiatives.action_registry import get_action, RiskTier
     action = get_action(rows[0].action_hint)
     assert action.name == 'operational_review' and action.risk == RiskTier.READ_ONLY and action.native_review
 
@@ -101,7 +101,7 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
 @pytest.mark.asyncio
 async def test_measured_log_volume_reaches_default_proposal_gate_without_mutating_logs(tmp_path, monkeypatch):
     import json
-    from colony_sidecar.initiatives.native_work import NativeInitiativeWork
+    from apsimo.initiatives.native_work import NativeInitiativeWork
 
     monkeypatch.setenv('HOME', str(tmp_path))
     logs = tmp_path/'.colony/logs'
@@ -135,7 +135,7 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
     assert [item['path'] for item in row.context['largest_files']] == [str(logs/'sidecar.log'), str(logs/'monitor.log')]
     review = NativeInitiativeWork(store).get(row.id)['review']
     assert review['action'] == 'operational_review'
-    assert 'colony_read_work_source' in review['body'] and 'sources 1 through 5' in review['body']
+    assert 'apsimo_read_work_source' in review['body'] and 'sources 1 through 5' in review['body']
     assert 'Do not modify input files' in review['body'] and 'do not propose truncation or deletion' in review['body']
     assert 'disk pressure and retention are unverified' in review['body']
     assert str(canonical) not in json.dumps(row.context)
@@ -161,8 +161,8 @@ async def test_log_review_ignores_archives_and_does_not_invent_pressure_at_thres
 
 @pytest.mark.asyncio
 async def test_inferred_proposal_needs_acceptance_before_real_followup_generation(tmp_path, monkeypatch):
-    from colony_sidecar.goals.models import Goal, GoalSource, GoalStatus
-    from colony_sidecar.goals.store import GoalStore
+    from apsimo.goals.models import Goal, GoalSource, GoalStatus
+    from apsimo.goals.store import GoalStore
     monkeypatch.setenv('COLONY_COGNITION_SPINE', 'off')
     goals = GoalStore(str(tmp_path/'goals.db'))
     old = datetime.now(timezone.utc)-timedelta(days=30)

@@ -8,12 +8,12 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host, transport
-from colony_sidecar.contacts.comms import CommsLog
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
-from colony_sidecar.turns import TurnIdempotencyLedger, canonical_turn_digest
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host, transport
+from apsimo.contacts.comms import CommsLog
+from apsimo.commitments.store import CommitmentStore
+from apsimo.initiatives.temporal_followup import TemporalFollowups
+from apsimo.turns import TurnIdempotencyLedger, canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 
 

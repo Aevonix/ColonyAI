@@ -6,30 +6,30 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.initiatives.approval_authority import (
+from apsimo.initiatives.approval_authority import (
     ApprovalAuthorityStore,
     build_action_binding,
     build_approval_presentation,
 )
-from colony_sidecar.projects import Project, ProjectEngine, ProjectStore, Step
-from colony_sidecar.self_model import (
+from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
+from apsimo.self_model import (
     ActionJournal,
     CompetenceStore,
     SelfModel,
     TrustEngine,
 )
-from colony_sidecar.task_queue.governor import WorkerGovernor
-from colony_sidecar.task_queue.models import (
+from apsimo.task_queue.governor import WorkerGovernor
+from apsimo.task_queue.models import (
     Job,
     JobResult,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
-from colony_sidecar.task_queue.queue_manager import QueueManager
-from colony_sidecar.workers.queue_worker import AGENT_ACTION_CAPABILITIES
-from colony_sidecar.work_orders import (
+from apsimo.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.queue_manager import QueueManager
+from apsimo.workers.queue_worker import AGENT_ACTION_CAPABILITIES
+from apsimo.work_orders import (
     QueueWorkOrderAdapter,
     ReceiptVerifierConfigurationError,
     WorkOrderV1,
@@ -674,7 +674,7 @@ async def test_queue_work_order_is_neutral_until_independent_attestation(
 async def test_posted_turn_work_order_holds_before_claim_and_releases_same_row(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.server import _work_order_runtime_hold_reason
+    from apsimo.server import _work_order_runtime_hold_reason
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
     monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
@@ -750,7 +750,7 @@ async def test_posted_turn_work_order_holds_before_claim_and_releases_same_row(
 async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.server import _work_order_runtime_hold_reason
+    from apsimo.server import _work_order_runtime_hold_reason
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
     monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
@@ -814,7 +814,7 @@ async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
 async def test_runtime_turn_fence_leaves_other_work_orders_and_jobs_unchanged(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.server import _work_order_runtime_hold_reason
+    from apsimo.server import _work_order_runtime_hold_reason
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
     monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
@@ -875,7 +875,7 @@ async def test_runtime_turn_fence_leaves_other_work_orders_and_jobs_unchanged(
 def test_runtime_turn_fence_ignores_noncanonical_non_cognition_schema_hint(
     tmp_path,
 ):
-    from colony_sidecar.server import _work_order_runtime_hold_reason
+    from apsimo.server import _work_order_runtime_hold_reason
 
     projects = ProjectStore(str(tmp_path / "schema-hint-projects.db"))
     malformed = SimpleNamespace(
@@ -893,7 +893,7 @@ def test_runtime_turn_fence_ignores_noncanonical_non_cognition_schema_hint(
 async def test_cognition_work_order_callback_failure_is_durably_held(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.server import _work_order_runtime_hold_reason
+    from apsimo.server import _work_order_runtime_hold_reason
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
     monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
@@ -927,7 +927,7 @@ async def test_cognition_work_order_callback_failure_is_durably_held(
 
 
 def test_startup_fence_is_narrow_to_declared_cognition_work_orders():
-    from colony_sidecar.server import _cognition_work_order_startup_hold_reason
+    from apsimo.server import _cognition_work_order_startup_hold_reason
 
     assert _cognition_work_order_startup_hold_reason(SimpleNamespace(
         payload={"schema": "WorkOrderV1", "source": "cognition_spine"},
@@ -948,7 +948,7 @@ def test_startup_fence_is_narrow_to_declared_cognition_work_orders():
 async def test_project_setup_failure_keeps_startup_fence_until_full_wiring(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.server import (
+    from apsimo.server import (
         _install_cognition_work_order_runtime_fence,
         _install_cognition_work_order_startup_fence,
     )

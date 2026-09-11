@@ -1,15 +1,15 @@
-"""Governed Colony sidecar integration for Hermes.
+"""Governed Apsimo sidecar integration for Hermes.
 
 The general plugin is deliberately a narrow transport adapter.  It exposes
 private legacy reads only to a transport-attested owner/system turn, converts
 every enabled model-requested effect into an immutable
 ``HermesToolActionIntentV1``, and writes
-one participant-bound turn observation.  Colony's memory provider remains the
+one participant-bound turn observation. Apsimo's memory provider remains the
 canonical context path for guests.
 
-No import performs I/O. Registration reads configuration and initializes the
-private local turn outbox, but does not call Colony, start a subscriber, modify
-Hermes configuration, or mutate process environment.
+Import normalizes canonical environment aliases without external I/O.
+Registration reads configuration and initializes the private local turn outbox;
+it does not call Apsimo, start a subscriber, or modify Hermes configuration.
 """
 
 from __future__ import annotations
@@ -33,6 +33,11 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 
+from .environment import apply_environment_aliases
+from .naming import NativeNames, plugin_configuration, selected_name, preferred, preferred_schema
+
+apply_environment_aliases()
+
 from . import local_work
 from .initiative_work import NativeReviews, NativeFollowups
 from .native_drafts import NativeDrafts
@@ -45,13 +50,14 @@ from . import source_read
 from . import input_provenance
 from .task_controller import configured_tasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
 
-from .colony_hostworker.catalog import (
+from .apsimo_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
     ACTION_TOOL_NAMES as _CATALOG_ACTION_TOOL_NAMES,
     identifier_model_schema as _identifier_model_schema,
     validate_tool_args as _validate_action_tool_args,
 )
 from .client import (
+    ApsimoClient,
     ColonyClient,
     PrivateSQLitePathError,
     TurnOutbox,
@@ -374,6 +380,9 @@ def governance_attestation() -> dict[str, Any]:
         "model_visible_tool_names": names,
         "event_types": events,
         "model_visible_schema_sha256": _sha256_json(list(_TOOL_SCHEMAS)),
+        "preferred_native_tool_names": [preferred(name) for name in names],
+        "preferred_native_schema_sha256": _sha256_json([preferred_schema(item) for item in _TOOL_SCHEMAS]),
+        "native_operation_aliases": {preferred(name): name for name in names},
         "event_catalog_sha256": _sha256_json(events),
         "action_intent_schema": "HermesToolActionIntentV1",
         "runtime_readiness": {
@@ -1840,8 +1849,8 @@ def _plugin_config(ctx: Any) -> dict[str, Any]:
     raw = getattr(ctx, "config", None)
     if isinstance(raw, Mapping):
         plugins = raw.get("plugins")
-        if isinstance(plugins, Mapping) and isinstance(plugins.get("colony"), Mapping):
-            return dict(plugins["colony"])
+        if isinstance(plugins, Mapping):
+            return plugin_configuration(raw)
 
     # Pinned Hermes does not expose config on PluginContext.  Reading its
     # already-existing config is the only fallback; it performs no network or
@@ -1850,7 +1859,7 @@ def _plugin_config(ctx: Any) -> dict[str, Any]:
         from hermes_cli.config import cfg_get, load_config
 
         loaded = load_config()
-        config = dict(cfg_get(loaded, "plugins", "colony", default={}) or {})
+        config = plugin_configuration(loaded)
         memory = cfg_get(loaded, "memory", "config", default={}) or {}
         if isinstance(memory, Mapping):
             for key, value in memory.items():
@@ -2250,7 +2259,9 @@ def _require_coexistence_latches() -> None:
     # it to the exact sibling directory. Read that same implementation in both
     # layouts, without depending on plugin discovery order or an older wheel.
     from pathlib import Path
-    copied_provider = Path(__file__).resolve().parent.parent / "colony-memory" / "provider.py"
+    copied_provider = Path(__file__).resolve().parent.parent / "apsimo-memory" / "provider.py"
+    if not copied_provider.is_file():
+        copied_provider = Path(__file__).resolve().parent.parent / "colony-memory" / "provider.py"
     if copied_provider.is_file():
         import importlib.util
         spec = importlib.util.spec_from_file_location("_colony_profile_provider", copied_provider)
@@ -2259,7 +2270,7 @@ def _require_coexistence_latches() -> None:
         _active_hermes_home = provider._active_hermes_home
         general_plugin_memory_ownership = provider.general_plugin_memory_ownership
     else:
-        from colony_memory.provider import _active_hermes_home, general_plugin_memory_ownership
+        from apsimo_memory.provider import _active_hermes_home, general_plugin_memory_ownership
 
     ownership = general_plugin_memory_ownership(_active_hermes_home())
     if ownership is True:
@@ -2289,6 +2300,15 @@ def _require_coexistence_latches() -> None:
 def register(ctx: Any) -> None:
     """Register the governed adapter against Hermes 0.18.2-compatible APIs."""
 
+    raw = getattr(ctx, 'config', None)
+    if not isinstance(raw, Mapping):
+        from hermes_cli.config import load_config
+        raw = load_config()
+    selected = selected_name(raw)
+    discovered = getattr(getattr(ctx, 'manifest', None), 'name', selected)
+    if discovered in {'apsimo', 'colony'} and discovered != selected:
+        return
+    ctx = NativeNames(ctx, selected == 'apsimo')
     config = _plugin_config(ctx)
     if (config.get('native_reviews') or {}).get('worker') is True:
         from .review_worker import register_worker
@@ -2809,7 +2829,7 @@ def register(ctx: Any) -> None:
     ctx.register_hook('on_kanban_dispatch_tick', native_followups.reconcile)
     if native_tasks is not None:
         ctx.register_hook('pre_gateway_dispatch', native_tasks.observe_gateway)
-        ctx.register_platform(name='colony_task', label='Colony background tasks',
+        ctx.register_platform(name='colony_task', label='Apsimo background tasks',
             adapter_factory=native_tasks.create_adapter, check_fn=lambda: True,
             is_connected=lambda selected: bool(getattr(selected, 'enabled', False)),
             max_message_length=1000000)
@@ -2869,7 +2889,7 @@ def register(ctx: Any) -> None:
     if callable(register_command):
         for command_name, handler in SLASH_COMMANDS.items():
             register_command(
-                f"colony {command_name}",
+                f"{selected} {command_name}",
                 lambda args="", _handler=handler: _handler(args),
             )
 
@@ -2885,6 +2905,8 @@ def register(ctx: Any) -> None:
 
 
 __all__ = [
+    "ApsimoClient",
+    "ColonyClient",
     "HermesToolActionIntentV1",
     "HermesOwnerMessageIntentV1",
     "ActionMediator",

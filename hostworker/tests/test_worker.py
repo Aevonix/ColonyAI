@@ -8,22 +8,22 @@ from typing import Any
 
 import pytest
 
-from colony_hostworker.admission import FileDispatchAdmission
-from colony_hostworker.contract import (
+from apsimo_hostworker.admission import FileDispatchAdmission
+from apsimo_hostworker.contract import (
     EFFECT_SCHEMA,
     EXECUTION_RESULT_SCHEMA,
     canonical_json_utf8,
     sha256_json_utf8,
 )
-from colony_hostworker.conformance import (
+from apsimo_hostworker.conformance import (
     ManualClock,
     build_envelope,
     build_intent,
     delivery_gate_evidence,
     grant_gate_evidence,
 )
-from colony_hostworker.sqlite_store import SqliteActionStore
-from colony_hostworker.worker import (
+from apsimo_hostworker.sqlite_store import SqliteActionStore
+from apsimo_hostworker.worker import (
     DEFAULT_ACTION_TYPE,
     DEFAULT_SOURCE_PREFIX,
     GovernedActionWorker,

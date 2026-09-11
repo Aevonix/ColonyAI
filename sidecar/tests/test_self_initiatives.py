@@ -4,13 +4,13 @@ import pytest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.intelligence.components.initiative_engine import (
     InitiativeEngine,
     InitiativeType,
     Initiative,
     InitiativeConfig,
 )
-from colony_sidecar.skills.base import ExecutionResult, InitiativeExecutionContext
+from apsimo.skills.base import ExecutionResult, InitiativeExecutionContext
 
 
 class FakeGraphClient:
@@ -168,7 +168,7 @@ class TestRelationshipGating:
         """Relationship initiatives SHOULD generate for contacts with MANAGES edge."""
         # v0.16.0: relationship generation fails closed without a resolvable
         # owner identity, so configure one for this test.
-        from colony_sidecar.identity.resolver import reset_identity_resolver
+        from apsimo.identity.resolver import reset_identity_resolver
         reset_identity_resolver()
         monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-test-owner")
 

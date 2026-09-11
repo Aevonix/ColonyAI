@@ -6,9 +6,9 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.api.routers import initiative_work
-from colony_sidecar.self_model.judgments import SelfJudgments
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.routers import initiative_work
+from apsimo.self_model.judgments import SelfJudgments
+from apsimo.turns import get_turn_idempotency_ledger
 from test_accepted_local_work import local_api
 from test_self_judgments import Processor
 from test_turn_source_evidence import source_app
@@ -147,7 +147,7 @@ def test_wrong_native_tenant_cannot_supply_runtime_observation(observation):
 
 
 def test_runtime_source_and_judgment_enqueue_share_transaction(observation,monkeypatch):
-    from colony_sidecar.self_model import judgments
+    from apsimo.self_model import judgments
     end_run(observation)
     def fail(*args,**kwargs):raise sqlite3.OperationalError('controlled queue write failure')
     original=judgments.enqueue

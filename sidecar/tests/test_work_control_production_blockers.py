@@ -12,29 +12,29 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.authority import required_scope
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import task_queue as queue_router
-from colony_sidecar.task_queue.action_receipts import (
+from apsimo.api.authority import required_scope
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import task_queue as queue_router
+from apsimo.task_queue.action_receipts import (
     ActionReceiptAttestationV1,
 )
-from colony_sidecar.task_queue.contract import queue_contract_identity
-from colony_sidecar.task_queue.handlers.registry import build_default_handlers
-from colony_sidecar.task_queue.models import (
+from apsimo.task_queue.contract import queue_contract_identity
+from apsimo.task_queue.handlers.registry import build_default_handlers
+from apsimo.task_queue.models import (
     Job,
     JobResult,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import QueueManager
-from colony_sidecar.task_queue.work_control import (
+from apsimo.task_queue.queue_manager import QueueManager
+from apsimo.task_queue.work_control import (
     WorkControlError,
     interrupt_capability,
     steer_capability,
 )
-from colony_sidecar.task_queue.worker import JobHandler, WorkerNode
-from colony_sidecar.work_orders import WorkOrderV1
+from apsimo.task_queue.worker import JobHandler, WorkerNode
+from apsimo.work_orders import WorkOrderV1
 
 
 @pytest.fixture(autouse=True)

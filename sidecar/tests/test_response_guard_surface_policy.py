@@ -5,8 +5,8 @@ from typing import get_args
 
 import pytest
 
-from colony_sidecar.gate.response_guard import unavailable_guard_result
-from colony_sidecar.gate.surface_policy import (
+from apsimo.gate.response_guard import unavailable_guard_result
+from apsimo.gate.surface_policy import (
     ALL_SURFACES,
     EXCLUDED_SPEECH_SURFACES,
     GUARDED_ARTIFACT_SURFACES,

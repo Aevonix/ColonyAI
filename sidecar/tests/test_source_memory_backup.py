@@ -7,9 +7,9 @@ import sys
 
 import pytest
 
-from colony_sidecar import backup
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.media import SourceMedia
+from apsimo import backup
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.media import SourceMedia
 from test_source_media import image_bytes, message
 from test_hermes_turn_outbox import _load_client
 
@@ -180,7 +180,7 @@ def test_memory_salvage_keeps_newer_erasures_and_offline_host_cursor(evidence, t
 @pytest.mark.parametrize('lost_original', ['missing', 'corrupt'])
 def test_memory_salvage_recovers_owned_bytes_and_current_corrections_scope_only(evidence, tmp_path, lost_original):
     state, ledger, media, asset = evidence
-    from colony_sidecar.turns.idempotency import canonical_turn_digest
+    from apsimo.turns.idempotency import canonical_turn_digest
     source = [{'role': 'user', 'content': 'The toolbox is in the study.'}]
     ledger.record_source('text-source', contact_id='fixture-contact', session_id='original',
                          messages=source, derive_claims=False)
@@ -317,7 +317,7 @@ def test_memory_salvage_checks_owned_originals_before_publication(evidence, tmp_
 
 def test_restore_cli_reports_scope_and_requires_explicit_memory_destination(evidence, tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace
-    from colony_sidecar import cli
+    from apsimo import cli
     state, _, _, _ = evidence
     archive = _memory_archive(state, tmp_path / 'archives')
     monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
