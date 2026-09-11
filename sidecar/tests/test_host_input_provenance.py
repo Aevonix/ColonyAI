@@ -29,54 +29,56 @@ def handoff(source_app, tmp_path, monkeypatch):
         'credentials':[{'id':'fixture','secret':'fixture-key','status':'active'}]}]}))
     keyring.chmod(0o600)
     source_app.add_middleware(ApiKeyMiddleware, api_key=None, keyring_path=str(keyring))
-    api = TestClient(source_app, headers={'Authorization':'Bearer fixture-key'})
-    original_client = module.ColonyClient
-    class Client(original_client):
-        def get(self, path, **kwargs):
-            kwargs.pop('_deadline_monotonic', None)
-            kwargs.pop('timeout', None)
-            return api.get(path, **kwargs)
-        def post(self, path, **kwargs):
-            kwargs.pop('_deadline_monotonic', None)
-            kwargs.pop('timeout', None)
-            return api.post(path, **kwargs)
-        def put(self, path, **kwargs):
-            kwargs.pop('_deadline_monotonic', None)
-            kwargs.pop('timeout', None)
-            return api.put(path, **kwargs)
-    monkeypatch.setattr(module, 'ColonyClient', Client)
-    for key, value in {'COLONY_GENERAL_PLUGIN_ACTIVE':'1', 'COLONY_MEMORY_WORKER_TOOLS':'0',
-        'COLONY_MEMORY_TURN_WRITER':'disabled', 'COLONY_GUARD_CHAT_MODE':'off'}.items():
-        monkeypatch.setenv(key, value)
-    original = {'role':'user', 'content':'Use the lamp maintenance record I supplied.'}
-    body = {'identity':{'host_id':'fixture'}, 'context':{'contact_id':'owner', 'session_id':'voice-source'},
-            'user_message':original}
-    assert api.put('/v2/host/turns/original-input', json=body).status_code == 201
-    ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
-    ledger.record_source('earlier', contact_id='owner', session_id='earlier-session',
-                         messages=[{'role':'user','content':'The lamp record is in the violet cabinet.'}],
-                         derive_claims=False)
-    refs = ledger.source_references(['earlier'], contact_id='owner', session_id='native')
-    source_hash = importlib.import_module(module.__name__+'.client').source_message_hash
-    parents = [{'source_id':'original-input', 'input_message_hash': source_hash('voice-source', original)}]
-    outbox = tmp_path/'native-outbox.db'
-    ctx = _Context({'url':'http://testserver', 'api_key':'fixture-key', 'owner_contact_id':'owner',
-                    'turn_outbox_path':str(outbox), 'turn_outbox_drain_timeout_ms':1000,
-                    'turn_writer_platforms':['api_server','rcs','sms','whatsapp']})
-    module.register(ctx)
-    def start(session='native', task='task', turn='turn', platform='cli'):
-        message = {'role':'user', 'content':'Read the maintenance record, then summarize the task.'}
-        ctx.hooks['pre_llm_call'](session_id=session, task_id=task, turn_id=turn,
-            platform=platform, sender_id='', user_message=message['content'], conversation_history=[message])
-        return ctx.middleware['llm_request']({'messages':[message], 'tools':[{'type':'function'}]},
-            session_id=session, task_id=task, turn_id=turn)
-    def finish(session='native', task='task', turn='turn'):
-        ctx.hooks['post_llm_call'](session_id=session, task_id=task, turn_id=turn,
-            user_message='Read the maintenance record, then summarize the task.',
-            assistant_response='The controlled fixture result cites the supplied maintenance record.',
-            platform='cli', model='controlled')
-    return SimpleNamespace(module=module, ctx=ctx, api=api, ledger=ledger, parents=parents,
-                           refs=refs, start=start, finish=finish, outbox=module.TurnOutbox(outbox))
+    # Keep one ASGI portal for this fixture and close it at teardown.
+    # Creating a portal per request adds loop setup to the freshness deadline.
+    with TestClient(source_app, headers={'Authorization':'Bearer fixture-key'}) as api:
+        original_client = module.ColonyClient
+        class Client(original_client):
+            def get(self, path, **kwargs):
+                kwargs.pop('_deadline_monotonic', None)
+                kwargs.pop('timeout', None)
+                return api.get(path, **kwargs)
+            def post(self, path, **kwargs):
+                kwargs.pop('_deadline_monotonic', None)
+                kwargs.pop('timeout', None)
+                return api.post(path, **kwargs)
+            def put(self, path, **kwargs):
+                kwargs.pop('_deadline_monotonic', None)
+                kwargs.pop('timeout', None)
+                return api.put(path, **kwargs)
+        monkeypatch.setattr(module, 'ColonyClient', Client)
+        for key, value in {'COLONY_GENERAL_PLUGIN_ACTIVE':'1', 'COLONY_MEMORY_WORKER_TOOLS':'0',
+            'COLONY_MEMORY_TURN_WRITER':'disabled', 'COLONY_GUARD_CHAT_MODE':'off'}.items():
+            monkeypatch.setenv(key, value)
+        original = {'role':'user', 'content':'Use the lamp maintenance record I supplied.'}
+        body = {'identity':{'host_id':'fixture'}, 'context':{'contact_id':'owner', 'session_id':'voice-source'},
+                'user_message':original}
+        assert api.put('/v2/host/turns/original-input', json=body).status_code == 201
+        ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
+        ledger.record_source('earlier', contact_id='owner', session_id='earlier-session',
+                             messages=[{'role':'user','content':'The lamp record is in the violet cabinet.'}],
+                             derive_claims=False)
+        refs = ledger.source_references(['earlier'], contact_id='owner', session_id='native')
+        source_hash = importlib.import_module(module.__name__+'.client').source_message_hash
+        parents = [{'source_id':'original-input', 'input_message_hash': source_hash('voice-source', original)}]
+        outbox = tmp_path/'native-outbox.db'
+        ctx = _Context({'url':'http://testserver', 'api_key':'fixture-key', 'owner_contact_id':'owner',
+                        'turn_outbox_path':str(outbox), 'turn_outbox_drain_timeout_ms':1000,
+                        'turn_writer_platforms':['api_server','rcs','sms','whatsapp']})
+        module.register(ctx)
+        def start(session='native', task='task', turn='turn', platform='cli'):
+            message = {'role':'user', 'content':'Read the maintenance record, then summarize the task.'}
+            ctx.hooks['pre_llm_call'](session_id=session, task_id=task, turn_id=turn,
+                platform=platform, sender_id='', user_message=message['content'], conversation_history=[message])
+            return ctx.middleware['llm_request']({'messages':[message], 'tools':[{'type':'function'}]},
+                session_id=session, task_id=task, turn_id=turn)
+        def finish(session='native', task='task', turn='turn'):
+            ctx.hooks['post_llm_call'](session_id=session, task_id=task, turn_id=turn,
+                user_message='Read the maintenance record, then summarize the task.',
+                assistant_response='The controlled fixture result cites the supplied maintenance record.',
+                platform='cli', model='controlled')
+        yield SimpleNamespace(module=module, ctx=ctx, api=api, ledger=ledger, parents=parents,
+                               refs=refs, start=start, finish=finish, outbox=module.TurnOutbox(outbox))
 
 
 def test_derived_native_reply_keeps_exact_parents_without_duplicate_human_source(handoff):
