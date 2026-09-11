@@ -7,11 +7,13 @@ from pathlib import Path
 import yaml
 
 from .setup_local_work import board_name, native_root
+from .environment import normalize_environment
 from .turns.hermes_kanban import _BOARD, _board_path
 
 
 def prepare(config, home, *, native_env, observer_env, local_work=False, draft_board=None):
     """Return configuration and observation choices without creating native work."""
+    observer_env = normalize_environment(observer_env)
     candidate = copy.deepcopy(config)
     for key in ('kanban', 'platform_toolsets', 'auxiliary'):
         if key in candidate and not isinstance(candidate[key], dict):
@@ -99,7 +101,7 @@ def describe(details):
     print('Kanban availability is profile-wide in Hermes; saved channel tool lists and participant authority are retained.')
     print('Observed boards: '+', '.join(details['boards'])+' ('+details['coverage']+').')
     print('Goal completion: '+details['goal_judge']+'. Existing native fallback rules still apply.')
-    print('The selected Hermes gateway is required. Colony does not start or restart it; use its existing lifecycle.')
+    print('The selected Hermes gateway is required. Apsimo does not start or restart it; use its existing lifecycle.')
     print('Native tasks retain this profile\'s tools and consent rules; this is not blanket consent for external effects.')
 
 
@@ -112,7 +114,7 @@ def enable(state):
     home = Path(manifest['hermes_home'])
     config_path, env_path = home/'config.yaml', state/'.env'
     config_before, env_before = config_path.read_bytes(), env_path.read_bytes()
-    observer_env = dotenv_values(env_path)
+    observer_env = normalize_environment(dotenv_values(env_path))
     candidate, details = prepare(yaml.safe_load(config_before), home,
         native_env=dotenv_values(home/'.env'), observer_env=observer_env,
         local_work=manifest.get('local_work', {}).get('executor') == 'kanban',
@@ -120,7 +122,7 @@ def enable(state):
     config_after = yaml.safe_dump(candidate, sort_keys=False, allow_unicode=True).encode()
     env_after = env_before
     if 'COLONY_HERMES_WORK_BOARDS' not in observer_env:
-        suffix = 'COLONY_HERMES_WORK_BOARDS='+json.dumps(details['boards'], separators=(',', ':'))+'\n'
+        suffix = 'APSIMO_HERMES_WORK_BOARDS='+json.dumps(details['boards'], separators=(',', ':'))+'\n'
         env_after += (b'\n' if env_before and not env_before.endswith(b'\n') else b'')+suffix.encode()
     _atomic_hermes_config_write(config_path, config_before, config_after)
     try:

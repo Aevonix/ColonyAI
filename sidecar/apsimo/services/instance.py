@@ -55,18 +55,33 @@ class InstanceService:
         self.platform = platform or sys.platform
         self.home = Path(home or Path.home())
         suffix = hashlib.sha256(os.fsencode(self.state)).hexdigest()[:20]
-        self.label = 'ai.colony.instance.' + suffix
+        self.label = 'ai.apsimo.instance.' + suffix
         if self.platform == 'darwin':
             self.name = self.label + '.plist'
             self.link = self.home / 'Library/LaunchAgents' / self.name
             self.target = f'gui/{os.getuid()}/{self.label}'
         elif self.platform.startswith('linux'):
-            self.name = 'colony-' + suffix + '.service'
+            self.name = 'apsimo-' + suffix + '.service'
             config = Path(os.environ.get('XDG_CONFIG_HOME') or self.home / '.config')
             self.link = config / 'systemd/user' / self.name
             self.target = self.name
         else:
             raise ServiceError('Instance autostart supports Linux systemd user services and macOS launchd')
+        # Reuse the exact existing service identity instead of registering a
+        # second writer during a package rename. Fresh instances use Apsimo.
+        legacy_label = 'ai.colony.instance.' + suffix
+        legacy_name = (legacy_label + '.plist' if self.platform == 'darwin'
+                       else 'colony-' + suffix + '.service')
+        legacy_link = self.link.with_name(legacy_name)
+        legacy_definition = self.state / 'service' / legacy_name
+        if (legacy_link.exists() or legacy_link.is_symlink()):
+            if self.link.exists() or self.link.is_symlink():
+                raise ServiceError('Both legacy and canonical instance services exist; reconcile them before selection')
+            self.label, self.name, self.link = legacy_label, legacy_name, legacy_link
+            self.target = (f'gui/{os.getuid()}/{self.label}' if self.platform == 'darwin' else self.name)
+        elif legacy_definition.exists() and not (self.state / 'service' / self.name).exists():
+            self.label, self.name, self.link = legacy_label, legacy_name, legacy_link
+            self.target = (f'gui/{os.getuid()}/{self.label}' if self.platform == 'darwin' else self.name)
         self.definition = self.state / 'service' / self.name
         self.backup = self.definition.with_name(self.name + '.previous')
         self.log = self.state / 'service' / 'sidecar.log'
@@ -111,8 +126,8 @@ class InstanceService:
         return True
 
     def render(self):
-        arguments = [self.python, '-m', 'colony_sidecar', '--instance', str(self.state), 'start']
-        environment = {'HERMES_HOME': str(self.hermes_home), 'COLONY_INSTANCE_SERVICE': self.label,
+        arguments = [self.python, '-m', 'apsimo', '--instance', str(self.state), 'start']
+        environment = {'HERMES_HOME': str(self.hermes_home), 'APSIMO_INSTANCE_SERVICE': self.label,
                        'PYTHONUNBUFFERED': '1'}
         if self.platform == 'darwin':
             return plistlib.dumps({'Label': self.label, 'ProgramArguments': arguments,
@@ -121,7 +136,7 @@ class InstanceService:
                 'ExitTimeOut': 20, 'Umask': 0o077,
                 'StandardOutPath': str(self.log), 'StandardErrorPath': str(self.log)}, sort_keys=True)
         quote = _systemd_quote
-        return ('[Unit]\nDescription=Colony private instance ' + self.label + '\n\n[Service]\nType=exec\n'
+        return ('[Unit]\nDescription=Apsimo private instance ' + self.label + '\n\n[Service]\nType=exec\n'
                 'WorkingDirectory=' + _systemd_path(self.state) + '\n'
                 # ':' disables dollar-variable substitution; %% escapes specifiers.
                 'ExecStart=:' + ' '.join(quote(arg) for arg in arguments) + '\n'
@@ -196,7 +211,7 @@ class InstanceService:
 
     def _require_installed(self):
         if not self._owned():
-            raise ServiceError('Service is not installed for this instance; run colony service install')
+            raise ServiceError('Service is not installed for this instance; run apsimo service install')
         self._manager_ready()
 
     def healthy(self):

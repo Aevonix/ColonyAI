@@ -1,4 +1,4 @@
-"""Colony setup wizard - ``colony init``.
+"""Apsimo setup wizard - ``apsimo init``.
 
 Guides the user through first-time configuration:
 1. Install dependencies
@@ -566,7 +566,7 @@ def _install_docker() -> bool:
                 if result.returncode == 0:
                     print("  ✅ Docker Desktop installed")
                     print("  ⚠️ Please open Docker Desktop from Applications and wait for it to start.")
-                    print("  Then re-run 'colony init' to continue.")
+                    print("  Then re-run 'apsimo init' to continue.")
                     return True
 
                 # Check if it failed because already installed
@@ -630,14 +630,14 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
                     return True
                 else:
                     print("  ⚠️ Docker Desktop started but daemon not ready yet.")
-                    print("  Wait for Docker to fully start, then re-run 'colony init'.")
+                    print("  Wait for Docker to fully start, then re-run 'apsimo init'.")
                     return False
             else:
                 print("  ❌ Failed to start Docker Desktop")
                 print("  Open Docker Desktop from Applications manually.")
                 return False
         else:
-            print("  Start Docker Desktop manually and re-run 'colony init'.")
+            print("  Start Docker Desktop manually and re-run 'apsimo init'.")
             return False
 
     elif status == DockerStatus.INSTALLED_NOT_RUNNING:
@@ -663,7 +663,7 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
                     print("  Try: sudo systemctl start docker")
                     return False
         else:
-            print("  Start the Docker daemon and re-run 'colony init'.")
+            print("  Start the Docker daemon and re-run 'apsimo init'.")
             return False
 
     elif status == DockerStatus.PERMISSION_DENIED:
@@ -691,7 +691,7 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
                 print(f"  ❌ Failed to start Colima: {e}")
                 return False
         else:
-            print("  Run 'colima start' and re-run 'colony init'.")
+            print("  Run 'colima start' and re-run 'apsimo init'.")
             return False
 
     elif status == DockerStatus.ORBSTACK_INSTALLED:
@@ -711,13 +711,13 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
                 print(f"  ❌ Failed to start OrbStack: {e}")
                 return False
         else:
-            print("  Open OrbStack and re-run 'colony init'.")
+            print("  Open OrbStack and re-run 'apsimo init'.")
             return False
 
     elif status == DockerStatus.PODMAN_INSTALLED:
         # Linux: Podman installed
         print("  Podman is installed (Docker-compatible).")
-        print("  Colony can use Podman's Docker socket compatibility.")
+        print("  Apsimo can use Podman's Docker socket compatibility.")
         print()
 
         # Check if podman socket is running
@@ -747,7 +747,7 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
         if alt_runtime:
             name, cmd = alt_runtime
             print(f"  Alternative runtime detected: {name}")
-            print(f"  Run '{cmd}' to start, then re-run 'colony init'.")
+            print(f"  Run '{cmd}' to start, then re-run 'apsimo init'.")
             return False
 
         install = _prompt("  Install Docker now? [Y/n]", "Y", non_interactive)
@@ -760,7 +760,7 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
                     return True
                 else:
                     print("  ⚠️ Docker installed but daemon not reachable yet.")
-                    print("  Start Docker and re-run 'colony init'.")
+                    print("  Start Docker and re-run 'apsimo init'.")
             else:
                 print()
                 print("  Install Docker manually: https://docs.docker.com/get-docker/")
@@ -772,7 +772,7 @@ def _handle_docker_setup(non_interactive: bool = False) -> bool:
         # Error or unknown status
         print(f"  ⚠️ Docker check failed: {message}")
         print()
-        print("  Ensure Docker is installed and running, then re-run 'colony init'.")
+        print("  Ensure Docker is installed and running, then re-run 'apsimo init'.")
         return False
 
 
@@ -901,7 +901,7 @@ HERMES_MEMORY_SPILL_CHARS = 65536
 
 
 def _align_hermes_memory_spill(config: dict) -> bool:
-    """Keep native head/tail previews from cutting Colony's evidence envelope.
+    """Keep native head/tail previews from cutting Apsimo's evidence envelope.
 
     Selected memory is capped at 24k characters; 64 KiB leaves headroom for its
     citations and other default context sections. This is a
@@ -925,6 +925,56 @@ def _align_hermes_memory_spill(config: dict) -> bool:
         return False
     config['hooks'] = {**hooks, 'output_spill': {**spill, 'max_chars': HERMES_MEMORY_SPILL_CHARS}}
     return True
+
+
+def _canonicalize_hermes_binding(config: dict) -> bool:
+    """Change selection names only; private settings and protocol values survive."""
+    import copy
+    from .util.instance import plugin_settings
+    before = copy.deepcopy(config)
+    if 'plugins' in config:
+        if not isinstance(config['plugins'], dict):
+            raise ValueError('Hermes plugins settings must be a mapping')
+        plugins = config['plugins'] = dict(config['plugins'])
+        selected = plugin_settings(config)
+        if 'colony' in plugins or 'apsimo' in plugins:
+            plugins.pop('colony', None)
+            plugins['apsimo'] = dict(selected)
+        for key in ('enabled', 'disabled'):
+            if key in plugins:
+                if not isinstance(plugins[key], list):
+                    raise ValueError('Hermes plugins enabled/disabled must be lists')
+                plugins[key] = list(dict.fromkeys(
+                    {'colony':'apsimo', 'colony-memory':'apsimo-memory'}.get(name, name)
+                    for name in plugins[key]))
+        if 'entries' in plugins:
+            entries = plugins['entries'] = dict(plugins['entries'])
+            for old, new in (('colony','apsimo'), ('colony-memory','apsimo-memory')):
+                if old in entries:
+                    if new in entries and entries[new] != entries[old]:
+                        raise ValueError('Conflicting old and new plugin entry settings')
+                    entries[new] = entries.pop(old)
+    memory = config.get('memory')
+    if isinstance(memory, dict) and memory.get('provider') in ('colony', 'colony-memory', 'apsimo'):
+        config['memory'] = {**memory, 'provider':'apsimo-memory'}
+    def names(values):
+        if not isinstance(values, list):
+            raise ValueError('Hermes toolsets must be lists')
+        def name(value):
+            if not isinstance(value, str):
+                raise ValueError('Hermes toolset names must be strings')
+            prefix = '-' if value.startswith('-') else ''
+            raw = value[len(prefix):]
+            return prefix + {'colony':'apsimo', 'colony_local_work':'apsimo_local_work',
+                             'colony_review':'apsimo_review'}.get(raw, raw)
+        return list(dict.fromkeys(name(value) for value in values))
+    if 'toolsets' in config:
+        config['toolsets'] = names(config['toolsets'])
+    if 'platform_toolsets' in config:
+        config['platform_toolsets'] = {key:names(value) for key,value in config['platform_toolsets'].items()}
+    if isinstance(config.get('agent'), dict) and 'disabled_toolsets' in config['agent']:
+        config['agent'] = {**config['agent'], 'disabled_toolsets':names(config['agent']['disabled_toolsets'])}
+    return config != before
 
 
 def _prepare_hermes_config(
@@ -955,6 +1005,7 @@ def _prepare_hermes_config(
 
     original, config = _read_hermes_config(config_path)
     before = copy.deepcopy(config)
+    _canonicalize_hermes_binding(config)
 
     def mapping(parent: dict, key: str) -> dict:
         if key not in parent:
@@ -966,40 +1017,45 @@ def _prepare_hermes_config(
 
     memory = mapping(config, "memory")
     provider = memory.get("provider")
-    if provider not in (None, "", "colony", "colony-memory"):
-        raise ValueError("Another memory provider is configured; migrate it explicitly before staging Colony")
+    if provider not in (None, "", "colony", "colony-memory", "apsimo", "apsimo-memory"):
+        raise ValueError("Another memory provider is configured; migrate it explicitly before staging Apsimo")
     memory_config = mapping(memory, "config")
     plugins = mapping(config, "plugins")
-    plugin_config = mapping(plugins, "colony")
-    native_path = config_path.with_name("colony-memory.json")
+    plugin_config = mapping(plugins, "apsimo")
+    native_path = config_path.with_name("apsimo-memory.json")
+    legacy_path = config_path.with_name("colony-memory.json")
+    if native_path.exists() and legacy_path.exists() and native_path.read_bytes() != legacy_path.read_bytes():
+        raise ValueError("Conflicting old and new native memory settings")
+    if not native_path.exists():
+        native_path = legacy_path
     try:
         native_config = json.loads(native_path.read_text()) if native_path.exists() else {}
     except (OSError, ValueError):
-        raise ValueError("Native Colony memory configuration is invalid") from None
+        raise ValueError("Native Apsimo memory configuration is invalid") from None
     if not isinstance(native_config, dict):
-        raise ValueError("Native Colony memory configuration must be an object")
+        raise ValueError("Native Apsimo memory configuration must be an object")
 
     # Do not redirect an existing private instance or replace its contact just
     # because the init wizard supplies defaults for a fresh installation.
     for settings in (memory_config, plugin_config, native_config):
         if settings.get("url") not in (None, "", sidecar_url):
-            raise ValueError("Existing Colony endpoint differs; use a reviewed instance migration")
+            raise ValueError("Existing Apsimo endpoint differs; use a reviewed instance migration")
         if contact_id and settings.get("contact_id") not in (None, "", contact_id):
-            raise ValueError("Existing Colony contact differs; preserve its identity or migrate explicitly")
+            raise ValueError("Existing Apsimo contact differs; preserve its identity or migrate explicitly")
     bindings = [plugin_config.get("owner_contact_id"), native_config.get("contact_id"),
                 memory_config.get("contact_id"), plugin_config.get("contact_id")]
     selected_contact = contact_id or next((value for value in bindings if value), None)
     if not isinstance(selected_contact, str) or not selected_contact.strip():
-        raise ValueError("Provide --contact-name or retain an existing Colony contact binding")
+        raise ValueError("Provide --contact-name or retain an existing Apsimo contact binding")
     if any(value not in (None, "", selected_contact) for value in bindings):
-        raise ValueError("Existing Colony contact bindings disagree; reconcile them before staging")
+        raise ValueError("Existing Apsimo contact bindings disagree; reconcile them before staging")
 
-    memory["provider"] = "colony-memory"
+    memory["provider"] = "apsimo-memory"
     for settings in (memory_config, plugin_config):
         if settings.get("url") in (None, ""):
             settings["url"] = sidecar_url
         if settings.get("api_key") in (None, ""):
-            settings["api_key"] = "${COLONY_API_KEY}"
+            settings["api_key"] = "${APSIMO_API_KEY}"
         if settings.get("contact_id") in (None, ""):
             settings["contact_id"] = selected_contact
     _align_hermes_memory_spill(config)
@@ -1057,15 +1113,17 @@ def _write_hermes_config(config_path: Path, api_key: str, sidecar_url: str, cont
 def _hermes_plugin_files(colony_repo: Path, hermes_home: Path) -> list[tuple[bytes, Path]]:
     """The existing source-checkout layout, with every required file checked."""
     files = []
+    if any((hermes_home/'plugins'/name).exists() for name in ('colony', 'colony-memory')):
+        raise ValueError('Legacy directory adapters require explicit managed refresh before source staging')
     plugin_modules = tuple(path.name for path in sorted(
         (colony_repo / "plugins/hermes-plugin").glob("*.py")) if path.name != "__init__.py")
     for source, target, names in (
-        ("plugins/colony-memory", "plugins/colony-memory",
+        ("plugins/apsimo-memory", "plugins/apsimo-memory",
          ("__init__.py", "provider.py", "cli.py", "plugin.yaml", "SKILL.md")),
-        ("plugins/hermes-plugin", "plugins/colony",
+        ("plugins/hermes-plugin", "plugins/apsimo",
          ("__init__.py", *plugin_modules, "plugin.yaml")),
-        ("plugins/hermes-plugin/colony_hostworker", "plugins/colony/colony_hostworker", ("__init__.py",)),
-        ("hostworker/colony_hostworker", "plugins/colony/colony_hostworker", ("catalog.py", "contract.py")),
+        ("plugins/hermes-plugin/apsimo_hostworker", "plugins/apsimo/apsimo_hostworker", ("__init__.py",)),
+        ("hostworker/apsimo_hostworker", "plugins/apsimo/apsimo_hostworker", ("catalog.py", "contract.py")),
     ):
         files.extend((colony_repo / source / name, hermes_home / target / name) for name in names)
     prepared = []
@@ -1134,11 +1192,11 @@ def _setup_hermes_plugin(
         print("  Hermes was not restarted. Inspect any staged files before retrying.")
         return False
 
-    print(f"  Colony plugin files and config staged in {selected_home}")
+    print(f"  Apsimo plugin files and config staged in {selected_home}")
     print("  Staging only: Hermes activation and live memory behaviour were not verified.")
     print("  Existing settings and secret references were retained; changed YAML formatting may be normalized.")
-    print("  Before activating, qualify the runtime, make COLONY_API_KEY available through its private environment,")
-    print("  install the colony-hermes adapter package in the target Hermes interpreter for durable checkpoints,")
+    print("  Before activating, qualify the runtime, make APSIMO_API_KEY available through its private environment,")
+    print("  install the apsimo-hermes adapter package in the target Hermes interpreter for durable checkpoints,")
     print("  and configure general-plugin activation/coexistence for that runtime.")
     print("  No restart, custom compressor, global services or hardware adapters were installed.")
     return True
@@ -1146,10 +1204,10 @@ def _setup_hermes_plugin(
 
 def _write_env(env_path: Path, values: dict[str, str]) -> None:
     lines = [
-        "# Colony Sidecar Configuration",
-        "# Generated by 'colony init'",
+        "# Apsimo Sidecar Configuration",
+        "# Generated by 'apsimo init'",
         "#",
-        "# Colony is a sidecar — it gets LLM credentials from its host",
+        "# Apsimo is a sidecar — it gets LLM credentials from its host",
         "# (Hermes, MCP harnesses, etc.) at runtime via POST /v1/host/configure.",
         "# You do NOT need to configure LLM keys here.",
         "",
@@ -1162,8 +1220,8 @@ def _write_env(env_path: Path, values: dict[str, str]) -> None:
 def _write_config_yaml(config_path: Path, values: dict[str, str], framework: str) -> None:
     """Write a YAML config file for easier inspection and editing."""
     lines = [
-        "# Colony Sidecar Configuration",
-        "# Generated by 'colony init'",
+        "# Apsimo Sidecar Configuration",
+        "# Generated by 'apsimo init'",
         "",
         f"host: {framework}",
         "",
@@ -1407,7 +1465,7 @@ def _run_owner_identity(
     from apsimo.contacts.config import ContactsConfig
     from apsimo.contacts.store import SQLiteContactStore
 
-    print("  Colony fails closed on identity: owner-exclusion filters, check-ins")
+    print("  Apsimo fails closed on identity: owner-exclusion filters, check-ins")
     print("  and outreach authorization all need to know who you are. Without an")
     print("  owner contact, autonomous outreach stays disabled.")
     print()
@@ -1445,7 +1503,7 @@ def _run_owner_identity(
             print(f"  ⚠️ COLONY_OWNER_CONTACT_ID={prior_cid} no longer resolves — recreating.")
 
     display_name = _prompt(
-        "  Your name (what Colony calls its owner)",
+        "  Your name (what Apsimo calls its owner)",
         os.environ.get("USER", ""), non_interactive, ask=ask,
     ).strip() or os.environ.get("USER", "owner")
     handles = collect_owner_handles(ask=ask, non_interactive=non_interactive)
@@ -1484,7 +1542,7 @@ def collect_autonomy_env(
     updates: dict[str, str] = {}
 
     # ── Approval policy ──
-    print("  How much should Colony check in before acting?")
+    print("  How much should Apsimo check in before acting?")
     print("    [1] strict    — every mutating or outbound agent action waits")
     print("                    for your approval (default, safest)")
     print("    [2] graduated — only destructive actions and outreach to people")
@@ -1517,7 +1575,7 @@ def collect_autonomy_env(
     )
 
     # ── Autonomy posture (one preset drives all fourteen mode flags) ──
-    print("  How autonomous should this Colony be?")
+    print("  How autonomous should this Apsimo be?")
     print("    [1] passive     — observe and remember only; nothing thinks or acts")
     print("    [2] calibration — everything runs in shadow and EARNS live autonomy")
     print("                      through its real track record (recommended)")
@@ -1628,16 +1686,16 @@ def run_autonomy_step(
 WORKER_SPECS = (
     {
         "name": "colony-queue-worker",
-        "module": "colony_sidecar.workers.queue_worker",
+        "module": "apsimo.workers.queue_worker",
         "schedule": "*/5 * * * *",
         "blurb": "claims approved agent_action jobs every 5 minutes and hands "
                  "them to your agent (without it, auto-approved jobs sit QUEUED forever)",
     },
     {
         "name": "colony-skills-sync",
-        "module": "colony_sidecar.workers.skills_sync",
+        "module": "apsimo.workers.skills_sync",
         "schedule": "0 9 * * *",
-        "blurb": "reports your agent's installed skill index to Colony once a "
+        "blurb": "reports your agent's installed skill index to Apsimo once a "
                  "day so it proposes work the agent can actually do",
     },
 )
@@ -1741,7 +1799,7 @@ def run_workers_step(
     """
     print(_bold("Step 10e: Scheduled agent workers"))
     print()
-    print("  Colony needs two small workers scheduled on the agent's machine:")
+    print("  Apsimo needs two small workers scheduled on the agent's machine:")
     for spec in WORKER_SPECS:
         print(f"    • {spec['name']} — {spec['blurb']}")
     print()
@@ -1915,7 +1973,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     (colony_home / "data").mkdir(parents=True, exist_ok=True)
 
     print()
-    print(_bold("🔧 Colony Sidecar Setup Wizard"))
+    print(_bold("🔧 Apsimo Sidecar Setup Wizard"))
     print(_bold("=" * 40))
     print()
 
@@ -2010,7 +2068,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
             print("  Running standalone (no harness)")
     else:
         # Interactive mode: detect and offer choices
-        print("  Colony integrates with coding agents and agent frameworks.")
+        print("  Apsimo integrates with coding agents and agent frameworks.")
         print()
         
         # Detect coding harnesses
@@ -2070,7 +2128,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         # Get contact name if any harness is connected
         if mcp_harnesses or agent_harness:
             print()
-            contact_id = _prompt("  What should Colony call you?", os.environ.get("USER", ""), non_interactive)
+            contact_id = _prompt("  What should Apsimo call you?", os.environ.get("USER", ""), non_interactive)
 
     print()
 
@@ -2246,7 +2304,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
                     embed_model = ""
                     embed_dims = ""
                     reranker_model = ""
-                    print(f"  ✅ Embeddings skipped — Colony will run without vector search")
+                    print(f"  ✅ Embeddings skipped — Apsimo will run without vector search")
             else:
                 embed_provider = "cpu"
                 embed_model = "sentence-transformers/all-MiniLM-L6-v2"
@@ -2380,7 +2438,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     if embed_provider == "skip":
         print(_bold("Step 7: Embeddings skipped"))
         print()
-        print("  Colony will run without vector search. You can enable embeddings later")
+        print("  Apsimo will run without vector search. You can enable embeddings later")
         print("  by editing COLONY_EMBED_PROVIDER in .env and restarting.")
     elif embed_provider in ("cuda", "cpu", "mlx", "native_mlx") and embed_model:
         print(_bold("Step 7: Download embedding model"))
@@ -2555,14 +2613,14 @@ def run_init(root_dir: str | None = None, args=None) -> int:
     print(_bold("Step 10: Start sidecar and verify"))
     print()
 
-    start_now = _prompt("  Start the Colony sidecar now? [Y/n]", "Y", non_interactive)
+    start_now = _prompt("  Start the Apsimo sidecar now? [Y/n]", "Y", non_interactive)
     sidecar_started = False
 
     if start_now.lower() in ("y", "yes", ""):
-        print("  Starting Colony sidecar...")
-        # Use 'colony start -d' which handles port conflicts, PID tracking, etc.
+        print("  Starting Apsimo sidecar...")
+        # Use 'apsimo start -d' which handles port conflicts, PID tracking, etc.
         sidecar_result = subprocess.run(
-            [sys.executable, "-m", "colony_sidecar", "start",
+            [sys.executable, "-m", "apsimo", "start",
              "--host", values["COLONY_SIDECAR_HOST"],
              "--port", values["COLONY_SIDECAR_PORT"],
              "--detach", "--force"],
@@ -2606,7 +2664,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         try:
             env_with_key = {**os.environ, "COLONY_URL": sidecar_url, "COLONY_API_KEY": values["COLONY_API_KEY"]}
             doc_result = subprocess.run(
-                [sys.executable, "-m", "colony_sidecar", "doctor", "--url", sidecar_url],
+                [sys.executable, "-m", "apsimo", "doctor", "--url", sidecar_url],
                 capture_output=True, text=True, timeout=30,
                 cwd=str(base),
                 env=env_with_key,
@@ -2678,7 +2736,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
 
     if not sidecar_started:
         print("  Start the sidecar:")
-        print(f"    {_green('colony start')}")
+        print(f"    {_green('apsimo start')}")
         print()
         print("  Then verify:")
         print(f"    {_green('colony status')}")
@@ -2692,7 +2750,7 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         print()
         print("  To connect a harness later:")
         print("    colony mcp setup --harness <claude-code|codex|crush|opencode>")
-        print("    colony init --agent-harness hermes")
+        print("    apsimo init --agent-harness hermes")
         print()
     elif agent_harness == "hermes":
         selected_home = _resolve_hermes_home(getattr(args, "hermes_home", None))

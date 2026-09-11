@@ -1,4 +1,4 @@
-"""The guided Hermes path of ``colony init``.
+"""The guided Hermes path of ``apsimo init``.
 
 Use canonical adapter resources and one private instance. This is an installer,
 not a release controller: existing instances are retained and runtime upgrades
@@ -26,6 +26,16 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import httpx
 import yaml
+
+from .environment import apply_environment_aliases, clear_environment_aliases, normalize_environment
+from .util.instance import plugin_settings
+
+
+def _select_state_environment(state):
+    clear_environment_aliases()
+    os.environ.pop('COLONY_STATE_DIR', None)
+    os.environ['APSIMO_STATE_DIR'] = str(state)
+    apply_environment_aliases()
 
 
 def _private_write(path, content):
@@ -238,22 +248,22 @@ def _select_home(args, ask):
 
 
 def _adapter_resources(wheel=None):
-    packages = ('colony_hermes/', 'colony_memory/')
+    packages = ('apsimo_hermes/', 'apsimo_memory/', 'colony_hermes/', 'colony_memory/')
     if wheel:
         with zipfile.ZipFile(wheel) as archive:
             resources = {name: archive.read(name) for name in archive.namelist()
                 if name.startswith(packages) and not name.endswith('/') and '__pycache__' not in name}
     else:
         try:
-            distribution = importlib.metadata.distribution('colony-hermes')
+            distribution = importlib.metadata.distribution('apsimo-hermes')
         except importlib.metadata.PackageNotFoundError:
-            raise ValueError('Install the canonical colony-hermes package alongside colonyai, or supply --adapter-wheel') from None
+            raise ValueError('Install the canonical apsimo-hermes package alongside apsimo, or supply --adapter-wheel') from None
         resources = {str(path): distribution.locate_file(path).read_bytes() for path in distribution.files or []
                      if str(path).startswith(packages) and '__pycache__' not in str(path)}
     if any(Path(name).is_absolute() or '..' in Path(name).parts for name in resources):
         raise ValueError('Adapter resource escapes its package')
-    for name in ('colony_hermes/__init__.py', 'colony_hermes/evidence.py', 'colony_hermes/client.py',
-                 'colony_hermes/commitment_work.py', 'colony_memory/__init__.py', 'colony_memory/provider.py'):
+    for name in ('apsimo_hermes/__init__.py', 'apsimo_hermes/evidence.py', 'apsimo_hermes/client.py',
+                 'apsimo_hermes/commitment_work.py', 'apsimo_memory/__init__.py', 'apsimo_memory/provider.py'):
         if name not in resources:
             raise ValueError('Canonical adapter artifact is incomplete')
     return resources
@@ -272,7 +282,7 @@ def _preflight_outbox(home, resources):
     selected = home/'state'/'colony-turn-outbox.sqlite3'
     inspected = selected
     try:
-        exec(compile(resources['colony_hermes/client.py'], '<canonical Colony client>', 'exec'), module.__dict__)
+        exec(compile(resources['apsimo_hermes/client.py'], '<canonical Apsimo client>', 'exec'), module.__dict__)
         boundary = module.PrivateSQLitePath(selected)
         for inspected in reversed(selected.parents):
             try:
@@ -300,18 +310,28 @@ import hashlib, importlib.metadata, importlib.util, json, sys
 from pathlib import Path
 expected = json.load(sys.stdin)
 entries = importlib.metadata.entry_points()
+aliases = []
+for group, name, target in [('hermes_agent.plugins', 'colony', 'apsimo_hermes'),
+                            ('hermes_agent.memory_providers', 'colony-memory', 'apsimo_memory')]:
+    matches = [ep for ep in entries.select(group=group) if ep.name == name]
+    if len(matches) > 1 or any(ep.value != target for ep in matches):
+        raise ValueError('Conflicting legacy adapter distribution or target')
+    aliases.extend(matches)
 selected = []
-for group, name, module in [('hermes_agent.plugins', 'colony', 'colony_hermes'),
-                            ('hermes_agent.memory_providers', 'colony-memory', 'colony_memory')]:
+for group, name, module in [('hermes_agent.plugins', 'apsimo', 'apsimo_hermes'),
+                            ('hermes_agent.memory_providers', 'apsimo-memory', 'apsimo_memory')]:
     matches = [ep for ep in entries.select(group=group) if ep.name == name]
     if len(matches) > 1 or (matches and matches[0].value != module):
-        raise ValueError('Conflicting Colony entry point')
+        raise ValueError('Conflicting Apsimo entry point')
     selected.append(matches[0] if matches else None)
-if not any(selected):
+if not any(selected) and not aliases:
     print(json.dumps({'mode': 'private-directory'}))
     sys.exit(0)
 if not all(selected):
-    raise ValueError('Both canonical native Colony entry points are required')
+    raise ValueError('Both canonical native Apsimo entry points are required')
+identities = {(ep.dist.metadata['Name'].lower().replace('_', '-'), ep.dist.version) for ep in [*selected, *aliases]}
+if len(identities) != 1:
+    raise ValueError('Canonical and legacy adapter registrations come from different distributions')
 sources, external_modules, versions = {}, {}, set()
 for ep in selected:
     module = ep.value
@@ -345,7 +365,7 @@ print(json.dumps({'mode': 'native-installed', 'version': versions.pop(),
     'sources': sources, 'external_modules': external_modules}))
 '''], input=json.dumps(expected), capture_output=True, text=True, timeout=30)
     if probe.returncode:
-        raise ValueError('Hermes has an incomplete or different installed Colony adapter; select its matching artifact, upgrade that package explicitly, or use a separate Hermes interpreter')
+        raise ValueError('Hermes has an incomplete or different installed Apsimo adapter; select its matching artifact, upgrade that package explicitly, or use a separate Hermes interpreter')
     return json.loads(probe.stdout.splitlines()[-1])
 
 
@@ -365,7 +385,8 @@ def _native_environment(original, values):
     # Preserve every unrelated line and refuse to replace an existing secret.
     text = original.decode() if original is not None else ''
     for name, value in values.items():
-        if re.search(r'^\s*(?:export\s+)?' + re.escape(name) + r'\s*=', text, re.M):
+        aliases = (name, ('COLONY_' if name.startswith('APSIMO_') else 'APSIMO_') + name[7:]) if name.startswith(('COLONY_', 'APSIMO_')) else (name,)
+        if any(re.search(r'^\s*(?:export\s+)?' + re.escape(alias) + r'\s*=', text, re.M) for alias in aliases):
             raise ValueError(f'{name} already exists; retain the existing instance or select a new Hermes home')
     return (text + ('\n' if text and not text.endswith('\n') else '') +
             '\n'.join(name + '=' + json.dumps(value) for name, value in values.items()) + '\n').encode()
@@ -391,7 +412,7 @@ def _copied_resources(directory):
 
 def refresh_adapter(state, args):
     """Refresh canonical code for one stopped attachment, preserving its data."""
-    from .setup import _atomic_hermes_config_write, _read_hermes_config, _align_hermes_memory_spill
+    from .setup import _atomic_hermes_config_write, _read_hermes_config, _align_hermes_memory_spill, _canonicalize_hermes_binding
     path = state/'instance.json'; before = path.read_bytes(); manifest = json.loads(before)
     if (manifest.get('version') != 1 or manifest.get('profile') != 'local'
             or manifest.get('adapter_binding', {}).get('mode') not in {'native-installed', 'private-directory'}):
@@ -410,26 +431,36 @@ def refresh_adapter(state, args):
         old_resources = _copied_resources(adapter)
         if _resource_digest(old_resources) != manifest['adapter_sha256']:
             raise ValueError('Copied adapter was edited locally; retain or reconcile those edits before refreshing')
-        for directory, module in (('colony', 'colony_hermes'), ('colony-memory', 'colony_memory')):
-            forwarder = home/'plugins'/directory/'__init__.py'
-            if forwarder.is_symlink() or forwarder.read_text() != _forwarder(adapter, module, directory == 'colony-memory'):
+        def retain_forwarder(profile, *, memory=False):
+            names = ('apsimo-memory', 'colony-memory') if memory else ('apsimo', 'colony')
+            directories = [profile/'plugins'/name for name in names if (profile/'plugins'/name).exists()]
+            if len(directories) != 1:
+                raise ValueError('Expected one managed adapter directory; reconcile duplicate or missing bindings')
+            directory = directories[0]
+            forwarder = directory/'__init__.py'
+            modules = ('apsimo_memory','colony_memory') if memory else ('apsimo_hermes','colony_hermes')
+            matches = [module for module in modules if not forwarder.is_symlink()
+                       and forwarder.read_text() == _forwarder(adapter, module, memory)]
+            if len(matches) != 1:
                 raise ValueError('The selected profile adapter forwarder changed; reconcile it before refreshing')
-            target = home/'plugins'/directory/'plugin.yaml'
+            module = matches[0]
+            if module+'/__init__.py' not in resources:
+                raise ValueError('New adapter lacks the compatibility module required by this forwarder')
+            target = directory/'plugin.yaml'
             if target.is_symlink() or target.read_bytes() != old_resources[module+'/plugin.yaml']:
                 raise ValueError('The selected profile adapter manifest changed; reconcile it before refreshing')
-            updates.append((target, target.read_bytes(), resources[module+'/plugin.yaml']))
+            canonical = 'apsimo_memory' if memory else 'apsimo_hermes'
+            updates.append((target, target.read_bytes(), resources[canonical+'/plugin.yaml']))
+        retain_forwarder(home)
+        retain_forwarder(home, memory=True)
         lane = manifest.get('local_work') or {}
         if lane.get('executor') == 'kanban':
             from .setup_local_work import native_root
             worker = native_root(home)/'profiles'/lane['worker_profile']
             config = yaml.safe_load((worker/'config.yaml').read_text())
-            forwarder = worker/'plugins/colony/__init__.py'
-            target = worker/'plugins/colony/plugin.yaml'
-            if (config['plugins']['colony']['instance_dir'] != str(state)
-                    or forwarder.is_symlink() or forwarder.read_text() != _forwarder(adapter, 'colony_hermes')
-                    or target.is_symlink() or target.read_bytes() != old_resources['colony_hermes/plugin.yaml']):
+            if plugin_settings(config).get('instance_dir') != str(state):
                 raise ValueError('The recorded draft worker binding changed; reconcile it before refreshing')
-            updates.append((target, target.read_bytes(), resources['colony_hermes/plugin.yaml']))
+            retain_forwarder(worker)
     updated = {**manifest, 'hermes_python':str(python), 'sidecar_python':sys.executable,
         'sidecar_module_root':str(Path(__file__).resolve().parents[1]),
         'adapter_sha256':_resource_digest(resources), 'adapter_binding':binding}
@@ -441,12 +472,15 @@ def refresh_adapter(state, args):
         config_paths.append(native_root(home)/'profiles'/lane['worker_profile']/'config.yaml')
     for config_path in config_paths:
         config_before, config = _read_hermes_config(config_path)
-        if config_path != config_paths[0] and config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
+        if config_path != config_paths[0] and plugin_settings(config).get('instance_dir') != str(state):
             raise ValueError('The recorded draft worker belongs to another instance')
-        if _align_hermes_memory_spill(config):
+        renamed = _canonicalize_hermes_binding(config)
+        aligned = _align_hermes_memory_spill(config)
+        if renamed or aligned:
             updates.append((config_path, config_before, yaml.safe_dump(config, sort_keys=False,
                                                                       allow_unicode=True).encode()))
-            print('Hermes memory prefetch spill allowance: max_chars -> 65536 for '+str(config_path))
+            if aligned:
+                print('Hermes memory prefetch spill allowance: max_chars -> 65536 for '+str(config_path))
     copied_change = old_resources is not None and old_resources != resources
     if not copied_change and all(original == after for _, original, after in updates):
         print('Selected adapter already matches; private instance unchanged.')
@@ -457,7 +491,7 @@ def refresh_adapter(state, args):
             staged = Path(tempfile.mkdtemp(prefix='.colony-adapter-', dir=state))
             for name, content in resources.items():
                 _private_write(staged/name, content)
-            # Hermes and Colony are stopped by the operator's existing lifecycle.
+            # Hermes and Apsimo are stopped by the operator's existing lifecycle.
             # Keep the complete old directory for recovery, including caches.
             if _copied_resources(adapter) != old_resources or path.read_bytes() != before:
                 raise ValueError('Attachment changed during refresh; retry after reconciling it')
@@ -485,7 +519,7 @@ def refresh_adapter(state, args):
     print('Selected adapter refreshed ('+binding['mode']+'); identity and databases retained.')
     if backup is not None:
         print('Previous copied adapter retained at '+str(backup))
-    print('Start this Colony instance and new Hermes processes through their existing lifecycle.')
+    print('Start this Apsimo instance and new Hermes processes through their existing lifecycle.')
 
 
 def run(root_dir=None, args=None):
@@ -521,9 +555,12 @@ def run(root_dir=None, args=None):
                 raise ValueError('--preferences-only cannot be combined with instance or setup options')
             _write_receipt_preference(home, receipt_choice, preview)
             return 0
-        state = Path(root_dir or os.environ.get('COLONY_STATE_DIR') or home/'colony').expanduser().resolve()
+        _, current_config = setup._read_hermes_config(home/'config.yaml')
+        env = normalize_environment()
+        state = Path(root_dir or env.get('COLONY_STATE_DIR') or
+                     plugin_settings(current_config).get('instance_dir') or home/'apsimo').expanduser().resolve()
         if state == home or home.is_relative_to(state):
-            raise ValueError('The private Colony directory must not contain the Hermes home')
+            raise ValueError('The private Apsimo directory must not contain the Hermes home')
         # State, credentials and private identity are never written into a checkout.
         for destination in (state, home):
             if any((parent/'.git').is_file() or (parent/'.git'/'HEAD').is_file()
@@ -536,17 +573,16 @@ def run(root_dir=None, args=None):
         for section in ('plugins', 'memory', 'compression'):
             if section in config and not isinstance(config[section], dict):
                 raise ValueError('Hermes plugin, memory and compression settings must be mappings')
-        if 'colony' in config.get('plugins', {}) and not isinstance(config['plugins']['colony'], dict):
-            raise ValueError('Hermes Colony plugin settings must be a mapping')
-        if 'colony' in config.get('plugins', {}).get('disabled', []):
-            raise ValueError('Colony is explicitly disabled in this home; resolve that setting before attachment')
-        if (home/'colony-memory.json').exists():
-            raise ValueError('Existing native Colony settings need an explicit migration; select a new home')
+        plugin_settings(config)
+        if any(name in config.get('plugins', {}).get('disabled', []) for name in ('colony','apsimo')):
+            raise ValueError('Apsimo is explicitly disabled in this home; resolve that setting before attachment')
+        if any((home/name).exists() for name in ('colony-memory.json', 'apsimo-memory.json')):
+            raise ValueError('Existing native Apsimo settings need an explicit migration; select a new home')
         if (state/'instance.json').exists():
             manifest = json.loads((state/'instance.json').read_text())
             if manifest.get('hermes_home') != str(home):
                 raise ValueError('This instance belongs to another Hermes home')
-            if config.get('plugins', {}).get('colony', {}).get('instance_dir') != str(state):
+            if plugin_settings(config).get('instance_dir') != str(state):
                 raise ValueError('The Hermes binding changed; restore its saved config or select another instance')
             if getattr(args, 'native_goals', False):
                 from dotenv import dotenv_values
@@ -567,20 +603,20 @@ def run(root_dir=None, args=None):
                 options, _ = asyncio.run(planning(json.loads((state/'.colony-llm-config.json').read_text())))
                 verify_tools(options['base_url'], options['model'], options['api_key'])
                 install(state)
-                print('Accepted local drafts use native Kanban. Restart this Colony instance and Hermes gateway to load the binding.')
+                print('Accepted local drafts use native Kanban. Restart this Apsimo instance and Hermes gateway to load the binding.')
             if getattr(args, 'native_goals', False):
                 from .setup_native_goals import enable
                 enable(state)
             if (getattr(args, 'native_reviews', False) or
                     (getattr(args, 'refresh_adapter', False) and
-                     (config.get('plugins', {}).get('colony', {}).get('native_reviews') or {}).get('enabled') is True)):
+                     (plugin_settings(config).get('native_reviews') or {}).get('enabled') is True)):
                 from .setup_native_reviews import configure
                 configure(state, install=True)
             if receipt_choice is not None:
                 _write_receipt_preference(home, receipt_choice)
-            os.environ['COLONY_STATE_DIR'] = str(state)
+            _select_state_environment(state)
             print(f'Existing private instance retained: {state}')
-            print(f'Use colony --instance {str(state)!r} start, then status.')
+            print(f'Use apsimo --instance {str(state)!r} start, then status.')
             return 0
         if getattr(args, 'refresh_adapter', False):
             raise ValueError('Adapter refresh requires an existing private instance')
@@ -588,12 +624,12 @@ def run(root_dir=None, args=None):
             raise ValueError('The selected directory has existing state; use its existing configuration or a new private directory')
         if (home/'plugins').is_symlink():
             raise ValueError('Symlinked plugin directories require explicit migration')
-        for name in ('colony', 'colony-memory'):
+        for name in ('colony', 'colony-memory', 'apsimo', 'apsimo-memory'):
             if (home/'plugins'/name).exists():
-                raise ValueError('An existing Colony directory adapter needs an explicit upgrade; choose another home for this installer')
+                raise ValueError('An existing Apsimo directory adapter needs an explicit upgrade; choose another home for this installer')
         selected_provider = config.get('memory', {}).get('provider')
         replace_provider = bool(getattr(args, 'replace_memory_provider', False))
-        if selected_provider not in (None, '', 'colony', 'colony-memory') and not replace_provider:
+        if selected_provider not in (None, '', 'colony', 'colony-memory', 'apsimo', 'apsimo-memory') and not replace_provider:
             if noninteractive or ask('Another memory provider is selected. Replace only its selection and retain its files? [y/N]', 'N').lower() not in {'y', 'yes'}:
                 raise ValueError('Existing provider retained; choose another --hermes-home or explicitly request --replace-memory-provider')
             replace_provider = True
@@ -606,7 +642,7 @@ def run(root_dir=None, args=None):
         agent_preferences = _agent_preferences(ask, args, config)
         endpoint = _endpoint(ask('Local model API root', getattr(args, 'model_url', None), True))
         local_hosts = _verify_local_endpoint(endpoint)
-        model_key = os.environ.get('COLONY_MODEL_API_KEY', '')
+        model_key = env.get('COLONY_MODEL_API_KEY', '')
         if not noninteractive and not model_key:
             model_key = getpass.getpass('Model API key (blank if not required): ')
         model_key = model_key or 'local-no-key'
@@ -655,6 +691,7 @@ def run(root_dir=None, args=None):
         if fresh_model:
             env_updates['OPENAI_API_KEY'] = model_key
             env_updates['OPENAI_BASE_URL'] = endpoint
+        env_updates = {('APSIMO_'+key[7:] if key.startswith('COLONY_') else key):value for key,value in env_updates.items()}
         native_env = _native_environment(original_env, env_updates)
         goal_configuration, goal_details = None, None
         if native_goals:
@@ -696,6 +733,7 @@ def run(root_dir=None, args=None):
             })
             if goal_details is not None:
                 values['COLONY_HERMES_WORK_BOARDS'] = json.dumps(goal_details['boards'], separators=(',', ':'))
+            values = {('APSIMO_'+key[7:] if key.startswith('COLONY_') else key):value for key,value in values.items()}
             _private_write(staged/'.env', _native_environment(None, values))
             principal = {'principal': 'hermes-local', 'status': 'active', 'viewer_person_id': owner_id,
                 'audiences': ['viewer'], 'allow_unscoped_api': False, 'turn_ingress_platforms': ['cli'],
@@ -724,22 +762,22 @@ def run(root_dir=None, args=None):
             candidate = dict(goal_configuration if goal_configuration is not None else config)
             if replace_provider:
                 candidate['memory'] = dict(candidate.get('memory') or {})
-                candidate['memory']['provider'] = 'colony-memory'
+                candidate['memory']['provider'] = 'apsimo-memory'
                 candidate['memory']['config'] = {}  # Saved original retains incumbent settings.
             _private_write(prepared_path, yaml.safe_dump(candidate, sort_keys=False))
             _, prepared = setup._prepare_hermes_config(prepared_path, url, owner_id)
             candidate = yaml.safe_load(prepared)
-            plugin = candidate['plugins']['colony']
+            plugin = candidate['plugins']['apsimo']
             plugin.update(instance_dir=str(state), owner_contact_id=owner_id,
-                api_key='${COLONY_NATIVE_API_KEY}', execution_registry_enabled=True,
+                api_key='${APSIMO_NATIVE_API_KEY}', execution_registry_enabled=True,
                 attested_system_platforms=['cli'], enabled_action_tools=[], enabled_message_tools=[],
                 turn_outbox_path=str(home/'state'/'colony-turn-outbox.sqlite3'))
-            candidate['memory']['config'].update(api_key='${COLONY_NATIVE_API_KEY}', turn_writer='disabled')
+            candidate['memory']['config'].update(api_key='${APSIMO_NATIVE_API_KEY}', turn_writer='disabled')
             enabled = candidate['plugins'].setdefault('enabled', [])
             if not isinstance(enabled, list):
                 raise ValueError('Hermes plugins.enabled must be a list')
-            if 'colony' not in enabled:
-                enabled.append('colony')
+            if 'apsimo' not in enabled:
+                enabled.append('apsimo')
             candidate.setdefault('compression', {})['checkpoint_required'] = True
             if fresh_model:
                 candidate['model'] = {'provider': 'custom', 'default': model, 'base_url': endpoint}
@@ -767,10 +805,10 @@ def run(root_dir=None, args=None):
                 _private_write(path, raw)
                 created.append((path, raw))
             if binding['mode'] == 'private-directory':
-                for directory, module in (('colony', 'colony_hermes'), ('colony-memory', 'colony_memory')):
-                    create(home/'plugins'/directory/'__init__.py', _forwarder(state/'adapter', module, directory == 'colony-memory'))
+                for directory, module in (('apsimo', 'apsimo_hermes'), ('apsimo-memory', 'apsimo_memory')):
+                    create(home/'plugins'/directory/'__init__.py', _forwarder(state/'adapter', module, directory == 'apsimo-memory'))
                     create(home/'plugins'/directory/'plugin.yaml', resources[module+'/plugin.yaml'])
-                create(home/'plugins'/'colony-memory'/'cli.py', _forwarder(state/'adapter', 'colony_memory.cli'))
+                create(home/'plugins'/'apsimo-memory'/'cli.py', _forwarder(state/'adapter', 'apsimo_memory.cli'))
             setup._atomic_hermes_config_write(config_path, original, final_config)
             replaced.append((config_path, original, final_config))
             if not (home/'SOUL.md').exists():
@@ -789,13 +827,13 @@ def run(root_dir=None, args=None):
             for path, raw in reversed(created):
                 if not path.is_symlink() and path.is_file() and path.read_bytes() == raw:
                     path.unlink()
-            for name in ('colony', 'colony-memory'):
+            for name in ('apsimo', 'apsimo-memory'):
                 directory = home/'plugins'/name
                 if directory.is_dir() and not any(directory.iterdir()):
                     directory.rmdir()
             print(f'Attachment failed; prepared state and original files remain in {state}.')
             raise
-        os.environ['COLONY_STATE_DIR'] = str(state)
+        _select_state_environment(state)
         if local_work:
             from .setup_local_work import install
             install(state)
@@ -814,11 +852,11 @@ def run(root_dir=None, args=None):
         if goal_details is not None:
             from .setup_native_goals import describe
             describe(goal_details)
-        print(f'Start: colony --instance {str(state)!r} start --detach')
-        print(f'Status: colony --instance {str(state)!r} status')
+        print(f'Start: apsimo --instance {str(state)!r} start --detach')
+        print(f'Status: apsimo --instance {str(state)!r} status')
         print('No existing Hermes process was restarted. Begin a new session to load the adapter.')
         if getattr(args, 'start', False) or (not noninteractive and ask('Start this sidecar now? [Y/n]', 'Y').lower() in {'y','yes'}):
-            result = subprocess.run([sys.executable, '-m', 'colony_sidecar', '--instance', str(state), 'start', '--detach'], timeout=60)
+            result = subprocess.run([sys.executable, '-m', 'apsimo', '--instance', str(state), 'start', '--detach'], timeout=60)
             return result.returncode
         return 0
     except (OSError, ValueError, KeyError, httpx.HTTPError, subprocess.SubprocessError) as error:
