@@ -25,18 +25,18 @@ home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 home.joinpath('config.yaml').write_text(json.dumps({
     'plugins':{'enabled':['colony'],'colony':{'url':'http://fixture','owner_contact_id':'contact-a',
-        'attested_system_platforms':['cli'] if trusted else [],'turn_writer_platforms':[]}},
+        'attested_system_platforms':['cli'] if trusted else [],'turn_writer_platforms':['cli']}},
     'memory':{'provider':'colony-memory','config':{'url':'http://fixture','contact_id':'contact-a'}}}))
 home.joinpath('SOUL.md').write_text('Neutral CLI fixture. Answer the current question.')
 fact='My neutral orchard badge is cobalt-716.'
 ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
 ledger.record_source('earlier-neutral-source',contact_id='contact-a',session_id='earlier-channel',
     messages=[{'role':'user','content':fact}],derive_claims=False)
-app=FastAPI();calls=[]
+app=FastAPI();calls=[];recorded_turns=[]
 @app.middleware('http')
 async def authority(request,next_call):
     request.state.colony_authority=RequestAuthority(principal_id='neutral-fixture',credential_id='fixture',
-        scopes=frozenset({'context:read','turns:write'}),viewer_person_id='contact-a',
+        scopes=frozenset({'context:read','turns:write','memory:read'}),viewer_person_id='contact-a',
         person_ids=frozenset({'contact-a'}),audiences=frozenset({'viewer'}),authenticated=True)
     return await next_call(request)
 app.include_router(host.router);app.include_router(host.v2_router)
@@ -46,6 +46,9 @@ def respond(request):
     response=api.request(request.method,request.url.path,params=request.url.params,
                          headers=dict(request.headers),content=request.content)
     calls.append((request.url.path,response.status_code))
+    if request.url.path.startswith('/v2/host/turns/'):
+        assert response.status_code in (200,201),response.text
+        recorded_turns.append(json.loads(request.content))
     return httpx.Response(response.status_code,content=response.content,headers=response.headers)
 httpx.Client=lambda **kwargs:original_client(**{**kwargs,'transport':httpx.MockTransport(respond)})
 def no_network(*args,**kwargs):raise AssertionError('Controlled API and provider callback only')
@@ -85,6 +88,12 @@ with patch(openai_target,return_value=client),patch(tools_target+'.get_tool_defi
     assert ('earlier-neutral-source' in contents)==trusted
     assert binding==['contact-a' if trusted else None],binding
     assert any(path=='/v1/host/context/assemble' and status==200 for path,status in calls)==trusted,calls
+    assert len(recorded_turns)==int(trusted),(recorded_turns,calls)
+    if trusted:
+        # A senderless CLI still has known conversation provenance. Do not
+        # substitute a messaging account or the generic host identity for it.
+        assert recorded_turns[0]['context']['channel_id']=='cli:contact-a'
+        assert recorded_turns[0]['context']['contact_id']=='contact-a'
     # The registry deliberately retains prior scopes. A finished native turn
     # cannot use one as ambient owner authority or replay its provider cache.
     assert colony_hermes._TRANSPORT_SCOPES.for_session(agent.session_id) is not None

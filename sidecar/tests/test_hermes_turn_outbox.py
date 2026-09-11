@@ -1197,7 +1197,8 @@ def test_colony_client_uses_one_absolute_deadline_across_http_phases():
     assert elapsed < 0.20
 
 
-def test_colony_client_absolute_deadline_transport_accepts_exact_put():
+@pytest.mark.parametrize('channel_id', ['', 'email:thread-739'])
+def test_colony_client_absolute_deadline_transport_accepts_exact_put(channel_id):
     module = _load_client("colony_hermes_client_deadline_success_test")
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -1242,6 +1243,7 @@ def test_colony_client_absolute_deadline_transport_accepts_exact_put():
             session_id="session-1",
             contact_id="cid-owner",
             turn_id="turn/one",
+            channel_id=channel_id,
             timeout_seconds=0.20,
         ) is True
     finally:
@@ -1260,6 +1262,7 @@ def test_colony_client_absolute_deadline_transport_accepts_exact_put():
             "contact_id": "cid-owner",
             "session_id": "session-1",
             "turn_id": "turn/one",
+            **({"channel_id": channel_id} if channel_id else {}),
         },
         "identity": {"host_id": "hermes"},
     }

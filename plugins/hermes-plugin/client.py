@@ -1700,6 +1700,7 @@ class ApsimoClient:
         model: str = "",
         turn_id: str = "",
         sender: Mapping[str, str] | None = None,
+        channel_id: str = "",
         checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
         assistant_source_refs: Sequence[Mapping[str, str]] | None = None,
         assistant_input_refs: Sequence[Mapping[str, str]] | None = None,
@@ -1738,6 +1739,7 @@ class ApsimoClient:
                 "context": {
                     "session_id": session,
                     "contact_id": contact,
+                    **({"channel_id": str(channel_id).strip()} if str(channel_id or "").strip() else {}),
                     **({"turn_id": str(turn_id)} if turn_id else {}),
                 },
             }

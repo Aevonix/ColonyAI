@@ -3109,10 +3109,14 @@ async def context_assemble(
                 _per = _comms_log.last_per_channel(contact_id)
                 if _per:
                     _chs = ", ".join(f"{ch} {str(v['ts'])[:10]}" for ch, v in _per.items())
-                    _bits.append(f"Channels used: {_chs}.")
+                    _bits.append(f"Recorded channels: {_chs}.")
                 _lo = _comms_log.last_outbound(contact_id)
                 if _lo:
-                    _bits.append(f"I last reached out via {_lo['channel']} on {str(_lo['ts'])[:10]}.")
+                    _bits.append(
+                        f"Last recorded outgoing message: {_lo['channel']} on {str(_lo['ts'])[:10]}. "
+                        "This summary includes conversation replies; it does not establish "
+                        "proactive outreach or delivery."
+                    )
                 if _commitment_store is not None:
                     try:
                         _cm = _commitment_store.list(person_id=contact_id, status=["pending", "overdue"], limit=5)

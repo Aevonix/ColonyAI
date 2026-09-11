@@ -680,6 +680,8 @@ async def test_p8_scoped_non_owner_queries_only_exact_person_commitments(
 
 @pytest.mark.asyncio
 async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
+    from colony_sidecar.contacts.comms import CommsLog
+
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
     monkeypatch.setenv("COLONY_OWNER_NAME", "PRIVATE OWNER NAME")
@@ -689,6 +691,9 @@ async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     spies = _PersonalContextSpies()
     spies.wire()
+    comms_log = CommsLog(str(tmp_path / "communications.db"))
+    comms_log.log("alice", channel="voice:thread", direction="out", summary="A routine reply.")
+    monkeypatch.setattr(host, "_comms_log", comms_log)
 
     response = await host.context_assemble(
         _context("alice"), request=_request(_authority("alice")))
@@ -698,6 +703,9 @@ async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
     )
     assert "PRIVATE OWNER NAME" not in comms.body
     assert "owner approval" in comms.body.lower()
+    assert "Last recorded outgoing message:" in comms.body
+    assert "does not establish proactive outreach or delivery" in comms.body
+    assert "I last reached out" not in comms.body
 
 
 @pytest.mark.asyncio

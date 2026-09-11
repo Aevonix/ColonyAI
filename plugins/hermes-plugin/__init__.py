@@ -2529,6 +2529,9 @@ def register(ctx: Any) -> None:
             "session_id": session_id,
             "contact_id": scope.contact_id,
             "turn_id": stable_turn_id,
+            # Conversation provenance is distinct from the admitting sender's
+            # authority channel, especially for CLI and derived native tasks.
+            "channel_id": f"{scope.platform}:{scope.contact_id}",
             "user_message": user_message,
             "assistant_message": assistant_message,
             "require_source_receipt": True,
