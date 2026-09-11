@@ -1,13 +1,15 @@
-"""Colony MCP harness configuration.
+"""Apsimo MCP harness configuration.
 
-Handles detecting installed harnesses and configuring them to use Colony's MCP server.
+Handles detecting installed harnesses and configuring them to use Apsimo's MCP server.
 """
 
 import json
 import os
 import shutil
 import subprocess
-import sys
+import shlex
+import tomllib
+import re
 from pathlib import Path
 from typing import Any, Optional
 
@@ -79,78 +81,28 @@ def detect_harnesses() -> dict[str, bool]:
 # Config writers
 # ---------------------------------------------------------------------------
 
-def _mcp_config(contact_id: str, source: str, include_type: bool = False, sidecar_url: Optional[str] = None) -> dict[str, Any]:
-    """Return the MCP server config block for Colony.
-    
-    Supports:
-    - Local mode: Uses 'colony mcp' command (requires colony CLI installed)
-    - Remote mode: Uses sidecar_url param or COLONY_SIDECAR_URL env var
-    - Standalone mode: Uses COLONY_MCP_COMMAND env var for custom MCP server command
-    
-    Args:
-        contact_id: User identifier for Colony context
-        source: Source tag (e.g., 'crush', 'claude-code')
-        include_type: Whether to include 'type: stdio' field
-        sidecar_url: Optional explicit sidecar URL (overrides env var)
-    """
-    # Check for custom MCP server command (standalone mode)
-    custom_command = os.environ.get("COLONY_MCP_COMMAND")
-    custom_args = os.environ.get("COLONY_MCP_ARGS", "")
-    
-    # Determine sidecar URL (param > env > default)
-    if sidecar_url:
-        final_url = sidecar_url
-    else:
-        final_url = os.environ.get("COLONY_SIDECAR_URL")
-        if not final_url:
-            sidecar_port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
-            final_url = f"http://127.0.0.1:{sidecar_port}"
-    
-    if custom_command:
-        # Standalone mode: custom Python script or other MCP server
-        args = custom_args.split() if custom_args else []
-        config = {
-            "command": custom_command,
-            "args": args,
-            "env": {
-                "COLONY_API_KEY": "${COLONY_API_KEY}",
-                "COLONY_URL": final_url,
-                "COLONY_MCP_CONTACT_ID": contact_id,
-                "COLONY_MCP_SOURCE": source,
-            },
-        }
-    else:
-        # Standard mode: use colony CLI
-        config = {
-            "command": "colony",
-            "args": ["mcp"],
-            "env": {
-                "COLONY_API_KEY": "${COLONY_API_KEY}",
-                "COLONY_URL": final_url,
-                "COLONY_MCP_CONTACT_ID": contact_id,
-                "COLONY_MCP_SOURCE": source,
-            },
-        }
-    
+def _mcp_config(contact_id: str, source: str, include_type: bool = False,
+                sidecar_url: Optional[str] = None) -> dict[str, Any]:
+    """New Apsimo config. Authentication is inherited, never a literal placeholder."""
+    from apsimo.environment import normalize_environment
+    env = normalize_environment()
+    url = sidecar_url or env.get("COLONY_SIDECAR_URL") or (
+        "http://127.0.0.1:" + env.get("COLONY_SIDECAR_PORT", "7777"))
+    custom = env.get("COLONY_MCP_COMMAND")
+    result = {
+        "command": custom or "apsimo",
+        "args": shlex.split(env.get("COLONY_MCP_ARGS", "")) if custom else ["mcp"],
+        "env": {"APSIMO_URL": url, "APSIMO_MCP_CONTACT_ID": contact_id,
+                "APSIMO_MCP_SOURCE": source},
+    }
     if include_type:
-        config["type"] = "stdio"
-    return config
+        result["type"] = "stdio"
+    return result
 
 
 def _read_json(path: Path) -> dict:
-    if path.exists():
-        try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
-            # Back up the corrupted file before treating as empty
-            backup = path.with_suffix(path.suffix + ".bak")
-            try:
-                shutil.copy2(path, backup)
-                print(f"  Warning: {path} had invalid JSON — backed up to {backup}")
-            except OSError:
-                pass
-            return {}
-    return {}
+    # Do not replace unreadable configuration with an empty document.
+    return json.loads(path.read_text()) if path.exists() else {}
 
 
 def _write_json(path: Path, data: dict) -> None:
@@ -158,218 +110,178 @@ def _write_json(path: Path, data: dict) -> None:
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
-def _add_to_json_config(hdef: dict, contact_id: str, source: str, dry_run: bool = False) -> Optional[str]:
-    """Add Colony to a JSON-format harness config. Returns diff description or None if already present."""
-    config_path = hdef["config_path"]
-    mcp_key = hdef.get("mcp_key", "mcpServers")
-    needs_type = hdef.get("mcp_type") == "stdio"
-    
-    path = Path(config_path).expanduser()
+def _selected(servers: dict) -> dict:
+    old, new = servers.get("colony"), servers.get("apsimo")
+    if old is not None and new is not None and old != new:
+        raise ValueError("Both colony and apsimo MCP entries exist with different settings")
+    selected = new if new is not None else old
+    if selected is not None and not isinstance(selected, dict):
+        raise ValueError("The Apsimo MCP entry must be a configuration table")
+    return selected or {}
+
+
+def _merged(existing: dict, desired: dict, sidecar_url: Optional[str]) -> dict:
+    """Retain custom launch settings and literal credentials during the rename."""
+    from apsimo.environment import normalize_environment
+    current_env = existing.get("env", {})
+    normalized = normalize_environment(current_env)
+    env = {("APSIMO_" + k[7:] if k.startswith("COLONY_") else k): v
+           for k, v in normalized.items()}
+    # Old generated placeholders are not portable across harnesses. Inherit the
+    # real variable from the launching environment instead of passing a literal.
+    if env.get("APSIMO_API_KEY") in {"${COLONY_API_KEY}", "${APSIMO_API_KEY}"}:
+        env.pop("APSIMO_API_KEY")
+    selected_env = dict(desired["env"])
+    if (sidecar_url is None and not any(os.environ.get(k) for k in (
+            "APSIMO_SIDECAR_URL", "COLONY_SIDECAR_URL",
+            "APSIMO_SIDECAR_PORT", "COLONY_SIDECAR_PORT"))
+            and "APSIMO_URL" in env):
+        selected_env["APSIMO_URL"] = env["APSIMO_URL"]
+    env.update(selected_env)
+    result = {**existing, **desired, "env": env}
+    if (existing.get("command") not in {None, "colony", "apsimo"}
+            and not (os.environ.get("APSIMO_MCP_COMMAND") or os.environ.get("COLONY_MCP_COMMAND"))):
+        result["command"] = existing["command"]
+        result["args"] = existing.get("args", [])
+    return result
+
+
+def _update_servers(servers: dict, desired: dict, sidecar_url: Optional[str]) -> bool:
+    new = _merged(_selected(servers), desired, sidecar_url)
+    if servers.get("apsimo") == new and "colony" not in servers:
+        return False
+    servers.pop("colony", None)
+    servers["apsimo"] = new
+    return True
+
+
+def _add_to_json_config(hdef: dict, contact_id: str, source: str,
+                        dry_run: bool = False, sidecar_url: Optional[str] = None) -> Optional[str]:
+    path = Path(hdef["config_path"]).expanduser()
     data = _read_json(path)
-
-    if mcp_key not in data:
-        data[mcp_key] = {}
-
-    existing = data[mcp_key].get("colony")
-    new_config = _mcp_config(contact_id, source, include_type=needs_type)
-
-    if existing == new_config:
-        return None  # Already configured identically
-
-    old_desc = json.dumps(existing, indent=2) if existing else "(not present)"
-    new_desc = json.dumps(new_config, indent=2)
-
+    servers = data.setdefault(hdef.get("mcp_key", "mcpServers"), {})
+    desired = _mcp_config(contact_id, source, hdef.get("mcp_type") == "stdio", sidecar_url)
+    if not _update_servers(servers, desired, sidecar_url):
+        return None
     if not dry_run:
-        data[mcp_key]["colony"] = new_config
         _write_json(path, data)
+    return "  Configure one Apsimo MCP entry; preserve other servers and credentials"
 
-    return f"  Old: {old_desc[:100]}\n  New: {new_desc[:100]}"
+
+def _without_toml_entries(content: str) -> str:
+    """Remove only our two server tables, preserving following tables verbatim."""
+    output, skipping = [], False
+    for line in content.splitlines(keepends=True):
+        stripped = line.strip()
+        if stripped.startswith("["):
+            match = re.match(r"^\[\s*mcp_servers\s*\.\s*(?:colony|apsimo)(?:\s*\.[^]]*)?\s*\]", stripped)
+            skipping = bool(match)
+        if not skipping:
+            output.append(line)
+    return "".join(output)
 
 
-def _add_to_toml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> Optional[str]:
-    """Add Colony to a TOML-format harness config."""
+def _toml_block(config: dict) -> str:
+    # JSON string escaping is TOML basic-string escaping for our scalar values.
+    def key(name):
+        return name if re.fullmatch(r"[A-Za-z0-9_-]+", name) else json.dumps(name)
+
+    def value(item):
+        if isinstance(item, bool):
+            return "true" if item else "false"
+        if isinstance(item, dict):
+            return "{ " + ", ".join(key(k) + " = " + value(v) for k, v in item.items()) + " }"
+        if isinstance(item, list):
+            return "[" + ", ".join(value(v) for v in item) + "]"
+        return json.dumps(item, ensure_ascii=False)
+    return "\n[mcp_servers.apsimo]\n" + "".join(
+        key(k) + " = " + value(v) + "\n" for k, v in config.items())
+
+
+def _add_to_toml_config(config_path: str, contact_id: str, source: str,
+                        dry_run: bool = False, sidecar_url: Optional[str] = None) -> Optional[str]:
     path = Path(config_path).expanduser()
-    sidecar_port = os.environ.get("COLONY_SIDECAR_PORT", "7777")
-
-    toml_block = f'''
-[mcp_servers.colony]
-command = "colony"
-args = ["mcp"]
-env = {{ COLONY_API_KEY = "${{COLONY_API_KEY}}", COLONY_URL = "http://127.0.0.1:{sidecar_port}", COLONY_MCP_CONTACT_ID = "{contact_id}", COLONY_MCP_SOURCE = "{source}" }}
-'''
-
-    if path.exists():
-        content = path.read_text()
-        if "[mcp_servers.colony]" in content:
-            # Check if the existing config matches current settings
-            sidecar_port_current = os.environ.get('COLONY_SIDECAR_PORT', '7777')
-            expected_block = f'COLONY_URL = "http://127.0.0.1:{sidecar_port_current}"'
-            if expected_block in content:
-                return None  # Already present and up to date
-            # Config exists but is stale — remove old block and replace
-            import re
-            content = re.sub(r'\n?\[mcp_servers\.colony\]\n[^\n]*(?:\n[^\n]*)*', '', content)
-    else:
-        content = ""
-
+    content = path.read_text() if path.exists() else ""
+    servers = tomllib.loads(content).get("mcp_servers", {})
+    desired = _mcp_config(contact_id, source, sidecar_url=sidecar_url)
+    if not _update_servers(servers, desired, sidecar_url):
+        return None
+    updated = _without_toml_entries(content).rstrip("\n") + _toml_block(servers["apsimo"])
+    parsed = tomllib.loads(updated)
+    if parsed.get("mcp_servers") != servers:
+        raise ValueError("Unsupported MCP TOML table layout; configuration was not modified")
     if not dry_run:
         path.parent.mkdir(parents=True, exist_ok=True)
-        # Append Colony config
-        with open(path, "w") as f:
-            f.write(content)
-            if content and not content.endswith("\n"):
-                f.write("\n")
-            f.write(toml_block)
-
-    return f"  Adding:\n{toml_block.strip()}"
+        path.write_text(updated)
+    return "  Configure one Apsimo MCP entry; preserve other TOML tables and credentials"
 
 
-def _add_to_yaml_config(config_path: str, contact_id: str, source: str, dry_run: bool = False) -> Optional[str]:
-    """Add Colony to a YAML-format harness config."""
+def _add_to_yaml_config(config_path: str, contact_id: str, source: str,
+                        dry_run: bool = False, sidecar_url: Optional[str] = None) -> Optional[str]:
     if yaml is None:
-        return "  PyYAML not installed — run: pip install pyyaml"
-
+        return "  PyYAML not installed; run: pip install pyyaml"
     path = Path(config_path).expanduser()
-    sidecar_port = os.environ.get('COLONY_SIDECAR_PORT', '7777')
-
-    data = {}
-    if path.exists():
-        try:
-            data = yaml.safe_load(path.read_text()) or {}
-        except yaml.YAMLError:
-            data = {}
-
-    if not isinstance(data, dict):
-        data = {}
-
-    mcp_key = "mcp_servers"
-    if mcp_key not in data:
-        data[mcp_key] = {}
-
-    new_config = {
-        "command": "colony",
-        "args": ["mcp"],
-        "env": {
-            "COLONY_API_KEY": "${COLONY_API_KEY}",
-            "COLONY_URL": f"http://127.0.0.1:{sidecar_port}",
-            "COLONY_MCP_CONTACT_ID": contact_id,
-            "COLONY_MCP_SOURCE": source,
-        },
-    }
-
-    existing = data[mcp_key].get("colony")
-    if existing == new_config:
-        return None  # Already configured identically
-
-    old_desc = yaml.dump(existing, default_flow_style=False) if existing else "(not present)"
-    new_desc = yaml.dump(new_config, default_flow_style=False)
-
+    data = (yaml.safe_load(path.read_text()) or {}) if path.exists() else {}
+    desired = _mcp_config(contact_id, source, sidecar_url=sidecar_url)
+    if not _update_servers(data.setdefault("mcp_servers", {}), desired, sidecar_url):
+        return None
     if not dry_run:
-        data[mcp_key]["colony"] = new_config
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-
-    return f"  Old: {old_desc[:100]}\n  New: {new_desc[:100]}"
-
-
-def _remove_from_yaml_config(config_path: str, dry_run: bool = False) -> Optional[str]:
-    """Remove Colony from a YAML-format harness config."""
-    if yaml is None:
-        return "  PyYAML not installed"
-
-    path = Path(config_path).expanduser()
-    if not path.exists():
-        return None
-
-    try:
-        data = yaml.safe_load(path.read_text()) or {}
-    except yaml.YAMLError:
-        return None
-
-    if not isinstance(data, dict):
-        return None
-
-    mcp_key = "mcp_servers"
-    if mcp_key in data and isinstance(data[mcp_key], dict) and "colony" in data[mcp_key]:
-        if not dry_run:
-            del data[mcp_key]["colony"]
-            if not data[mcp_key]:
-                del data[mcp_key]
-            path.write_text(yaml.dump(data, default_flow_style=False, sort_keys=False))
-        return "  Removed 'colony' from Hermes config"
-    return None
+        path.write_text(yaml.safe_dump(data, sort_keys=False))
+    return "  Configure one Apsimo MCP entry; preserve other settings and credentials"
 
 
-def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False, sidecar_url: Optional[str] = None) -> Optional[str]:
-    """Add Colony MCP config to a specific harness. Returns diff or None if already configured.
-    
-    Args:
-        harness_id: Harness to configure (e.g., 'crush', 'claude-code')
-        contact_id: User identifier
-        dry_run: If True, don't write changes
-        sidecar_url: Optional explicit sidecar URL (overrides env vars)
-    """
+def add_to_harness(harness_id: str, contact_id: str, dry_run: bool = False,
+                   sidecar_url: Optional[str] = None) -> Optional[str]:
+    """Configure a single Apsimo MCP server without mutating process settings."""
     hdef = HARNESS_DEFS.get(harness_id)
     if not hdef:
         return f"  Unknown harness: {harness_id}"
-
-    source = hdef["source_tag"]
-    
-    # Store sidecar_url in env for _mcp_config to pick up
-    if sidecar_url:
-        os.environ["COLONY_SIDECAR_URL"] = sidecar_url
-
+    args = (contact_id, hdef["source_tag"], dry_run, sidecar_url)
     if hdef["config_format"] == "json":
-        return _add_to_json_config(hdef, contact_id, source, dry_run)
-    elif hdef["config_format"] == "toml":
-        return _add_to_toml_config(hdef["config_path"], contact_id, source, dry_run)
-    elif hdef["config_format"] == "yaml":
-        return _add_to_yaml_config(hdef["config_path"], contact_id, source, dry_run)
-
+        return _add_to_json_config(hdef, *args)
+    if hdef["config_format"] == "toml":
+        return _add_to_toml_config(hdef["config_path"], *args)
+    if hdef["config_format"] == "yaml":
+        return _add_to_yaml_config(hdef["config_path"], *args)
     return None
 
 
 def remove_from_harness(harness_id: str, dry_run: bool = False) -> Optional[str]:
-    """Remove Colony MCP config from a harness. Returns description or None if not present."""
+    """Remove either recognized MCP name, leaving unrelated settings intact."""
     hdef = HARNESS_DEFS.get(harness_id)
     if not hdef:
         return f"  Unknown harness: {harness_id}"
-
     path = Path(hdef["config_path"]).expanduser()
-    mcp_key = hdef.get("mcp_key", "mcpServers")
-
-    if hdef["config_format"] == "json":
-        data = _read_json(path)
-        if mcp_key in data and "colony" in data[mcp_key]:
-            if not dry_run:
-                del data[mcp_key]["colony"]
-                _write_json(path, data)
-            return f"  Removed 'colony' from {hdef['display']} config"
+    if not path.exists():
         return None
-
-    elif hdef["config_format"] == "toml":
-        if not path.exists():
-            return None
+    fmt = hdef["config_format"]
+    if fmt == "toml":
         content = path.read_text()
-        if "[mcp_servers.colony]" not in content:
-            return None
-        if not dry_run:
-            # Remove the [mcp_servers.colony] section
-            lines = content.split("\n")
-            output = []
-            in_section = False
-            for line in lines:
-                if line.strip() == "[mcp_servers.colony]":
-                    in_section = True
-                    continue
-                if in_section and (line.startswith("[") and not line.startswith("[[")):
-                    in_section = False
-                if not in_section:
-                    output.append(line)
-            path.write_text("\n".join(output))
-        return f"  Removed 'colony' from {hdef['display']} config"
-
-    elif hdef["config_format"] == "yaml":
-        return _remove_from_yaml_config(hdef["config_path"], dry_run)
-
-    return None
+        data = tomllib.loads(content)
+        key = "mcp_servers"
+    elif fmt == "yaml":
+        if yaml is None:
+            return "  PyYAML not installed"
+        data = yaml.safe_load(path.read_text()) or {}
+        key = "mcp_servers"
+    else:
+        data = _read_json(path)
+        key = hdef.get("mcp_key", "mcpServers")
+    servers = data.get(key, {})
+    if not any(name in servers for name in ("colony", "apsimo")):
+        return None
+    for name in ("colony", "apsimo"):
+        servers.pop(name, None)
+    if fmt == "toml":
+        updated = _without_toml_entries(content)
+        if tomllib.loads(updated).get(key, {}) != servers:
+            raise ValueError("Unsupported MCP TOML table layout; configuration was not modified")
+    if not dry_run:
+        if fmt == "toml":
+            path.write_text(updated)
+        elif fmt == "yaml":
+            path.write_text(yaml.safe_dump(data, sort_keys=False))
+        else:
+            _write_json(path, data)
+    return f"  Removed Apsimo MCP integration from {hdef['display']} config"

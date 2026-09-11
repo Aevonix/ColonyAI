@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _COLONY_IDENTITY = (
-    "You are Colony, an intelligent personal AI assistant. "
+    "You are Apsimo, an intelligent personal AI assistant. "
     "You help the user manage their relationships, tasks, and knowledge. "
     "You have access to context about the user's world and the people in it."
 )

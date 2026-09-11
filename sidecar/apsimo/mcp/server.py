@@ -1,6 +1,6 @@
-"""Colony MCP Server implementation.
+"""Apsimo MCP Server implementation.
 
-Thin adapter that translates MCP tool calls into Colony sidecar HTTP requests.
+Thin adapter that translates MCP tool calls into Apsimo sidecar HTTP requests.
 All cognitive state lives in the sidecar — this server has no direct DB access.
 """
 
@@ -15,11 +15,11 @@ from mcp.server.fastmcp import FastMCP
 # ---------------------------------------------------------------------------
 
 def _base_url() -> str:
-    return os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
+    return os.environ.get("APSIMO_URL") or os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
 
 
 def _api_key() -> str:
-    return os.environ.get("COLONY_API_KEY", "")
+    return os.environ.get("APSIMO_API_KEY") or os.environ.get("COLONY_API_KEY", "")
 
 
 def _headers() -> dict[str, str]:
@@ -28,11 +28,11 @@ def _headers() -> dict[str, str]:
 
 
 def _source() -> str | None:
-    return os.environ.get("COLONY_MCP_SOURCE")
+    return os.environ.get("APSIMO_MCP_SOURCE") or os.environ.get("COLONY_MCP_SOURCE")
 
 
 def _contact_id(override: str | None = None) -> str | None:
-    return override or os.environ.get("COLONY_MCP_CONTACT_ID")
+    return override or os.environ.get("APSIMO_MCP_CONTACT_ID") or os.environ.get("COLONY_MCP_CONTACT_ID")
 
 
 def _require_contact(override: str | None = None) -> tuple[str, dict[str, str]]:
@@ -42,8 +42,8 @@ def _require_contact(override: str | None = None) -> tuple[str, dict[str, str]]:
         return cid, {}
     return "", {
         "error": "contact_id_required",
-        "message": "No contact_id provided and COLONY_MCP_CONTACT_ID is not set",
-        "suggestion": "Set COLONY_MCP_CONTACT_ID in your MCP config or pass contact_id explicitly",
+        "message": "No contact_id provided and APSIMO_MCP_CONTACT_ID is not set",
+        "suggestion": "Set APSIMO_MCP_CONTACT_ID in your MCP config or pass contact_id explicitly",
     }
 
 
@@ -51,8 +51,8 @@ def _sidecar_error(exc: Exception) -> dict[str, str]:
     """Format a sidecar connection error."""
     return {
         "error": "sidecar_unreachable",
-        "message": f"Colony sidecar not reachable at {_base_url()}",
-        "suggestion": "Start with: colony start",
+        "message": f"Apsimo sidecar not reachable at {_base_url()}",
+        "suggestion": "Start with: apsimo start",
     }
 
 
@@ -116,13 +116,22 @@ async def _delete(path: str) -> tuple[int, str]:
 # Server
 # ---------------------------------------------------------------------------
 
-def create_server() -> FastMCP:
-    """Create the Colony MCP server with all tools registered."""
+class ApsimoMCP(FastMCP):
+    """Advertise one tool catalog while accepting pre-rename clients."""
 
-    mcp = FastMCP(
-        "colony",
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        if name.startswith("colony_"):
+            name = "apsimo_" + name[len("colony_"):]
+        return await super().call_tool(name, arguments)
+
+
+def create_server() -> FastMCP:
+    """Create the Apsimo MCP server with all tools registered."""
+
+    mcp = ApsimoMCP(
+        "apsimo",
         instructions=(
-            "Colony provides a cognitive substrate for AI agents: commitments, facts, "
+            "Apsimo provides a cognitive substrate for AI agents: commitments, facts, "
             "affect tracking, world model, patterns, and surprises. Use these tools to "
             "give your agent memory, awareness, and continuity across sessions."
         ),
@@ -131,12 +140,12 @@ def create_server() -> FastMCP:
     # --- Read-only tools (safe for auto-call) ---
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_health() -> dict:
-        """Check if Colony sidecar is running and healthy. Call at session start or when other tools fail."""
+    async def apsimo_health() -> dict:
+        """Check if Apsimo sidecar is running and healthy. Call at session start or when other tools fail."""
         return await _get("/v1/host/health")
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_get_context(
+    async def apsimo_get_context(
         contact_id: str | None = None,
         message: str | None = None,
     ) -> dict:
@@ -154,7 +163,7 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/context/assemble", payload)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_check_commitments(
+    async def apsimo_check_commitments(
         status: str | None = None,
         person_id: str | None = None,
         limit: int = 10,
@@ -169,7 +178,7 @@ def create_server() -> FastMCP:
         return await _get("/v1/host/commitments", params=params)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_lookup_facts(
+    async def apsimo_lookup_facts(
         contact_id: str | None = None,
         source: str | None = None,
         min_confidence: float | None = None,
@@ -187,7 +196,7 @@ def create_server() -> FastMCP:
         return await _get("/v1/host/mind/facts", params=params)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_check_affect(
+    async def apsimo_check_affect(
         contact_id: str | None = None,
     ) -> dict:
         """Read legacy explicit affect history for compatibility. This is not measured emotion and must not determine trust or disclosure authority."""
@@ -197,7 +206,7 @@ def create_server() -> FastMCP:
         return await _get(f"/v1/host/affect/state/{cid}")
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_search_world(
+    async def apsimo_search_world(
         query: str,
         entity_type: str | None = None,
         limit: int = 5,
@@ -213,7 +222,7 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/world/entities/query", data)
 
     @mcp.tool(annotations={"readOnlyHint": True, "idempotentHint": True})
-    async def colony_get_patterns(
+    async def apsimo_get_patterns(
         pattern_type: str | None = None,
         min_frequency: int | None = None,
         active_only: bool = False,
@@ -232,7 +241,7 @@ def create_server() -> FastMCP:
     # --- Mutating tools ---
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
-    async def colony_create_commitment(
+    async def apsimo_create_commitment(
         description: str,
         person_id: str | None = None,
         due_at: str | None = None,
@@ -252,7 +261,7 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/commitments", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_fulfill_commitment(
+    async def apsimo_fulfill_commitment(
         commitment_id: str,
         note: str | None = None,
     ) -> dict:
@@ -263,7 +272,7 @@ def create_server() -> FastMCP:
         return await _patch(f"/v1/host/commitments/{commitment_id}", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_cancel_commitment(
+    async def apsimo_cancel_commitment(
         commitment_id: str,
         reason: str | None = None,
         outcome: str = "wont_do",
@@ -277,7 +286,7 @@ def create_server() -> FastMCP:
         return await _patch(f"/v1/host/commitments/{commitment_id}", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
-    async def colony_remember_fact(
+    async def apsimo_remember_fact(
         fact: str,
         contact_id: str | None = None,
         source: str | None = None,
@@ -297,7 +306,7 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/mind/facts", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_forget_sources(source_ids: list[str], contact_id: str | None = None) -> dict:
+    async def apsimo_forget_sources(source_ids: list[str], contact_id: str | None = None) -> dict:
         """Forget selected canonical turn sources by their recalled source IDs.
 
         Removes exact checkpoint copies and linked graph summaries. Does not
@@ -310,7 +319,7 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/memory/sources/forget", {"contact_id": cid, "source_ids": source_ids})
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_forget_fact(
+    async def apsimo_forget_fact(
         fact_id: str,
     ) -> dict:
         """Remove an outdated or incorrect fact. Call when you learn a fact was wrong, a preference changes, or context is stale."""
@@ -320,7 +329,7 @@ def create_server() -> FastMCP:
         return {"error": "delete_failed", "message": f"Status {status}: {err_msg}"}
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
-    async def colony_record_affect(
+    async def apsimo_record_affect(
         valence: float,
         trigger: str,
         contact_id: str | None = None,
@@ -339,7 +348,7 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/affect/events", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": False})
-    async def colony_record_surprise(
+    async def apsimo_record_surprise(
         observation: str,
         expected: str | None = None,
         surprise_score: float | None = None,
@@ -361,14 +370,14 @@ def create_server() -> FastMCP:
         return await _post("/v1/host/surprises", data)
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_task_complete(
+    async def apsimo_task_complete(
         task_id: str,
     ) -> dict:
         """Mark a task as completed. Call when an initiative mentions a task that's done."""
         return await _post(f"/v1/host/tasks/{task_id}/complete", {})
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_task_snooze(
+    async def apsimo_task_snooze(
         task_id: str,
         hours: int = 24,
         reason: str = "",
@@ -377,7 +386,7 @@ def create_server() -> FastMCP:
         return await _post(f"/v1/host/tasks/{task_id}/snooze", {"hours": hours, "reason": reason})
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_task_dismiss(
+    async def apsimo_task_dismiss(
         task_id: str,
         reason: str = "stale",
     ) -> dict:
@@ -385,12 +394,12 @@ def create_server() -> FastMCP:
         return await _post(f"/v1/host/tasks/{task_id}/dismiss", {"reason": reason})
 
     @mcp.tool(annotations={"readOnlyHint": False, "idempotentHint": True})
-    async def colony_initiative_feedback(
+    async def apsimo_initiative_feedback(
         initiative_id: str,
         action: str,
         details: dict[str, Any] | None = None,
     ) -> dict:
-        """Provide feedback on how an initiative was handled. Action can be: acknowledged, actioned, dismissed, snoozed. Call after handling a colony_initiative."""
+        """Provide feedback on how an initiative was handled. Action can be: acknowledged, actioned, dismissed, snoozed. Call after handling a apsimo_initiative."""
         data: dict[str, Any] = {"action": action}
         if details:
             data["details"] = details
@@ -400,7 +409,7 @@ def create_server() -> FastMCP:
 
     @mcp.resource("colony://status")
     async def status_resource() -> dict:
-        """Current Colony system status."""
+        """Current Apsimo system status."""
         return await _get("/v1/host/health")
 
     @mcp.resource("colony://commitments")
@@ -435,12 +444,12 @@ def create_server() -> FastMCP:
         """Review commitments, source-backed context, and surprises."""
         cid = _contact_id()
         if not cid:
-            return "Set COLONY_MCP_CONTACT_ID to get your daily briefing."
+            return "Set APSIMO_MCP_CONTACT_ID to get your daily briefing."
         return (
             f"Review the following for {cid}:\n"
-            "1. Check colony_check_commitments for pending and overdue items\n"
-            "2. Check colony_get_context for relevant source-backed context\n"
-            "3. Check colony_get_patterns for workflow patterns\n"
+            "1. Check apsimo_check_commitments for pending and overdue items\n"
+            "2. Check apsimo_get_context for relevant source-backed context\n"
+            "3. Check apsimo_get_patterns for workflow patterns\n"
             "4. Check colony://surprises/unresolved for anything unexpected\n"
             "Then prioritize by deadlines, explicit commitments, and relevant evidence."
         )
@@ -450,12 +459,12 @@ def create_server() -> FastMCP:
         """Before starting a task, check commitments and facts about relevant people and components."""
         cid = _contact_id()
         if not cid:
-            return "Set COLONY_MCP_CONTACT_ID to use pre-task context."
+            return "Set APSIMO_MCP_CONTACT_ID to use pre-task context."
         return (
             f"Before starting this task:\n"
-            f"1. Call colony_check_commitments to see what {cid} has pending\n"
-            f"2. Call colony_lookup_facts to recall relevant context\n"
-            f"3. Call colony_get_context for source-backed appraisals and working perspective\n"
+            f"1. Call apsimo_check_commitments to see what {cid} has pending\n"
+            f"2. Call apsimo_lookup_facts to recall relevant context\n"
+            f"3. Call apsimo_get_context for source-backed appraisals and working perspective\n"
             "Use this information to prioritize and tailor your approach."
         )
 
@@ -464,12 +473,12 @@ def create_server() -> FastMCP:
         """After completing a task, record what happened and check off commitments."""
         cid = _contact_id()
         if not cid:
-            return "Set COLONY_MCP_CONTACT_ID to use post-task recording."
+            return "Set APSIMO_MCP_CONTACT_ID to use post-task recording."
         return (
             f"I just completed a task. For {cid}:\n"
-            "1. If there was a commitment for this task, call colony_fulfill_commitment\n"
-            "2. If anything unexpected happened, call colony_record_surprise\n"
-            "3. If I learned something worth remembering, call colony_remember_fact with its source.\n"
+            "1. If there was a commitment for this task, call apsimo_fulfill_commitment\n"
+            "2. If anything unexpected happened, call apsimo_record_surprise\n"
+            "3. If I learned something worth remembering, call apsimo_remember_fact with its source.\n"
             "Keep observations separate from inferred opinions; do not manufacture a mood score."
         )
 

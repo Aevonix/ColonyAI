@@ -11293,7 +11293,7 @@ async def enriched_context(
         if lines:
             sections.append(ContextSection(
                 id="colony-identity",
-                title="Colony Identity",
+                title="Apsimo Identity",
                 body="\n".join(lines),
                 priority=95,
             ))

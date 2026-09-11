@@ -1,4 +1,4 @@
-"""Colony MCP Server — exposes cognitive substrate as MCP tools."""
+"""Apsimo MCP Server — exposes cognitive substrate as MCP tools."""
 
 import importlib.util
 import logging
@@ -22,7 +22,7 @@ def _fastmcp_available() -> bool:
     except (ImportError, AttributeError, ValueError):
         logger.warning(
             "mcp is installed but does not provide mcp.server.fastmcp "
-            "(mcp>=2 removed it). The Colony MCP server is UNAVAILABLE. "
+            "(mcp>=2 removed it). The Apsimo MCP server is UNAVAILABLE. "
             "Install mcp[cli]>=1.0,<2 to enable it."
         )
         return False

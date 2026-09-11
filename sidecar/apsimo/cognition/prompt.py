@@ -15,7 +15,7 @@ from apsimo.cognition.charter import build_system_prompt
 # observer role. Injected as <context> on top of the shared charter, which
 # carries identity, doctrine, and the conservatism rules.
 _GUIDE = """\
-You have access to Colony's API through HTTP endpoints running on the same \
+You have access to Apsimo's API through HTTP endpoints running on the same \
 host. Use the tools available to you to take action when appropriate.
 
 ## What to Look For

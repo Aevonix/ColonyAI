@@ -1,102 +1,41 @@
-"""Write COLONY.md context file to harness workspaces."""
-
-from __future__ import annotations
-
+"""Write a short, model-independent Apsimo reference into a workspace."""
 from pathlib import Path
 
+APSIMO_CONTEXT_TEMPLATE = """# Apsimo integration
 
-COLONY_CONTEXT_TEMPLATE = """# Colony Integration
+Apsimo is the cognition and continuity layer, formerly ColonyAI. Your agent's
+private identity is separate from the platform name. Old-name searches refer to
+the same platform and history.
 
-Colony is a cognitive substrate providing shared memory across your agents and coding tools.
+Use `apsimo_health` to check connectivity and `apsimo_get_context` for relevant,
+authenticated context. Check `apsimo_check_commitments` before promising work.
+Recall useful evidence with `apsimo_lookup_facts`; cite the returned source and
+ask about contradictions. Save durable facts with `apsimo_remember_fact` only
+when their source and usefulness are clear. Corrections and forgetting govern
+source-backed recall across sessions; do not create diagnostic junk memories.
 
-## Quick Reference
+Use `apsimo doctor` and `apsimo mcp detect` for installation checks. Hermes uses
+its native Apsimo plugin and memory provider. Coding harnesses may use the MCP
+server. Both connect to the same selected instance over its authenticated API;
+sharing an instance does not grant every caller access to every private source.
 
-### MCP Tools (for coding harnesses)
-
-| Tool | Purpose |
-|------|---------|
-| `colony_health` | Check sidecar status |
-| `colony_lookup_facts` | Search stored facts |
-| `colony_remember_fact` | Store a new fact |
-| `colony_get_context` | Get assembled context for a contact |
-| `colony_check_commitments` | List active commitments |
-| `colony_create_commitment` | Create a new commitment |
-| `colony_fulfill_commitment` | Mark commitment fulfilled |
-| `colony_cancel_commitment` | Cancel a commitment |
-| `colony_search_world` | Search world model entities |
-| `colony_get_patterns` | Get learned patterns |
-| `colony_record_surprise` | Record a surprise event |
-| `colony_forget_fact` | Remove a fact |
-
-### API Endpoints (for plugins)
-
-Base URL: `http://127.0.0.1:7777/v1/host/`
-
-| Endpoint | Method | Purpose |
-|----------|--------|---------|
-| `/mind/facts` | GET, POST | List/store facts |
-| `/commitments` | GET, POST | List/create commitments |
-| `/context/assemble` | POST | Get context scoped to the authenticated viewer and contact |
-| `/capabilities` | GET | List all capabilities |
-
-Authentication: `Authorization: Bearer {api_key}`
-
-### Context Flow
-
-```
-┌─────────────┐                    ┌─────────────┐
-│  OpenClaw   │                    │    Crush    │
-│  (Plugin)   │                    │    (MCP)    │
-└──────┬──────┘                    └──────┬──────┘
-       │                                  │
-       ▼                                  ▼
-┌─────────────────────────────────────────────────┐
-│              Colony Sidecar (:7777)             │
-│  ┌─────────┐ ┌─────────┐ ┌─────────┐           │
-│  │  Facts  │ │Commit-  │ │  World  │  ...      │
-│  │         │ │ments    │ │  Model  │           │
-│  └─────────┘ └─────────┘ └─────────┘           │
-└─────────────────────────────────────────────────┘
-
-Harnesses share canonical sources. Retrieval is scoped to the authenticated
-viewer and conversation; private facts are not automatically shared with
-every harness. Corrections and forgetting govern derived recall.
-```
-
-## Configuration
-
-Your Colony configuration is in `~/.colony/.env`:
-
-```bash
-COLONY_API_KEY=your-key
-COLONY_SIDECAR_HOST=127.0.0.1
-COLONY_SIDECAR_PORT=7777
-```
-
-## Troubleshooting
-
-Run `colony doctor` to diagnose issues.
-
-See the `colony-diagnose` skill for detailed troubleshooting steps.
+APSIMO_* configuration names are preferred; existing COLONY_* names remain
+accepted. Use the selected instance's actual configuration and credential
+reference. Never guess a key or print credentials into diagnostic transcripts.
 """
 
+# Public compatibility aliases point to the same template and writer.
+COLONY_CONTEXT_TEMPLATE = APSIMO_CONTEXT_TEMPLATE
 
-def write_colony_context(workspace_dir: Path) -> bool:
-    """Write COLONY.md to the harness workspace.
-    
-    Args:
-        workspace_dir: Path to the harness workspace (e.g., ~/.openclaw/workspace)
-    
-    Returns:
-        True if written successfully, False otherwise
-    """
+
+def write_apsimo_context(workspace_dir: Path) -> bool:
     if not workspace_dir.exists():
         return False
-    
-    colony_md = workspace_dir / "COLONY.md"
-    
     try:
-        colony_md.write_text(COLONY_CONTEXT_TEMPLATE)
+        (workspace_dir / "APSIMO.md").write_text(APSIMO_CONTEXT_TEMPLATE)
         return True
-    except Exception:
+    except OSError:
         return False
+
+
+write_colony_context = write_apsimo_context

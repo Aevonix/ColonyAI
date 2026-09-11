@@ -1,4 +1,4 @@
-"""Write Colony diagnostic skill to harness skills directories."""
+"""Write Apsimo diagnostic skill to harness skills directories."""
 
 from __future__ import annotations
 
@@ -10,10 +10,10 @@ from pathlib import Path
 # Skill directory paths for each harness
 SKILL_PATHS = {
     "openclaw": None,  # Special case - uses workspace_dir
-    "crush": "~/.config/crush/skills/colony-diagnose",
-    "codex": "~/.codex/skills/colony-diagnose",
-    "claude-code": "~/.codex/skills/colony-diagnose",  # Shares with Codex
-    "opencode": "~/.config/opencode/skills/colony-diagnose",
+    "crush": "~/.config/crush/skills/apsimo-diagnose",
+    "codex": "~/.codex/skills/apsimo-diagnose",
+    "claude-code": "~/.codex/skills/apsimo-diagnose",  # Shares with Codex
+    "opencode": "~/.config/opencode/skills/apsimo-diagnose",
     "hermes": None,  # Plugin-based, no skill directory
 }
 
@@ -23,111 +23,32 @@ CONFIG_PATHS = {
 }
 
 
-COLONY_DIAGNOSTIC_SKILL = """---
-name: colony-diagnose
-description: Diagnose Colony connection issues. Use when Colony MCP tools return errors, context is not loading, or user reports "colony not working".
+APSIMO_DIAGNOSTIC_SKILL = """---
+name: apsimo-diagnose
+description: Diagnose Apsimo or legacy ColonyAI connection failures and missing recalled context using the selected instance.
 ---
 
-# Colony Diagnostic Skill
+# Apsimo diagnostics
 
-## Trigger
+1. Run `apsimo status` and `apsimo doctor`. Read the reported endpoint and instance
+   instead of assuming a directory, machine, port, or database backend.
+2. For coding harnesses, run `apsimo mcp detect`. Confirm one `apsimo` MCP server
+   is configured. Legacy `colony` entries are migrated by `apsimo mcp setup --harness <name>`.
+3. Call `apsimo_health`. If it fails, report the actual transport or authentication
+   error. Use the selected instance's credential reference; never guess a key,
+   print its value, or dump a whole configuration into a transcript.
+4. If health passes, use `apsimo_get_context` for the authenticated contact and
+   `apsimo_lookup_facts` for a known source-backed fact. Report what was actually
+   retrieved. Do not insert test facts into ordinary memory.
+5. For Hermes, inspect its selected profile's plugin and memory-provider status.
+   Correct the indicated connection or configuration, then repeat the failed
+   probe once. A successful HTTP request alone does not prove useful recollection.
 
-- User reports Colony issues
-- MCP tools return connection errors
-- Context not loading from Colony
-
-## Diagnostic Steps
-
-### 1. Check Sidecar Status
-
-```bash
-colony status
-```
-
-**Expected:** `Sidecar is healthy`
-
-**Fix if not running:** `colony start -d`
-
-### 2. Check API Connectivity
-
-```bash
-curl -s http://127.0.0.1:7777/v1/host/capabilities \\
-  -H "Authorization: Bearer colony"
-```
-
-**Expected:** JSON with `capabilities` array
-
-**Fix if 401:** Check `COLONY_API_KEY` in `~/.colony/.env` matches harness config
-
-### 3. Check MCP Configuration
-
-**Crush:**
-```bash
-cat ~/.config/crush/crush.json | jq '.mcp.colony'
-```
-
-**Claude Code:**
-```bash
-cat ~/.claude.json | jq '.mcpServers.colony'
-```
-
-**Codex:**
-```bash
-cat ~/.codex/config.toml | grep -A10 'mcp_servers.colony'
-```
-
-**Expected:** `command`, `args`, `env.COLONY_URL`, `env.COLONY_API_KEY`
-
-**Fix if missing:** Run `colony mcp setup --harness <name>`
-
-### 4. Check Plugin Status (OpenClaw only)
-
-```bash
-openclaw plugins list --json | jq '.plugins[] | select(.id=="colony")'
-```
-
-**Expected:** `status: "loaded"` or `"enabled"`
-
-**Fix if not loaded:**
-```bash
-openclaw gateway restart
-```
-
-### 5. Test Context Flow
-
-Store a test fact:
-```bash
-curl -X POST http://127.0.0.1:7777/v1/host/mind/facts \\
-  -H "Authorization: Bearer colony" \\
-  -H "Content-Type: application/json" \\
-  -d '{"contact_id": "test", "fact": "Diagnostic test", "source": "shared_context"}'
-```
-
-Verify via MCP tool `colony_lookup_facts` with query "Diagnostic test".
-
-## Common Issues
-
-| Issue | Fix |
-|-------|-----|
-| Sidecar not running | `colony start -d` |
-| 401 Unauthorized | Check `COLONY_API_KEY` matches in `.env` and harness config |
-| MCP not loading | Restart harness after config change |
-| Plugin not loading | `openclaw gateway restart` |
-| Neo4j errors | `docker start neo4j` or re-run `colony init` |
-| Connection refused | Check firewall allows port 7777 |
-
-## Architecture
-
-```
-Colony Sidecar (:7777)
-    │
-    ├── Plugin API ──────► OpenClaw, Hermes
-    │
-    └── MCP Server ───────► Crush, Codex, Claude Code, OpenCode
-```
-
-Both paths read/write to the same cognitive stores (facts, commitments, etc.).
+Apsimo is the platform's new name; Aeva or another private agent keeps its own
+identity. Existing state paths and COLONY_* variables remain supported. Conflicting
+explicit APSIMO_* and COLONY_* settings must be resolved at configuration load.
 """
+COLONY_DIAGNOSTIC_SKILL = APSIMO_DIAGNOSTIC_SKILL
 
 
 def get_skill_path(harness_id: str) -> Path | None:
@@ -141,7 +62,11 @@ def get_skill_path(harness_id: str) -> Path | None:
     """
     path_str = SKILL_PATHS.get(harness_id)
     if path_str:
-        return Path(path_str).expanduser()
+        canonical = Path(path_str).expanduser()
+        legacy = canonical.with_name("colony-diagnose")
+        # Reuse an installed legacy directory, so setup does not discover two
+        # copies of one skill. New installations use the canonical directory.
+        return legacy if legacy.exists() and not canonical.exists() else canonical
     return None
 
 
@@ -162,8 +87,8 @@ def get_skill_config_path(harness_id: str) -> Path | None:
     return None
 
 
-def write_colony_skill(harness_id: str, workspace_dir: Path | None = None) -> bool:
-    """Write Colony diagnostic skill to harness skills directory.
+def write_apsimo_skill(harness_id: str, workspace_dir: Path | None = None) -> bool:
+    """Write Apsimo diagnostic skill to harness skills directory.
     
     For Crush: also updates options.skills_paths in config.
     
@@ -176,7 +101,7 @@ def write_colony_skill(harness_id: str, workspace_dir: Path | None = None) -> bo
     """
     # Special handling for OpenClaw - use workspace skills dir
     if harness_id == "openclaw" and workspace_dir:
-        skill_dir = workspace_dir / "skills" / "colony-diagnose"
+        skill_dir = workspace_dir / "skills" / "apsimo-diagnose"
     else:
         skill_dir = get_skill_path(harness_id)
     
@@ -198,8 +123,8 @@ def write_colony_skill(harness_id: str, workspace_dir: Path | None = None) -> bo
         return False
 
 
-def remove_colony_skill(harness_id: str) -> bool:
-    """Remove Colony diagnostic skill from harness skills directory.
+def remove_apsimo_skill(harness_id: str) -> bool:
+    """Remove Apsimo diagnostic skill from harness skills directory.
     
     Args:
         harness_id: Harness identifier
@@ -265,87 +190,26 @@ def _update_crush_skills_paths() -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Colony Check Skill (for on-demand initiative checking)
+# Apsimo Check Skill (for on-demand initiative checking)
 # ---------------------------------------------------------------------------
 
-COLONY_CHECK_SKILL = """---
-name: colony-check
-description: "On-demand Colony initiative checking. Use when user asks about blocked goals, neglected contacts, or pending initiatives."
+APSIMO_CHECK_SKILL = """---
+name: apsimo-check
+description: Review current commitments and useful work through the selected Apsimo instance.
 ---
 
-# Colony Check Skill
-
-Check Colony for blocked goals, neglected contacts, and pending initiatives on-demand.
-
-## When to Use
-
-✅ **USE when:**
-- User asks \"are there any blocked goals?\"
-- User asks \"what needs attention?\"
-- Checking during heartbeats (add to HEARTBEAT.md)
-- Surfacing potential actions without full autonomy
-
-❌ **DON'T use when:**
-- Colony sidecar is not running
-- User hasn't asked about goals/initiatives
-
-## Commands
-
-### Trigger Autonomy Cycle
-
-```bash
-curl -X POST -H \"Authorization: Bearer colony\" \\
-  \"http://localhost:7777/v1/host/autonomy/cycle\"
-```
-
-Returns:
-```json
-{
-  \"completed\": true,
-  \"result\": {
-    \"running\": true,
-    \"mode\": \"reactive\",
-    \"initiatives_generated\": 2
-  }
-}
-```
-
-### Get Blocked Goals
-
-```bash
-curl -H \"Authorization: Bearer colony\" \\
-  \"http://localhost:7777/v1/host/goals?status=blocked\"
-```
-
-### Get Pending Commitments
-
-```bash
-curl -H \"Authorization: Bearer colony\" \\
-  \"http://localhost:7777/v1/host/commitments?status=pending\"
-```
-
-## Example Usage
-
-**User:** \"Is there anything blocked?\"
-
-**Agent:**
-1. Calls `/autonomy/cycle`
-2. Receives: `initiatives_generated: 1`
-3. Responds: \"You have 1 blocked goal. Want me to help unblock it?\"
-
-## Heartbeat Integration
-
-Add to `HEARTBEAT.md`:
-
-```markdown
-# Heartbeat Checks
-- [ ] Check Colony for blocked goals (if Colony sidecar configured)
-```
+Use `apsimo_get_context` and `apsimo_check_commitments` for the authenticated
+contact. Summarize overdue work, current commitments, and source-backed surprises.
+Distinguish observations from proposed actions. Respect existing task ownership
+and execution limits; do not create duplicate work or claim that a task ran
+without its execution evidence. Do not write a memory merely because this check
+was performed. If a tool fails, report its actual blocker and change strategy.
 """
+COLONY_CHECK_SKILL = APSIMO_CHECK_SKILL
 
 
-def write_colony_check_skill(workspace_dir: Path) -> bool:
-    """Write colony-check skill to OpenClaw workspace skills directory.
+def write_apsimo_check_skill(workspace_dir: Path) -> bool:
+    """Write apsimo-check skill to OpenClaw workspace skills directory.
 
     Args:
         workspace_dir: OpenClaw workspace directory
@@ -353,10 +217,15 @@ def write_colony_check_skill(workspace_dir: Path) -> bool:
     Returns:
         True if written successfully, False otherwise
     """
-    skill_dir = workspace_dir / "skills" / "colony-check"
+    skill_dir = workspace_dir / "skills" / "apsimo-check"
     try:
         skill_dir.mkdir(parents=True, exist_ok=True)
         (skill_dir / "SKILL.md").write_text(COLONY_CHECK_SKILL)
         return True
     except Exception:
         return False
+
+
+write_colony_skill = write_apsimo_skill
+write_colony_check_skill = write_apsimo_check_skill
+remove_colony_skill = remove_apsimo_skill

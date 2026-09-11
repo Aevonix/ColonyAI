@@ -1,4 +1,4 @@
-"""Unit tests for Colony MCP Server."""
+"""Unit tests for Apsimo MCP Server."""
 
 import json
 import os
@@ -39,33 +39,43 @@ def tool_names(server):
 
 class TestServerCreation:
     def test_creates_server(self, server):
-        assert server.name == "colony"
+        assert server.name == "apsimo"
+
+    @pytest.mark.asyncio
+    async def test_legacy_calls_use_one_advertised_catalog(self, server):
+        with patch('apsimo.mcp.server._get', new=AsyncMock(return_value={'status': 'ok'})) as get:
+            old = await server.call_tool('colony_health', {})
+            new = await server.call_tool('apsimo_health', {})
+        assert old == new
+        assert get.await_count == 2
+        assert len(await server.list_tools()) == 19
+        assert all(tool.name.startswith('apsimo_') for tool in await server.list_tools())
 
     def test_has_19_tools(self, tool_names):
         assert len(tool_names) == 19
 
     def test_has_expected_tools(self, tool_names):
         expected = [
-            "colony_health",
-            "colony_get_context",
-            "colony_check_commitments",
-            "colony_lookup_facts",
-            "colony_check_affect",
-            "colony_search_world",
-            "colony_get_patterns",
-            "colony_create_commitment",
-            "colony_fulfill_commitment",
-            "colony_cancel_commitment",
-            "colony_remember_fact",
-            "colony_forget_fact",
-            "colony_forget_sources",
-            "colony_record_affect",
-            "colony_record_surprise",
+            "apsimo_health",
+            "apsimo_get_context",
+            "apsimo_check_commitments",
+            "apsimo_lookup_facts",
+            "apsimo_check_affect",
+            "apsimo_search_world",
+            "apsimo_get_patterns",
+            "apsimo_create_commitment",
+            "apsimo_fulfill_commitment",
+            "apsimo_cancel_commitment",
+            "apsimo_remember_fact",
+            "apsimo_forget_fact",
+            "apsimo_forget_sources",
+            "apsimo_record_affect",
+            "apsimo_record_surprise",
             # Task / initiative tools added after the original 14.
-            "colony_task_complete",
-            "colony_task_snooze",
-            "colony_task_dismiss",
-            "colony_initiative_feedback",
+            "apsimo_task_complete",
+            "apsimo_task_snooze",
+            "apsimo_task_dismiss",
+            "apsimo_initiative_feedback",
         ]
         for tool in expected:
             assert tool in tool_names, f"Missing tool: {tool}"
@@ -84,15 +94,15 @@ class TestServerCreation:
         tools = server._tool_manager._tools
         ro_tools = [name for name, t in tools.items() if t.annotations.readOnlyHint]
         assert len(ro_tools) == 7
-        assert "colony_health" in ro_tools
-        assert "colony_get_context" in ro_tools
+        assert "apsimo_health" in ro_tools
+        assert "apsimo_get_context" in ro_tools
 
     def test_mutating_tools(self, server):
         tools = server._tool_manager._tools
         rw_tools = [name for name, t in tools.items() if not t.annotations.readOnlyHint]
         assert len(rw_tools) == 12
-        assert "colony_create_commitment" in rw_tools
-        assert "colony_remember_fact" in rw_tools
+        assert "apsimo_create_commitment" in rw_tools
+        assert "apsimo_remember_fact" in rw_tools
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +275,7 @@ class TestHTTPHelpers:
 
             result = await _post("/v1/host/commitments", {"description": "test"})
             assert result["error"] == "sidecar_unreachable"
-            assert "colony start" in result["suggestion"]
+            assert "apsimo start" in result["suggestion"]
 
     @pytest.mark.asyncio
     async def test_get_non_200(self):
@@ -313,7 +323,7 @@ class TestToolBehavior:
     async def test_health_tool(self, server):
         tools = server._tool_manager._tools
         # Just verify the tool exists and has the right annotation
-        tool = tools["colony_health"]
+        tool = tools["apsimo_health"]
         assert tool.annotations.readOnlyHint is True
         assert tool.annotations.idempotentHint is True
 

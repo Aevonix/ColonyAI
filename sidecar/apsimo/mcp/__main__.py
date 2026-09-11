@@ -1,4 +1,4 @@
-"""Run Colony MCP server via `python -m colony_sidecar.mcp.server`."""
+"""Run Apsimo MCP server via `python -m apsimo.mcp.server`."""
 
 from apsimo.mcp.server import run_stdio
 

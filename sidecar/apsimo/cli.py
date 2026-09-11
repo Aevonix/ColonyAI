@@ -1,4 +1,4 @@
-"""Colony CLI — ``colony`` command."""
+"""Apsimo CLI, also available through the legacy ``colony`` alias."""
 
 from __future__ import annotations
 
@@ -16,20 +16,20 @@ from pathlib import Path
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        prog="colony",
-        description="Colony intelligence sidecar server",
+        prog="apsimo",
+        description="Apsimo intelligence sidecar server",
     )
-    parser.add_argument("--instance", help="Private Colony state directory (otherwise use selected Hermes profile binding)")
+    parser.add_argument("--instance", help="Private Apsimo state directory (otherwise use selected Hermes profile binding)")
     sub = parser.add_subparsers(dest="command")
     from apsimo.qualification.cli import add_parser as add_model_parser
     add_model_parser(sub)
 
     # --- init ---
-    init_p = sub.add_parser("init", help="Initialize Colony identity and setup")
-    init_p.add_argument("--dir", default=None, help="Private instance directory (default: selected Hermes home/colony)")
-    init_p.add_argument("--passphrase", default=None, help="Encrypt Colony private key with passphrase (prompted if --encrypt)")
-    init_p.add_argument("--encrypt", action="store_true", help="Encrypt Colony private key")
-    init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Colony only)")
+    init_p = sub.add_parser("init", help="Initialize Apsimo identity and setup")
+    init_p.add_argument("--dir", default=None, help="Private instance directory (default for new instances: selected Hermes home/apsimo)")
+    init_p.add_argument("--passphrase", default=None, help="Encrypt Apsimo private key with passphrase (prompted if --encrypt)")
+    init_p.add_argument("--encrypt", action="store_true", help="Encrypt Apsimo private key")
+    init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Apsimo only)")
     # Non-interactive mode flags
     init_p.add_argument("--non-interactive", "-n", action="store_true", help="Run without prompts (requires all required flags)")
     # Harness configuration (new approach)
@@ -46,7 +46,7 @@ def main() -> None:
     init_p.add_argument("--preview", action="store_true", help="With --preferences-only, show changed preference paths without writing")
     init_p.add_argument("--model-url", help="One local OpenAI-compatible API root")
     init_p.add_argument("--model", help="Model identifier at that endpoint")
-    init_p.add_argument("--adapter-wheel", help="Use this canonical colony-hermes wheel instead of the installed distribution")
+    init_p.add_argument("--adapter-wheel", help="Use this canonical apsimo-hermes wheel instead of the installed distribution")
     init_p.add_argument("--refresh-adapter", action="store_true", help="Refresh an existing stopped instance's adapter from the selected package; retain private state")
     init_p.add_argument("--replace-memory-provider", action="store_true", help="Explicitly replace selection of another memory provider; retain its files and a config backup")
     init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
@@ -127,37 +127,37 @@ def main() -> None:
     mm_p.add_argument("--storage", default="local", choices=["local", "embed_only"], help="Image storage mode")
 
     # --- mcp ---
-    mcp_p = sub.add_parser("mcp", help="Colony MCP server and harness configuration")
+    mcp_p = sub.add_parser("mcp", help="Apsimo MCP server and harness configuration")
     mcp_sub = mcp_p.add_subparsers(dest="mcp_command")
     mcp_run = mcp_sub.add_parser("run", help="Start MCP server (stdio transport)")
     mcp_run.add_argument("--transport", choices=["stdio", "http"], default="stdio", help="Transport mode")
     mcp_run.add_argument("--host", default="127.0.0.1", help="HTTP host (for http transport)")
     mcp_run.add_argument("--port", type=int, default=7778, help="HTTP port (for http transport)")
 
-    mcp_setup = mcp_sub.add_parser("setup", help="Configure a coding harness to use Colony")
+    mcp_setup = mcp_sub.add_parser("setup", help="Configure a coding harness to use Apsimo")
     mcp_setup.add_argument("--harness", choices=["claude-code", "codex", "crush", "opencode", "hermes", "all"], default=None, help="Specific harness to configure")
     mcp_setup.add_argument("--contact-id", default=None, help="Your identifier (skip prompt)")
     mcp_setup.add_argument("--dry-run", action="store_true", help="Show changes without writing")
     mcp_setup.add_argument("--print-config", action="store_true", help="Print MCP config snippet (for distributed setups)")
-    mcp_setup.add_argument("--sidecar-url", default=None, help="Sidecar URL (for remote Colony, e.g., http://192.168.1.100:7777)")
-    mcp_setup.add_argument("--mcp-command", default=None, help="MCP server command (for standalone mode)")
+    mcp_setup.add_argument("--sidecar-url", default=None, help="Sidecar URL (for remote Apsimo, e.g., http://192.168.1.100:7777)")
+    mcp_setup.add_argument("--mcp-command", dest="mcp_server_command", default=None, help="MCP server command (for standalone mode)")
     mcp_setup.add_argument("--mcp-args", default=None, help="MCP server args (for standalone mode)")
 
-    mcp_remove = mcp_sub.add_parser("remove", help="Remove Colony from a harness config")
+    mcp_remove = mcp_sub.add_parser("remove", help="Remove Apsimo from a harness config")
     mcp_remove.add_argument("--harness", choices=["claude-code", "codex", "crush", "opencode", "hermes", "all"], default=None, help="Specific harness to remove")
     mcp_remove.add_argument("--dry-run", action="store_true", help="Show changes without writing")
 
     mcp_sub.add_parser("detect", help="Detect installed coding harnesses")
 
     # --- key ---
-    key_p = sub.add_parser("key", help="Manage Colony cryptographic identity")
+    key_p = sub.add_parser("key", help="Manage Apsimo cryptographic identity")
     key_sub = key_p.add_subparsers(dest="key_command")
     key_sub.add_parser("info", help="Show colony_id and public key")
     key_sub.add_parser("generate", help="Generate a new keypair (replaces existing)")
     key_gen = key_sub.add_parser("set-passphrase", help="Encrypt private key with a passphrase")
     key_gen.add_argument("--passphrase", default=None, help="New passphrase (prompted if not given)")
     key_sub.add_parser("manifest", help="Create a colony manifest (shareable public identity)")
-    key_genesis = key_sub.add_parser("claim-genesis", help="Claim Genesis status for this Colony (first Colony only)")
+    key_genesis = key_sub.add_parser("claim-genesis", help="Claim Genesis status for this Apsimo (first Apsimo only)")
     key_genesis.add_argument("--force", action="store_true", help="Overwrite existing Genesis manifest")
 
     # --- node ---
@@ -166,7 +166,7 @@ def main() -> None:
     node_sub.add_parser("info", help="Show node_id, public key, and certificate status")
 
     # --- backup ---
-    backup_p = sub.add_parser("backup", help="Export Colony identity or full state as a portable backup")
+    backup_p = sub.add_parser("backup", help="Export Apsimo identity or full state as a portable backup")
     backup_p.add_argument("--full", action="store_true", help="Full-state backup (databases, identity, config, vectors, graph)")
     backup_p.add_argument("--output", "-o", default=None, help="Output file/directory path")
     backup_p.add_argument("--passphrase", default=None, help="Encrypt backup with this passphrase (prompted if --encrypt)")
@@ -175,7 +175,7 @@ def main() -> None:
     backup_p.add_argument("--no-vectors", action="store_true", help="Skip LanceDB vector store (--full only)")
 
     # --- restore ---
-    restore_p = sub.add_parser("restore", help="Restore Colony from a backup")
+    restore_p = sub.add_parser("restore", help="Restore Apsimo from a backup")
     restore_mode = restore_p.add_mutually_exclusive_group()
     restore_mode.add_argument("--full", action="store_true", help="Reconstruct full archive state; current authority and erasures still require reconciliation")
     restore_mode.add_argument("--memory-only", action="store_true", help="Recover canonical memory using a surviving current source ledger")
@@ -191,7 +191,7 @@ def main() -> None:
     persona_p = sub.add_parser("persona", help="Manage persona deployment")
     persona_sub = persona_p.add_subparsers(dest="persona_command")
 
-    persona_setup = persona_sub.add_parser("setup", help="Legacy manifest deployment; use colony init for new installations")
+    persona_setup = persona_sub.add_parser("setup", help="Legacy manifest deployment; use apsimo init for new installations")
     persona_setup.add_argument("repo", help="Path to persona repo containing persona.yaml")
     persona_setup.add_argument("--config", default=None, help="Variables YAML file (non-interactive)")
 
@@ -202,7 +202,7 @@ def main() -> None:
     persona_services.add_argument("action", choices=["status", "start", "stop", "restart", "install", "uninstall"])
     persona_services.add_argument("service_name", nargs="?", default=None, help="Specific service name (for restart)")
 
-    persona_backup_p = persona_sub.add_parser("backup", help="Backup Colony + persona state")
+    persona_backup_p = persona_sub.add_parser("backup", help="Backup Apsimo + persona state")
     persona_backup_p.add_argument("--output", "-o", default=None, help="Output directory")
     persona_backup_p.add_argument("--encrypt", action="store_true", help="Encrypt backup")
     persona_backup_p.add_argument("--passphrase", default=None, help="Encryption passphrase")
@@ -250,8 +250,8 @@ def main() -> None:
     agent_invite.add_argument("--label", default=None, help="Label for this invite")
 
     agent_connect = agent_sub.add_parser("connect", help="Connect a remote agent using setup code")
-    agent_connect.add_argument("--setup-code", required=True, help="Setup code from colony agent invite")
-    agent_connect.add_argument("--colony-url", default=None, help="Colony URL (auto-detect if on Tailscale)")
+    agent_connect.add_argument("--setup-code", required=True, help="Setup code from apsimo agent invite")
+    agent_connect.add_argument("--apsimo-url", "--colony-url", dest="colony_url", default=None, help="Apsimo URL (auto-detect if on Tailscale)")
     agent_connect.add_argument("--name", default=None, help="Agent name (default: hostname)")
     agent_connect.add_argument("--capabilities", default=None, help="Request capabilities (comma-separated)")
 
@@ -266,7 +266,7 @@ def main() -> None:
     agent_revoke.add_argument("agent_id", help="Agent ID to revoke")
     agent_revoke.add_argument("--reason", default=None, help="Reason for revocation")
 
-    agent_sub.add_parser("disconnect", help="Disconnect this agent from Colony")
+    agent_sub.add_parser("disconnect", help="Disconnect this agent from Apsimo")
 
     # --- initiative ---
     init_p = sub.add_parser("initiative", help="Manage initiatives")
@@ -296,7 +296,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.instance:
         os.environ["COLONY_INSTANCE_SELECTED"] = "1"
-        os.environ["COLONY_STATE_DIR"] = str(Path(args.instance).expanduser().resolve())
+        from apsimo.environment import clear_environment_aliases, apply_environment_aliases
+        clear_environment_aliases()
+        os.environ.pop("COLONY_STATE_DIR", None)
+        os.environ["APSIMO_STATE_DIR"] = str(Path(args.instance).expanduser().resolve())
+        apply_environment_aliases()
 
     if args.command == "models":
         from apsimo.qualification.cli import run
@@ -316,14 +320,14 @@ def main() -> None:
         if args.preferences_only:
             return
 
-        # Initialize Colony identity if not already done
+        # Initialize Apsimo identity if not already done
         _load_dotenv()
         state_dir = os.environ.get("COLONY_STATE_DIR", args.dir)
         id_path = Path(state_dir) / "colony-id"
         if not id_path.exists():
             _cmd_init(args)
         else:
-            print(f"  Colony identity already exists: {id_path.read_text().strip()}")
+            print(f"  Apsimo identity already exists: {id_path.read_text().strip()}")
 
     elif args.command == "start":
         _load_dotenv()
@@ -336,7 +340,7 @@ def main() -> None:
         # Service-aware: error out if launchd is managing the sidecar
         if _is_service_loaded():
             print("❌ A user service is managing this sidecar.")
-            print("  Use 'colony service stop' and 'colony service start' instead,")
+            print("  Use 'apsimo service stop' and 'apsimo service start' instead,")
             sys.exit(1)
 
         # Check and start Neo4j if needed (both foreground and daemon mode)
@@ -365,7 +369,7 @@ def main() -> None:
                         pass
                 else:
                     print(f"Error: Port {port} is already in use (PID {existing_pid})")
-                    print("Use --force to kill existing process, or stop it first with: colony stop")
+                    print("Use --force to kill existing process, or stop it first with: apsimo stop")
                     sys.exit(1)
             
             import uvicorn
@@ -388,7 +392,7 @@ def main() -> None:
         # Service-aware: error out if launchd is managing the sidecar
         if _is_service_loaded():
             print("❌ Sidecar is managed by a user service.")
-            print("  Use 'colony service stop' instead.")
+            print("  Use 'apsimo service stop' instead.")
             sys.exit(1)
         _cmd_stop()
 
@@ -408,7 +412,7 @@ def main() -> None:
             return
         if not hasattr(args, "service_command") or not args.service_command:
             print("❌ No service subcommand given")
-            print("  Usage: colony service {install|uninstall|start|stop|restart|status}")
+            print("  Usage: apsimo service {install|uninstall|start|stop|restart|status}")
             sys.exit(1)
         elif args.service_command == "install":
             _cmd_service_install()
@@ -514,27 +518,27 @@ def main() -> None:
                             break
                         elif sd.get("status") == "failed":
                             print(f"Migration failed: {sd.get('errors', [])}")
-                            print("Re-run colony migrate-tier with the same settings to resume staged work.")
+                            print("Re-run apsimo migrate-tier with the same settings to resume staged work.")
                             raise SystemExit(1)
                         elif sd.get("status") == "resumable":
-                            print("Migration is interrupted, not complete. Re-run colony migrate-tier with the same settings to resume staged work.")
+                            print("Migration is interrupted, not complete. Re-run apsimo migrate-tier with the same settings to resume staged work.")
                             raise SystemExit(2)
                         else:
                             print(f"  ... {sd.get('vectors_migrated', 0)} vectors migrated so far")
                     else:
                         print(f"Migration status unavailable (HTTP {status_resp.status_code}); completion is not confirmed.")
-                        print("After checking the sidecar, re-run colony migrate-tier with the same settings to resume staged work.")
+                        print("After checking the sidecar, re-run apsimo migrate-tier with the same settings to resume staged work.")
                         raise SystemExit(2)
                 else:
                     print(f"Stopped waiting; the server migration may still be running. Check GET {status_url}.")
-                    print("After an interruption, re-run colony migrate-tier with the same settings to resume staged work.")
+                    print("After an interruption, re-run apsimo migrate-tier with the same settings to resume staged work.")
                     raise SystemExit(2)
             else:
                 print(f"Migration failed: {resp.status_code} {resp.text}")
                 raise SystemExit(1)
         except Exception as e:
             print(f"Could not connect to sidecar: {e}")
-            print("Completion is not confirmed. Check the sidecar before resuming colony migrate-tier.")
+            print("Completion is not confirmed. Check the sidecar before resuming apsimo migrate-tier.")
             raise SystemExit(1)
 
     elif args.command == "activate-multimodal":
@@ -544,7 +548,7 @@ def main() -> None:
             # Try sidecar directory
             env_path = Path(__file__).parent / ".env"
         if not env_path.exists():
-            print("No .env file found. Run 'colony init' first.")
+            print("No .env file found. Run 'apsimo init' first.")
             return
 
         # Determine multimodal model from tier
@@ -629,8 +633,8 @@ def main() -> None:
                 print("The model will download on first start instead.")
 
         print()
-        print("Restart the sidecar to activate multimodal: colony start")
-        print("If you have existing text vectors, run: colony migrate-tier")
+        print("Restart the sidecar to activate multimodal: apsimo start")
+        print("If you have existing text vectors, run: apsimo migrate-tier")
 
     elif args.command == "validate":
         _load_dotenv()
@@ -687,7 +691,7 @@ def main() -> None:
 
 
 def _cmd_backup(args) -> None:
-    """Export Colony identity or full state as a portable backup."""
+    """Export Apsimo identity or full state as a portable backup."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
@@ -711,7 +715,7 @@ def _cmd_backup(args) -> None:
             print(f"  Full backup saved to {archive}")
         except FileNotFoundError as e:
             print(f"  Error: {e}")
-            print("  Run 'colony init' first to create an identity.")
+            print("  Run 'apsimo init' first to create an identity.")
             raise SystemExit(1)
         return
 
@@ -727,12 +731,12 @@ def _cmd_backup(args) -> None:
             print(backup_json)
     except FileNotFoundError as e:
         print(f"  Error: {e}")
-        print("  Run 'colony init' first to create an identity.")
+        print("  Run 'apsimo init' first to create an identity.")
         raise SystemExit(1)
 
 
 def _cmd_restore(args) -> None:
-    """Restore Colony from a backup -- interactive by default."""
+    """Restore Apsimo from a backup -- interactive by default."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
     memory_only = getattr(args, "memory_only", False)
@@ -793,7 +797,7 @@ def _cmd_restore(args) -> None:
     # Legacy identity-only restore
     id_path = Path(state_dir) / "colony-id"
     if id_path.exists():
-        print("  A Colony identity already exists in this state directory.")
+        print("  A Apsimo identity already exists in this state directory.")
         existing_id = id_path.read_text().strip()
         print(f"  Existing colony_id: {existing_id}")
         confirm = input("  Overwrite? [y/N] ").strip().lower()
@@ -814,10 +818,10 @@ def _cmd_restore(args) -> None:
     try:
         from apsimo.chain.identity import restore_colony
         colony_id = restore_colony(state_dir, backup_data, passphrase=passphrase)
-        print(f"\n  Colony restored: {colony_id}")
+        print(f"\n  Apsimo restored: {colony_id}")
         if backup_data.get("genesis"):
             print(f"  Genesis status restored")
-        print(f"\n  Run 'colony start' to bring the Colony online.")
+        print(f"\n  Run 'apsimo start' to bring the Apsimo online.")
     except ValueError as e:
         print(f"  Error: {e}")
         raise SystemExit(1)
@@ -881,7 +885,7 @@ def _cmd_agent(args) -> None:
         agent_config.write_text(json.dumps(data, indent=2))
         print(f"Agent connected: {data['agent_id']}")
         print(f"Node ID: {data['node_id']}")
-        print(f"Colony ID: {data['colony_id']}")
+        print(f"Apsimo ID: {data['colony_id']}")
         print(f"WebSocket URL: {data.get('websocket_url', 'N/A')}")
         print(f"\nConfig saved to: {agent_config}")
 
@@ -915,7 +919,7 @@ def _cmd_agent(args) -> None:
         print(f"Agent ID: {a['agent_id']}")
         print(f"Node ID: {a['node_id']}")
         print(f"Name: {a['name']}")
-        print(f"Colony ID: {a['colony_id']}")
+        print(f"Apsimo ID: {a['colony_id']}")
         print(f"Connection: {a['connection_mode']}")
         print(f"Status: {a['status']}")
         print(f"Primary: {a['is_primary']}")
@@ -951,7 +955,7 @@ def _cmd_agent(args) -> None:
         print("Agent config removed.")
 
     else:
-        print("Usage: colony agent [invite|connect|list|show|revoke|disconnect]")
+        print("Usage: apsimo agent [invite|connect|list|show|revoke|disconnect]")
 
 
 def _cmd_benchmark(args) -> None:
@@ -993,7 +997,7 @@ def _cmd_benchmark(args) -> None:
     weeks = data.get("weeks") or []
     if not weeks:
         print("No rollups yet (first weekly compute pending). "
-              "Run: colony benchmark --compute")
+              "Run: apsimo benchmark --compute")
         return
     rollups = data.get("rollups", {})
     trends = data.get("trends", {})
@@ -1080,11 +1084,11 @@ def _cmd_initiative(args) -> None:
         print(f"Initiative {args.initiative_id} cancelled.")
 
     else:
-        print("Usage: colony initiative [list|show|cancel]")
+        print("Usage: apsimo initiative [list|show|cancel]")
 
 
 def _cmd_init(args) -> None:
-    """Initialize a new Colony identity."""
+    """Initialize a new Apsimo identity."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
@@ -1094,23 +1098,23 @@ def _cmd_init(args) -> None:
     id_path = Path(state_dir) / "colony-id"
     if id_path.exists():
         existing = id_path.read_text().strip()
-        print(f"  Colony already initialized: {existing}")
-        print(f"  Run 'colony key info' to see details.")
+        print(f"  Apsimo already initialized: {existing}")
+        print(f"  Run 'apsimo key info' to see details.")
         return
 
     # Create colony_id
     colony_id = get_or_create_colony_id(state_dir)
-    print(f"  Colony ID: {colony_id}")
+    print(f"  Apsimo ID: {colony_id}")
 
     # Determine passphrase
     passphrase = None
     if args.encrypt:
         import getpass
-        passphrase = getpass.getpass("Colony key passphrase: ").encode()
+        passphrase = getpass.getpass("Apsimo key passphrase: ").encode()
     elif args.passphrase:
         passphrase = args.passphrase.encode()
 
-    # Generate Colony keypair
+    # Generate Apsimo keypair
     keys_dir = os.path.join(state_dir, "colony-keys")
     km = LocalKeyManager.generate(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase)
     print(f"  Public Key: {km.public_key_hex()}")
@@ -1126,7 +1130,7 @@ def _cmd_init(args) -> None:
                                 private_key_pem=private_pem, passphrase=passphrase)
         print(f"  ⚡ Genesis claimed and manifest signed")
 
-    print(f"\n  Colony initialized. Run 'colony start' to bring it online.")
+    print(f"\n  Apsimo initialized. Run 'apsimo start' to bring it online.")
 
 
 def _cmd_node(args) -> None:
@@ -1139,18 +1143,18 @@ def _cmd_node(args) -> None:
         from apsimo.chain.identity import get_or_create_colony_id
         colony_id = get_or_create_colony_id(state_dir)
         info = get_node_info(state_dir)
-        print(f"  Colony ID:  {colony_id}")
-        print(f"  Node ID:    {info.get('node_id', '(not created — run colony start)')}")
+        print(f"  Apsimo ID:  {colony_id}")
+        print(f"  Node ID:    {info.get('node_id', '(not created — run apsimo start)')}")
         print(f"  Node Key:   {info.get('node_public_key', '(none)')}")
         print(f"  Certified:  {'yes' if info.get('certified') else 'no'}")
         if info.get('issued_at'):
             print(f"  Issued At:  {info['issued_at']}")
     else:
-        print("  Usage: colony node {info}")
+        print("  Usage: apsimo node {info}")
 
 
 def _cmd_key(args) -> None:
-    """Manage Colony cryptographic identity."""
+    """Manage Apsimo cryptographic identity."""
     _load_dotenv()
     state_dir = os.environ.get("COLONY_STATE_DIR", os.getcwd())
 
@@ -1164,7 +1168,7 @@ def _cmd_key(args) -> None:
             from apsimo.chain.local_keys import LocalKeyManager
             km = LocalKeyManager(keys_dir=keys_dir, colony_id=colony_id, passphrase=passphrase_bytes)
             pubkey = km.public_key_hex()
-            print(f"  Colony ID:  {colony_id}")
+            print(f"  Apsimo ID:  {colony_id}")
             print(f"  Public Key: {pubkey}")
             manifest = get_genesis_manifest()
             if manifest and manifest.get("colony_id") == colony_id:
@@ -1172,8 +1176,8 @@ def _cmd_key(args) -> None:
             else:
                 print(f"  Genesis:    no")
         except FileNotFoundError:
-            print(f"  Colony ID:  {colony_id}")
-            print(f"  Public Key: (no keypair — run 'colony key generate')")
+            print(f"  Apsimo ID:  {colony_id}")
+            print(f"  Public Key: (no keypair — run 'apsimo key generate')")
 
     elif args.key_command == "generate":
         from apsimo.chain.identity import get_or_create_colony_id
@@ -1250,13 +1254,13 @@ def _cmd_key(args) -> None:
         print(f"  Public Key: {pubkey}")
         print(f"  Manifest signed with your private key and saved to {genesis_path}")
         print(f"")
-        print(f"  IMPORTANT: Commit genesis.json to the Colony repo so other")
+        print(f"  IMPORTANT: Commit genesis.json to the Apsimo repo so other")
         print(f"  Colonies can recognize you as the trust anchor.")
         print(f"  The manifest is cryptographically signed — it cannot be forged.")
         print(f"  Your private key never leaves this machine.")
 
     else:
-        print("  Usage: colony key {info|generate|set-passphrase|manifest|claim-genesis}")
+        print("  Usage: apsimo key {info|generate|set-passphrase|manifest|claim-genesis}")
 
 
 
@@ -1366,7 +1370,7 @@ def _get_uvicorn_path() -> str:
 
 
 def _get_state_dir() -> Path:
-    """Return the Colony state directory."""
+    """Return the Apsimo state directory."""
     from apsimo import get_state_dir
     return get_state_dir()
 
@@ -1562,11 +1566,11 @@ def _check_and_start_neo4j() -> bool:
         
         if error == "auth_failed":
             print("  ❌ Neo4j auth failed — password in .env doesn't match container")
-            print("     Reset: docker rm -f neo4j-colony && colony init")
+            print("     Reset: docker rm -f neo4j-colony && apsimo init")
         else:
             print("  ❌ Neo4j not responding after restart")
             print("     Check logs: docker logs neo4j-colony")
-            print("     Reset: docker rm -f neo4j-colony && colony init")
+            print("     Reset: docker rm -f neo4j-colony && apsimo init")
         print("  ⚠️ Graph memory degraded")
         return False
     
@@ -1585,7 +1589,7 @@ def _check_and_start_neo4j() -> bool:
         
         if error == "auth_failed":
             print("  ❌ Neo4j auth failed — password in .env doesn't match container")
-            print("     Reset: docker rm -f neo4j-colony && colony init")
+            print("     Reset: docker rm -f neo4j-colony && apsimo init")
         else:
             print("  ❌ Neo4j not ready after 30s")
             print("     Check logs: docker logs neo4j-colony")
@@ -1700,7 +1704,7 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
 
     # Start uvicorn
     log_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / "sidecar.log"
-    print(f"  Starting Colony sidecar on {host}:{port}...")
+    print(f"  Starting Apsimo sidecar on {host}:{port}...")
     print(f"  Log: {log_path}")
 
     proc = subprocess.Popen(
@@ -1747,7 +1751,7 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
             # Check E2E validation status
             stamp = Path(os.environ.get("COLONY_STATE_DIR", ".")) / ".colony-e2e-validated"
             if not stamp.exists():
-                print(f"  ⚠️ E2E pipeline not validated — run 'colony validate' to test")
+                print(f"  ⚠️ E2E pipeline not validated — run 'apsimo validate' to test")
             return
         except Exception:
             pass
@@ -1898,7 +1902,7 @@ def _cmd_status() -> None:
 
         # Status icon
         icon = "🟢" if status == "ok" else "🔴"
-        print(f"{icon} Colony Sidecar — {status}")
+        print(f"{icon} Apsimo Sidecar — {status}")
         print(f"  URL: {url}")
         print(f"  Capabilities: {len(caps)}")
 
@@ -1931,7 +1935,7 @@ def _cmd_status() -> None:
             if legacy_last_seen:
                 print(f"  Legacy last seen: {legacy_last_seen}")
             if telemetry.get("error") or grants.get("error"):
-                print("  ⚠️  Auth migration telemetry/grants report an error; run colony doctor")
+                print("  ⚠️  Auth migration telemetry/grants report an error; run apsimo doctor")
         elif auth_response.status_code in (401, 403):
             print("  ⚠️  Auth migration status requires an auth:admin credential")
 
@@ -1943,7 +1947,7 @@ def _cmd_status() -> None:
             print(f"  ✅ E2E validated: {validated_at}")
         else:
             print(f"  ⚠️  E2E pipeline not validated")
-            print(f"     Run 'colony validate' to test the full pipeline")
+            print(f"     Run 'apsimo validate' to test the full pipeline")
 
     except Exception as exc:
         print(f"🔴 Sidecar not reachable: {exc}")
@@ -1953,7 +1957,7 @@ def _cmd_status() -> None:
             print(f"  Process {pid} is on port {port} but not responding")
         else:
             print(f"  No process on port {port}")
-            print(f"  Start with: colony start")
+            print(f"  Start with: apsimo start")
         sys.exit(1)
 
 
@@ -1967,7 +1971,7 @@ def _cmd_service_install() -> None:
     uvicorn_path = _get_uvicorn_path()
     if not Path(uvicorn_path).exists():
         print(f"❌ uvicorn not found at {uvicorn_path}")
-        print("Make sure the Colony virtual environment is set up.")
+        print("Make sure the Apsimo virtual environment is set up.")
         sys.exit(1)
 
     _load_dotenv()
@@ -2019,7 +2023,7 @@ def _cmd_service_install() -> None:
     subprocess.run(["launchctl", "load", str(plist_path)], check=True)
     print("✅ Service loaded")
     print(f"  Logs: {log_dir / 'sidecar.log'}")
-    print(f"  Check status: colony service status")
+    print(f"  Check status: apsimo service status")
 
 
 def _cmd_service_uninstall() -> None:
@@ -2037,7 +2041,7 @@ def _cmd_service_start() -> None:
     """Start the launchd service."""
     plist_path = _get_plist_path()
     if not plist_path.exists():
-        print("❌ Service not installed. Run: colony service install")
+        print("❌ Service not installed. Run: apsimo service install")
         sys.exit(1)
 
     # Check if already loaded
@@ -2064,7 +2068,7 @@ def _cmd_service_restart() -> None:
     """Restart the launchd service."""
     plist_path = _get_plist_path()
     if not plist_path.exists():
-        print("❌ Service not installed. Run: colony service install")
+        print("❌ Service not installed. Run: apsimo service install")
         sys.exit(1)
 
     subprocess.run(["launchctl", "unload", str(plist_path)], capture_output=True)
@@ -2081,7 +2085,7 @@ def _cmd_service_status() -> None:
     )
     if result.returncode != 0:
         print("🔴 Service not installed or not loaded")
-        print("  Install: colony service install")
+        print("  Install: apsimo service install")
         return
 
     lines = result.stdout.strip().splitlines()
@@ -2105,7 +2109,7 @@ def _cmd_service_status() -> None:
 
 
 def _cmd_mcp(args) -> None:
-    """Handle colony mcp subcommands."""
+    """Handle apsimo mcp subcommands."""
     from apsimo.mcp.server import create_server, run_stdio, run_http
     from apsimo.mcp.config import (
         HARNESS_DEFS, detect_harnesses, add_to_harness, remove_from_harness,
@@ -2131,6 +2135,17 @@ def _cmd_mcp(args) -> None:
             print(f"{icon} {HARNESS_DEFS[hid]['display']:15s} {status}")
 
     elif args.mcp_command == "setup":
+        # Explicit launch overrides apply once at this command boundary.
+        from apsimo.environment import clear_environment_aliases, apply_environment_aliases
+        overrides = {"MCP_COMMAND": getattr(args, "mcp_server_command", None),
+                     "MCP_ARGS": getattr(args, "mcp_args", None)}
+        if any(value is not None for value in overrides.values()):
+            clear_environment_aliases()
+            for key, value in overrides.items():
+                if value is not None:
+                    os.environ.pop("COLONY_" + key, None)
+                    os.environ["APSIMO_" + key] = value
+            apply_environment_aliases()
         # Handle --print-config (for distributed setups)
         if getattr(args, 'print_config', False):
             import json
@@ -2148,20 +2163,11 @@ def _cmd_mcp(args) -> None:
             
             # Build MCP config with optional overrides
             sidecar_url = getattr(args, 'sidecar_url', None)
-            mcp_command = getattr(args, 'mcp_command', None)
-            mcp_args = getattr(args, 'mcp_args', None)
-            
-            # Set env vars for _mcp_config if provided
-            if mcp_command:
-                os.environ["COLONY_MCP_COMMAND"] = mcp_command
-            if mcp_args:
-                os.environ["COLONY_MCP_ARGS"] = mcp_args
-            
             needs_type = hdef.get("mcp_type") == "stdio"
             mcp_config = _mcp_config(contact_id, hdef["source_tag"], include_type=needs_type, sidecar_url=sidecar_url)
             
             # Print the full config snippet
-            full_config = {"mcp": {"colony": mcp_config}}
+            full_config = {hdef.get("mcp_key", "mcp_servers"): {"apsimo": mcp_config}}
             print(json.dumps(full_config, indent=2))
             print()
             print(f"# Add this to {hdef['config_path']}")
@@ -2175,17 +2181,17 @@ def _cmd_mcp(args) -> None:
         if not installed:
             print("  No coding harnesses detected.")
             print("  Install one of: Claude Code, Codex, Crush, OpenCode, or Hermes")
-            print("  Then run: colony mcp setup")
+            print("  Then run: apsimo mcp setup")
             print()
-            print("  For distributed setups (Colony on remote machine):")
-            print("    colony mcp setup --print-config --sidecar-url http://HOST:7777 --harness crush")
+            print("  For distributed setups (Apsimo on remote machine):")
+            print("    apsimo mcp setup --print-config --sidecar-url http://HOST:7777 --harness crush")
             return
 
         # Get contact ID
         contact_id = args.contact_id
         if not contact_id:
             try:
-                contact_id = input("  What should Colony call you? ").strip()
+                contact_id = input("  What should Apsimo call you? ").strip()
             except EOFError:
                 contact_id = os.environ.get("USER", "user")
             if not contact_id:
@@ -2207,7 +2213,7 @@ def _cmd_mcp(args) -> None:
                 print(f"    [{i}] {HARNESS_DEFS[hid]['display']}")
             print()
             try:
-                choice = input("  Which should Colony connect? (comma-separated, or 'all') [all]: ").strip()
+                choice = input("  Which should Apsimo connect? (comma-separated, or 'all') [all]: ").strip()
             except EOFError:
                 choice = "all"
 
@@ -2218,32 +2224,33 @@ def _cmd_mcp(args) -> None:
                 selected = [options[i - 1] for i in indices if 1 <= i <= len(options)]
 
         if not selected:
-            print("  No harnesses selected. Run 'colony mcp setup' again when ready.")
+            print("  No harnesses selected. Run 'apsimo mcp setup' again when ready.")
             return
 
         # Configure each selected harness
         for hid in selected:
             hdef = HARNESS_DEFS[hid]
             print(f"  Configuring {hdef['display']}...")
-            diff = add_to_harness(hid, contact_id, dry_run=args.dry_run)
+            diff = add_to_harness(hid, contact_id, dry_run=args.dry_run,
+                                  sidecar_url=getattr(args, "sidecar_url", None))
             if diff is None:
                 print(f"  Already configured — skipping")
             elif args.dry_run:
                 print(f"  Would add (dry run):")
                 print(diff)
             else:
-                print(f"  Added Colony MCP (source: {hdef['source_tag']})")
+                print(f"  Added Apsimo MCP (source: {hdef['source_tag']})")
                 
                 # Write skill
-                from apsimo.harness_integration import write_colony_skill
-                if write_colony_skill(hid):
+                from apsimo.harness_integration import write_apsimo_skill
+                if write_apsimo_skill(hid):
                     print(f"  ✅ Diagnostic skill installed")
 
         if args.dry_run:
             print("  Run without --dry-run to apply changes")
         else:
             print(f"  Contact ID: {contact_id}")
-            print(f"  Start the sidecar with: colony start")
+            print(f"  Start the sidecar with: apsimo start")
 
     elif args.mcp_command == "remove":
         if args.harness == "all":
@@ -2269,16 +2276,16 @@ def _cmd_mcp(args) -> None:
                 
                 # Remove skill (not dry_run)
                 if not args.dry_run:
-                    from apsimo.harness_integration import remove_colony_skill
-                    if remove_colony_skill(hid):
+                    from apsimo.harness_integration import remove_apsimo_skill
+                    if remove_apsimo_skill(hid):
                         print(f"  ✅ Diagnostic skill removed")
             else:
-                print(f"  {hdef['display']} — Colony not configured, skipping")
+                print(f"  {hdef['display']} — Apsimo not configured, skipping")
 
         if args.dry_run:
             print("  Run without --dry-run to apply changes")
         else:
-            print("  Colony MCP removed from harness configs")
+            print("  Apsimo MCP removed from harness configs")
 
 
 def _cmd_validate(args) -> None:
@@ -2292,7 +2299,7 @@ def _cmd_validate(args) -> None:
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
     state_dir = os.environ.get("COLONY_STATE_DIR", ".")
 
-    print("🧪 Colony E2E Pipeline Validation")
+    print("🧪 Apsimo E2E Pipeline Validation")
     print("=" * 40)
     print()
 
@@ -2320,7 +2327,7 @@ def _cmd_validate(args) -> None:
         print(f"  ✅ Sidecar running ({len(data.get('capabilities', []))} capabilities)")
     except Exception as e:
         print(f"  ❌ Sidecar not reachable: {e}")
-        print("  Start with: colony start")
+        print("  Start with: apsimo start")
         return
 
     # Step 2: Seed test data
@@ -2359,7 +2366,7 @@ def _cmd_validate(args) -> None:
     print(f"  ✅ Context assembly: {len(sections)} sections, {len(found)}/{len(expected)} cognitive sections present")
 
     # Step 4: Check LLM is configured (live-fire the sidecar's own router —
-    # this is the pipeline Colony actually reasons with, harness-independent)
+    # this is the pipeline Apsimo actually reasons with, harness-independent)
     print("\n[4/5] Checking LLM configuration...")
     llm_ok = False
     llm_latency = None
@@ -2379,7 +2386,7 @@ def _cmd_validate(args) -> None:
                 pass
             print(f"  ⚠️ LLM router check failed (HTTP {r.status_code}) {detail}")
             print("  Configure models via POST /v1/host/configure or re-run "
-                  "'colony init' (llm-config step)")
+                  "'apsimo init' (llm-config step)")
     except Exception as exc:
         print(f"  ⚠️ Could not reach the LLM health endpoint: {exc}")
 
@@ -2417,7 +2424,7 @@ def _cmd_validate(args) -> None:
         print(f"  Context assembly: {len(sections)} sections")
         print(f"  Cognitive sections: {', '.join(found)}")
         if not llm_ok:
-            print(f"  ⚠️ LLM pipeline not tested — configure LLM and re-run 'colony validate'")
+            print(f"  ⚠️ LLM pipeline not tested — configure LLM and re-run 'apsimo validate'")
     else:
         print("🔴 Pipeline validation incomplete")
         print(f"  Missing sections: {set(expected) - set(found)}")
@@ -2471,6 +2478,8 @@ def _cmd_doctor(args) -> None:
 def _load_dotenv() -> None:
     from apsimo.util.instance import load_environment
     load_environment()
+    from apsimo.environment import apply_environment_aliases
+    apply_environment_aliases()
 
 
 def _cmd_persona(args) -> None:
@@ -2479,7 +2488,7 @@ def _cmd_persona(args) -> None:
 
     cmd = getattr(args, "persona_command", None)
     if not cmd:
-        print("Usage: colony persona [setup|validate|services|backup|restore|uninstall]")
+        print("Usage: apsimo persona [setup|validate|services|backup|restore|uninstall]")
         return
 
     state_dir = os.environ.get("COLONY_STATE_DIR", str(Path.home() / ".colony" / "data"))
@@ -2507,7 +2516,7 @@ def _cmd_persona(args) -> None:
         print(f"  Variables: {len(manifest.variables)}")
 
     elif cmd == "setup":
-        print("Legacy persona setup is deprecated for new installations; use colony init. "
+        print("Legacy persona setup is deprecated for new installations; use apsimo init. "
               "Existing manifest deployments and their backup/restore data remain supported.", file=sys.stderr)
         from apsimo.persona.manifest import load_manifest
         try:
@@ -2641,7 +2650,7 @@ def _cmd_persona(args) -> None:
         print("  Persona uninstalled")
 
     else:
-        print("Usage: colony persona [setup|validate|services|backup|restore|uninstall]")
+        print("Usage: apsimo persona [setup|validate|services|backup|restore|uninstall]")
 
 
 def _find_active_persona(state_dir: str):

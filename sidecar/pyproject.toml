@@ -64,7 +64,7 @@ colony-worker = "apsimo.workers.colony_worker:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo*"]
+include = ["apsimo*", "colony_sidecar*"]
 exclude = ["*.tests", "*.tests.*", "*.test_*", "*.conftest"]
 
 [tool.setuptools.package-data]

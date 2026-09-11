@@ -4,37 +4,37 @@ The supported lightweight path uses Hermes **0.21.1** (qualification commit
 `2237be355906fbe6065ce1815711eee52b2d646e`) or **0.21.0**, Python 3.11 to 3.13, and one local
 OpenAI-compatible chat endpoint. Install Hermes separately using its
 [native installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
-Colony does not patch or download Hermes, models, containers or machine services.
+Apsimo does not patch or download Hermes, models, containers or machine services.
 
 Install the matching published packages in a private Python environment. This
-path needs no Colony checkout or source edits. The environment may be shared
+path needs no Apsimo checkout or source edits. The environment may be shared
 with Hermes, but the commands below keep an existing Hermes installation intact:
 
 ```bash
-python3 -m venv "$HOME/.local/share/colony/venv"
-source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.11" "colony-hermes==1.1.11"
-colony init --hermes-python /path/to/hermes/.venv/bin/python
+python3 -m venv "$HOME/.local/share/apsimo/venv"
+source "$HOME/.local/share/apsimo/venv/bin/activate"
+python -m pip install "apsimo[hermes]==1.3.0" "apsimo-hermes[native-memory]==1.3.0"
+apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
 Use a Python version supported above. Replace the interpreter placeholder with
-the Python from the Hermes runtime you actually run. Keeping both Colony
+the Python from the Hermes runtime you actually run. Keeping both Apsimo
 packages at the same version avoids attaching an older adapter to a newer
-sidecar. `colony init --help` lists the wizard's optional and unattended flags.
+sidecar. `apsimo init --help` lists the wizard's optional and unattended flags.
 
 A separate Hermes environment needs its own native core dependencies. It does
-not need Colony's CLI dependency `typer` or a preinstalled Colony adapter; setup
-can attach the private adapter directly from the Colony environment.
+not need Apsimo's CLI dependency `typer` or a preinstalled Apsimo adapter; setup
+can attach the private adapter directly from the Apsimo environment.
 
 The wizard asks for your name, the agent's name, the model API root and model,
 whether to enable accepted local drafts, whether to enable general native tasks
-(default no), then whether to start Colony. An API
+(default no), then whether to start Apsimo. An API
 key is prompted without echo. For unattended
 setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line
 key. A model that requires no key works too. Fresh model configurations use Hermes's `custom` provider with the selected endpoint; existing model configuration is preserved.
 
 ```bash
-colony init --non-interactive \
+apsimo init --non-interactive \
   --hermes-python /path/to/hermes/.venv/bin/python \
   --hermes-home "$HOME/.hermes-orion" \
   --agent-name Orion --contact-name Owner \
@@ -45,8 +45,9 @@ colony init --non-interactive \
 lists live profiles through the selected Hermes runtime and asks which home to
 attach. Listing reads profile names and paths, not their private configuration.
 Noninteractive setup retains the `~/.hermes` default. Only the selected home's
-configuration is inspected or changed. `--dir` selects private Colony state, otherwise `COLONY_STATE_DIR` or
-`<selected Hermes home>/colony` is used. Both the selected Hermes home and Colony
+configuration is inspected or changed. `--dir` selects private Apsimo state, otherwise an existing selected instance or `APSIMO_STATE_DIR`
+(legacy `COLONY_STATE_DIR`) is used. New instances default to
+`<selected Hermes home>/apsimo`; existing `colony` directories keep their state. Both the selected Hermes home and Apsimo
 state must stay outside Git checkouts, including when `--dir` is separate.
 Select that same Hermes home when launching Hermes:
 
@@ -59,7 +60,7 @@ Setup checks native runtime imports/version, canonical adapter resources, the
 selected model with one neutral completion, the free local sidecar port, and
 configuration conflicts before it writes the private instance. `--adapter-wheel`
 can select an already-built canonical wheel instead of an installed
-`colony-hermes` distribution. This is also usable from built Colony wheels with
+`apsimo-hermes` distribution. This is also usable from built Apsimo wheels with
 no editable source checkout.
 
 The selected model hostname is recorded for runtime routing, and setup checks
@@ -70,19 +71,19 @@ continue to resolve and check that configured host when its address changes.
 ## WhatsApp read receipts for a selected profile
 
 For an existing Hermes home, preview and then apply the supported channel
-preference without initializing an identity, attaching Colony, probing a model
+preference without initializing an identity, attaching Apsimo, probing a model
 or restarting a service:
 
 ```bash
-colony init --hermes-home "$HOME/.hermes-orion" \
+apsimo init --hermes-home "$HOME/.hermes-orion" \
   --preferences-only --whatsapp-read-receipts on --preview
-colony init --hermes-home "$HOME/.hermes-orion" \
+apsimo init --hermes-home "$HOME/.hermes-orion" \
   --preferences-only --whatsapp-read-receipts on
 ```
 
 Use `off` to disable receipts. Omitting the option preserves the existing
 setting. Preference-only mode requires an existing `config.yaml` and rejects
-instance/setup options. It does not require a Colony instance manifest.
+instance/setup options. It does not require a Apsimo instance manifest.
 `--hermes-home`, then `HERMES_HOME`, then `~/.hermes` selects the profile in this
 mode. The preview lists changed setting paths without displaying other config
 values. Applying uses the existing atomic writer and retains the exact previous
@@ -142,13 +143,13 @@ two environments need no shared dependencies. See
 [accepted local work](ACCEPTED-LOCAL-WORK.md) for limits and cancellation.
 If native registration fails after attachment, rerun the same command with
 `--local-work`. It resumes the prepared profile using the retained planning
-role, identity and credentials. Restart an already-running Colony instance and
+role, identity and credentials. Restart an already-running Apsimo instance and
 Hermes gateway to load the new binding. Existing cron assignments drain before
 their old draft job is paused. An older instance without a planning role or compatible
 adapter needs explicit configuration or an adapter upgrade first.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
-are disabled in this profile. Install `colonyai[graph,vectors]==1.1.11` only when
+are disabled in this profile. Install `apsimo[graph,vectors]==1.3.0` only when
 adding those services intentionally. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
@@ -161,7 +162,7 @@ native `goal_mode` continuation. It works on a new attachment or an existing
 private instance:
 
 ```sh
-colony init --non-interactive --hermes-home "$HOME/.hermes-orion" --native-goals
+apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --native-goals
 ```
 
 For a fresh attachment, also supply the interpreter, identity and model options
@@ -173,7 +174,7 @@ Setup adds `kanban` to the existing profile's global toolsets and CLI selection,
 preserving other selections, identity, model and authority configuration. Hermes
 gates Kanban globally: enabling it can expose task tools to authorized turns on
 other channels of the same profile even when those channels have saved tool
-lists. Guest authority remains constrained by the existing Colony middleware.
+lists. Guest authority remains constrained by the existing Apsimo middleware.
 This is not blanket consent for consequential external actions.
 
 The agent can use native `kanban_create` with the existing profile as `assignee`,
@@ -183,7 +184,7 @@ installed. An existing explicit `COLONY_HERMES_WORK_BOARDS` list is retained;
 other boards remain outside the observation view. No board is enumerated or
 created by this opt-in, and no new worker profile or executor is added.
 
-The selected Hermes gateway must be running to dispatch tasks. Colony does not
+The selected Hermes gateway must be running to dispatch tasks. Apsimo does not
 start or restart it. For a new profile, run it in a separate terminal using the
 same interpreter selected during setup:
 
@@ -222,7 +223,7 @@ the existing application consent rules. Public guest context needs the existing
 scoped projection contract and is not enabled by this local profile.
 
 Canonical adapter bytes are retained in private state. If the selected Hermes
-interpreter already has both native Colony entry points, setup verifies their
+interpreter already has both native Apsimo entry points, setup verifies their
 package bytes against the selected artifact and uses that installed package.
 It records the loading mode, package version and source paths in `instance.json`.
 A different or incomplete installed adapter is rejected before attachment;
@@ -235,28 +236,28 @@ Other profiles and running Hermes sessions are not restarted or modified by
 attachment. Start a new Hermes session afterward.
 
 For a new home, `SOUL.md` contains the chosen identity. An existing SOUL, channels,
-model and unrelated settings are retained. An incumbent non-Colony memory
+model and unrelated settings are retained. An incumbent non-Apsimo memory
 provider requires an explicit wizard choice or `--replace-memory-provider`;
-its data is retained. An existing Colony directory adapter or native JSON config
+its data is retained. An existing Apsimo directory adapter or native JSON config
 requires an explicit upgrade rather than being silently replaced.
 
 ## Update an existing attachment
 
 Stop the selected Hermes gateway and its workers using their existing host
-lifecycle, then stop this Colony instance (`colony --instance /private/path stop`,
+lifecycle, then stop this Apsimo instance (`apsimo --instance /private/path stop`,
 or `service stop` for a managed instance). Complete or cancel in-flight work
 through Hermes before stopping it. Keep the private instance and Hermes home.
 
-Update both Colony distributions in the environment that runs Colony, selecting
+Update both Apsimo distributions in the environment that runs Apsimo, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "colonyai[hermes]==1.1.11" "colony-hermes==1.1.11"
-colony init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
+python -m pip install --upgrade "apsimo[hermes]==1.3.0" "apsimo-hermes[native-memory]==1.3.0"
+apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
 Replace `1.1.11` with the release you are selecting. A Hermes interpreter with
-native installed Colony entry points also needs that adapter package updated explicitly in its
+native installed Apsimo entry points also needs that adapter package updated explicitly in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
 it does not copy a second active adapter or install packages itself.
@@ -271,15 +272,15 @@ worker manifests, and retains the previous directory as `adapter-previous-*`.
 It retains identity, credentials, config, model roles, databases, native boards
 and worker configuration. Local changes to managed adapter files are reported
 before replacement. Repeating the same refresh leaves matching bytes unchanged.
-The instance records the Colony environment running this command; supply
+The instance records the Apsimo environment running this command; supply
 `--hermes-python` only when deliberately selecting another supported native
 interpreter. No model probe, service restart or new consent process runs here.
-If the Colony interpreter moved and this instance uses a user service, run the
+If the Apsimo interpreter moved and this instance uses a user service, run the
 existing `service install` command from the new environment while the service
 is stopped, then `service start`. Refresh preserves the old service definition;
 updating the instance manifest alone does not move the service interpreter.
 
-Start Colony and Hermes through their existing lifecycle, then check `status`
+Start Apsimo and Hermes through their existing lifecycle, then check `status`
 and `doctor` and recall a harmless fact from a new session. A package version
 alone is not evidence that the attached code or retained memory works. On an
 ordinary write failure refresh restores the files it changed. If the process
@@ -294,7 +295,7 @@ root in your development environment:
 
 ```bash
 python -m pip install . ./sidecar
-colony init --hermes-python /path/to/hermes/.venv/bin/python \
+apsimo init --hermes-python /path/to/hermes/.venv/bin/python \
   --hermes-home "$HOME/.hermes-colony-dev"
 ```
 
@@ -306,10 +307,10 @@ adapter. Source development is optional for a normal published installation.
 ## Start, observe and recover
 
 ```bash
-colony --instance "$HOME/.hermes-orion/colony" start --detach
-colony --instance "$HOME/.hermes-orion/colony" status
-colony --instance "$HOME/.hermes-orion/colony" doctor
-colony --instance "$HOME/.hermes-orion/colony" stop
+apsimo --instance "$HOME/.hermes-orion/apsimo" start --detach
+apsimo --instance "$HOME/.hermes-orion/apsimo" status
+apsimo --instance "$HOME/.hermes-orion/apsimo" doctor
+apsimo --instance "$HOME/.hermes-orion/apsimo" stop
 ```
 
 With the selected `HERMES_HOME`, start/status/stop also discover the instance
@@ -332,11 +333,11 @@ it; `service start` waits for both the manager's process and authenticated HTTP
 health before reporting readiness.
 
 ```sh
-colony --instance /private/path service install
-colony --instance /private/path service start
-colony --instance /private/path service status
-colony --instance /private/path service stop
-colony --instance /private/path service uninstall
+apsimo --instance /private/path service install
+apsimo --instance /private/path service start
+apsimo --instance /private/path service status
+apsimo --instance /private/path service stop
+apsimo --instance /private/path service uninstall
 ```
 
 Linux uses `systemctl --user`; macOS uses a LaunchAgent in the logged-in user's
@@ -369,7 +370,7 @@ It checks HTTP turn capture and later recall, kills only one newly created
 service PID to verify manager recovery, verifies the second instance stays up,
 and uninstalls both registrations while retaining their private data. Normal
 unit runs skip this test. Set `COLONY_TEST_USER_SERVICE=1`,
-`COLONY_TEST_SERVICE_PYTHON` to the installed Colony interpreter, and
+`COLONY_TEST_SERVICE_PYTHON` to the installed Apsimo interpreter, and
 `COLONY_TEST_HERMES_PYTHON` to a supported Hermes interpreter to run it explicitly.
 It uses a loopback model fixture; this is process/persistence evidence, not a
 model-quality or actual reboot test.
@@ -391,8 +392,9 @@ retains it; it is not an upgrade command.
 
 To undo an attachment, stop this instance and Hermes, restore the original
 `config.yaml` and `.env` from `hermes-original` (remove only wizard-created files
-when no original existed), and remove `plugins/colony` and `plugins/colony-memory`
-only if this setup created them in private-directory mode. Keep the private Colony
+when no original existed), and remove the selected `plugins/apsimo` and `plugins/apsimo-memory`
+adapters (or their retained legacy directories)
+only if this setup created them in private-directory mode. Keep the private Apsimo
 state and Hermes transcripts. No database rollback is part of installation or
 recovery. Compare files before restoring if you have edited them since setup.
 

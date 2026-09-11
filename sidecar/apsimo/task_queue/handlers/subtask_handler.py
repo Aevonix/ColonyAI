@@ -21,7 +21,7 @@ _SONNET_MODEL = "claude-sonnet-4-6"
 _MAX_TOKENS = 1024
 
 _SYSTEM_PROMPT = (
-    "You are a Colony subtask worker with NO tools: you cannot browse, run "
+    "You are an Apsimo subtask worker with NO tools: you cannot browse, run "
     "commands, send messages, or touch external systems. Produce the work "
     "product itself: the analysis, draft, plan, or answer the task asks for, "
     "concise and self-contained. Never claim to have performed an external "

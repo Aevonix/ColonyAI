@@ -62,8 +62,8 @@ general self-improvement simply by recording a successful review.
   PostgreSQL adapters support legacy entity/relationship operations only;
   typed observations explicitly reject those backends. Changing databases is
   not a remedy for memory admission quality, and existing stores are not moved.
-- `colony persona setup` is a compatibility path for existing manifest
-  deployments. New installations use `colony init`. Keep manifest validation,
+- `apsimo persona setup` is a compatibility path for existing manifest
+  deployments. New installations use `apsimo init`. Keep manifest validation,
   services, backup and restore until an existing export/restore migration has
   been demonstrated. Its host step only logs configured identity/overlay/plugin
   paths, and setup now reports those settings as unapplied. Do not discard
@@ -80,7 +80,7 @@ general self-improvement simply by recording a successful review.
 
 ## Deliberate no-builds (division of responsibility with the host agent)
 
-Colony is the cognitive substrate; the host agent framework (e.g. Hermes)
+Apsimo is the cognitive substrate; the host agent framework (e.g. Hermes)
 owns sessions, tool execution, message transport, and cron. These stay
 unbuilt HERE by design:
 
@@ -91,7 +91,7 @@ unbuilt HERE by design:
   working per-turn path is the inline introspection
   (`cognition/introspection.py`).
 - **Email/desktop/browser job handlers** — outbound messaging goes through
-  the host gateway (delivery bridge); Colony never sends email itself. The
+  the host gateway (delivery bridge); Apsimo never sends email itself. The
   desktop/browser packages were scaffolding for host-side capabilities and
   the dead EmailHandler was removed in v0.30.0. `JobType.DESKTOP`/`BROWSER`
   remain enum values with no handler.
@@ -103,7 +103,7 @@ unbuilt HERE by design:
   deliberate exception to the division above:
   `services/initiative_executor.py` exists specifically for same-machine
   deployments that have NO host agent, closing the autonomy loop in-process
-  (ReasoningLoop + Colony tools against pending initiatives). Deployments
+  (ReasoningLoop + Apsimo tools against pending initiatives). Deployments
   that DO run a host agent with its own execution plane should leave
   `COLONY_EXECUTOR_ENABLED=false` (the default): enabling both means two
   executors competing to claim the same initiatives.

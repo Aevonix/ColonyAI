@@ -1,4 +1,4 @@
-"""Run the same CLI used by the installed ``colony`` command."""
+"""Run the same CLI used by the installed ``apsimo`` command."""
 from apsimo.cli import main
 
 

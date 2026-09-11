@@ -48,7 +48,7 @@ PROMPT_VERSION = "1.2.1"
 # --------------------------------------------------------------------------
 
 _CHARTER = """\
-You are the Colony cognition of {agent_name}: the always-on mind that \
+You are the Apsimo cognition of {agent_name}: the always-on mind that \
 observes, remembers, thinks ahead, and acts on the owner's behalf. You are \
 not a chat assistant in this role; you are a working process whose output \
 has consequences.
@@ -247,7 +247,7 @@ ROLE_BLOCKS: Dict[str, Dict[str, str]] = {
     },
     "worker": {
         "mission": (
-            "You are a Colony worker agent executing one claimed job from "
+            "You are an Apsimo worker agent executing one claimed job from "
             "the task queue with the tools granted to you."
         ),
         "rules": (

@@ -1,6 +1,6 @@
 # Current work during a native turn
 
-Hermes requests Colony memory once at the beginning of a turn. A turn can then
+Hermes requests Apsimo memory once at the beginning of a turn. A turn can then
 make several model calls while tools run or other sessions finish tasks. The
 initial work snapshot is therefore explicitly labeled as observed at turn start.
 
@@ -102,7 +102,7 @@ states. Unrecognized statuses become `ended`, not successful completion. A
 missing observation or unavailable service still becomes unknown on expiry.
 
 Hermes can also skip `pre_llm_call` when another session is still invoking that
-same callback. The Colony memory provider's existing synchronous `on_turn_start`
+same callback. The Apsimo memory provider's existing synchronous `on_turn_start`
 now retains a transient copy of the clean native text input and transport context.
 The supported request middleware binds it to one exact session/task/turn and
 can run the missed initialization before recall, work and tool authority are
@@ -137,7 +137,7 @@ and task ownership contracts.
 
 Qualified Hermes 0.21.1 adds its assigned-worker instructions whenever
 `kanban_show` is available. Ordinary profiles may expose the same tools without
-owning a dispatcher task. Colony corrects this known mismatch through its existing
+owning a dispatcher task. Apsimo corrects this known mismatch through its existing
 `llm_request` middleware: it removes the exact native assignment block from
 instruction fields unless the existing Hermes task binding and context-local
 dispatcher-ownership predicate both apply. Actual assigned workers keep their

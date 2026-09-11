@@ -17,11 +17,12 @@ jobs:
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - name: Build both distributions
+      - name: Build adapter, sidecar and hostworker distributions
         run: |
           pip install build twine
           python -m build --outdir dist .
           python -m build --outdir dist ./sidecar
+          python -m build --outdir dist ./hostworker
           python -m twine check dist/*
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
@@ -51,8 +52,8 @@ jobs:
           context: ./sidecar
           push: true
           tags: |
-            ghcr.io/aevonix/colony:latest
-            ghcr.io/aevonix/colony:${{ github.ref_name }}
+            ghcr.io/aevonix/apsimo:latest
+            ghcr.io/aevonix/apsimo:${{ github.ref_name }}
 
   # --- GitHub Release ← tag + CHANGELOG ---
   # Runs only after PyPI and GHCR publish, so the Release never points at

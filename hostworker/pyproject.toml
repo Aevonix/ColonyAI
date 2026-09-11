@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -7,6 +7,9 @@ name = "apsimo-hostworker"
 version = "0.2.0"
 description = "Stateless, stdlib-only core for governed Apsimo host workers"
 requires-python = ">=3.11"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 # Deliberately empty: this distribution is stdlib-only and must never grow a
 # dependency on FastAPI or apsimo (see apsimo_hostworker/contract.py).
 dependencies = []
@@ -16,7 +19,7 @@ dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo_hostworker*"]
+include = ["apsimo_hostworker*", "colony_hostworker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

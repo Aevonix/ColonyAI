@@ -19,6 +19,8 @@ from pathlib import Path
 # CLI and direct service starts use the same selected private instance.
 from apsimo.util.instance import load_environment
 load_environment()
+from apsimo.environment import apply_environment_aliases
+apply_environment_aliases()
 
 from fastapi import FastAPI
 
@@ -4082,7 +4084,7 @@ async def lifespan(app: FastAPI):
 def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
     app = FastAPI(
-        title="Colony Intelligence Sidecar",
+        title="Apsimo",
         version="0.1.0",
         lifespan=lifespan,
     )

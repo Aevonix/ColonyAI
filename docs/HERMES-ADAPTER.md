@@ -8,9 +8,9 @@ explicit enriched-context briefing option. Scoped memory retrieval, source
 citations and current work context continue through the existing assembly path.
 
 Hermes 0.21.1 applies `hooks.output_spill` to external memory-provider output.
-Its default 10,000-character head/tail preview can cut a Colony source envelope
+Its default 10,000-character head/tail preview can cut a Apsimo source envelope
 or remove the middle of an original/correction bundle. Guided attachment and
-explicit `colony init --refresh-adapter` align `hooks.output_spill.max_chars` to
+explicit `apsimo init --refresh-adapter` align `hooks.output_spill.max_chars` to
 65,536 characters, retaining an existing larger cap or disabled spill setting.
 The original configuration is backed up and an adjustment is printed during
 refresh. The managed draft profile receives the same alignment at creation,
@@ -25,8 +25,8 @@ size their own transfer allowance. The aggregate of optional context sections
 has no universal size bound. A native MemoryManager regression verifies a complete envelope
 larger than the old default survives the installed configuration unchanged.
 
-`colony-hermes` packages the existing general adapter and memory provider for
-installation into the Python environment that runs Hermes. The Colony sidecar
+`apsimo-hermes` packages the existing general adapter and memory provider for
+installation into the Python environment that runs Hermes. The Apsimo sidecar
 is a separate service. The adapter does not install the sidecar, a context
 engine, a worker daemon, or operating-system services.
 
@@ -40,12 +40,12 @@ python -m build
 Install the resulting wheel with the Python interpreter that runs Hermes:
 
 ```sh
-python -m pip install dist/colony_hermes-1.0.33-py3-none-any.whl
+python -m pip install dist/apsimo_hermes-1.0.33-py3-none-any.whl
 ```
 
 The wheel exposes `colony` through `hermes_agent.plugins` and `colony-memory`
 through `hermes_agent.memory_providers`. It maps the canonical source files in
-`plugins/hermes-plugin/` and `plugins/colony-memory/` to importable packages.
+`plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
 Only `catalog.py` and `contract.py` from `hostworker/colony_hostworker/` are
 included in the adapter's private catalog package. Source-checkout plugin paths
 and the existing installer's copying behavior remain compatible.
@@ -136,7 +136,7 @@ engine.
 ## Already captured host input
 
 From 1.0.32, a host that has already admitted the human input can wrap the
-existing native conversation in `colony_hermes.input_provenance.supplied_input`.
+existing native conversation in `apsimo_hermes.input_provenance.supplied_input`.
 The host validates its participant, source hashes and current revisions first.
 The native participant resolver and tool authority remain authoritative; the
 supplied contact does not grant capabilities.
@@ -157,7 +157,7 @@ The context exposes the durably queued result's dependencies for the host to
 revalidate before delayed delivery or further effects. It does not confirm
 backend delivery or reconstruct unlinked historical paraphrases. See the
 [supplied-input contract](../plugins/hermes-plugin/SUPPLIED-INPUT.md), also
-included as `colony_hermes/SUPPLIED-INPUT.md` in the adapter package.
+included as `apsimo_hermes/SUPPLIED-INPUT.md` in the adapter package.
 
 Hosts can also register [source-bound updates during native work](NATIVE-SOURCE-UPDATES.md)
 on this same input context. Registration, request visibility and behavioral
@@ -249,14 +249,14 @@ Hermes is installed separately; this package does not select or upgrade it.
 
 The additional native provider-call memory boundary is qualified on Hermes
 0.21.1 with NeMo Relay 0.8.3. Install it with
-`python -m pip install 'colony-hermes[native-memory]'`; the supported Hermes
+`python -m pip install 'apsimo-hermes[native-memory]'`; the supported Hermes
 release also declares this Relay dependency. CI installs that extra explicitly.
 Older Hermes attachment support does not imply this additional erasure coverage.
 Missing scope-local Relay capabilities leave the ordinary adapter active and
 emit a warning when the native boundary cannot be registered.
 
 Hermes's maximum-iteration summary rebuilds historical `api_content` and bypasses
-`llm_request` and ordinary API observers. Colony binds its existing authenticated
+`llm_request` and ordinary API observers. Apsimo binds its existing authenticated
 source-validity and erasure filter to that native turn's scoped Relay execution
 contract. The SDK receives filtered history for the summary, including its
 empty-answer retry. A one-use digest avoids repeating the ordinary request
@@ -278,7 +278,7 @@ This is provider-input coverage on those dispatch paths, not erasure of native
 transcript files, Relay exports, arbitrary paraphrases, or calls outside them.
 
 Hermes 0.21.1 wraps provider recollection in a note calling it authoritative
-reference data. Colony's supported `llm_request` middleware replaces that outer
+reference data. Apsimo's supported `llm_request` middleware replaces that outer
 note only in an observed, current, source-stamped native memory suffix. It keeps
 the person’s input, quoted source bytes, source revisions and erasure checks
 unchanged. Recollection retains its speaker, time and factual, reported,
@@ -296,7 +296,7 @@ same evidence framing and source lineage when the two input forms differ.
 System/developer instructions and Responses instructions may document the generic
 `<memory-context>` fence. That markup alone is not a recalled packet there, even
 when the example omits a closing tag. Exact forgotten source copies and explicit
-Colony lineage packets still reconcile in these fields. Legacy untagged fenced
+Apsimo lineage packets still reconcile in these fields. Legacy untagged fenced
 instruction text is preserved unless it is an exact erased source or observed
 alias; substring and paraphrase erasure are not promised. Native automatic
 recollection continues to reconcile in its appended user-content boundary.
@@ -327,7 +327,7 @@ for this new surface. To observe trusted agent cron fires, include `cron` in
 the existing `attested_system_platforms` configuration; it is not enabled by
 the adapter's default `cli` binding. No network call is made during registration.
 
-Colony stores only execution IDs, participant/session linkage, channel, phase,
+Apsimo stores only execution IDs, participant/session linkage, channel, phase,
 tool name and observation times in the existing `turn-idempotency.db`. It does
 not copy prompts, tool arguments/results or task descriptions. Each hook has a
 400 ms network deadline and failures do not stop a turn. Ordinary use supplies
@@ -487,13 +487,13 @@ authority at native `tool_execution` middleware. Resolved owner turns and
 explicitly configured local system platforms retain native tools and existing
 Hermes toolset, approval and guardrail checks. Guests cannot directly invoke
 shell, files, network, devices, coding, delegation, native memory/session tools,
-or unknown plugin/MCP tools. The exact Colony tools keep their existing scoped
+or unknown plugin/MCP tools. The exact Apsimo tools keep their existing scoped
 read checks and action mediators. No arbitrary tool prefix or relationship
 score grants access.
 
 A native-tool request from a guest returns `requires_authorization`, with no
 effect and no approval created. The response directs the agent to an enabled
-Colony action request or the owner. It does not invent an approval request or
+Apsimo action request or the owner. It does not invent an approval request or
 permit a raw tool after conversational consent. Broader guest capabilities
 require a scoped mediated interface; this packet supplies none automatically.
 
@@ -512,7 +512,7 @@ is loaded. It does not sandbox trusted installed plugin code, remove private
 facts already present in old transcripts/system prompts, or replace the
 deployment's channel admission, secret isolation and consent policy. Native
 owner tools retain their existing consent behavior; they are not converted to
-Colony intents by this gate. Qualify both owner and guest messages before
+Apsimo intents by this gate. Qualify both owner and guest messages before
 enabling a public channel.
 
 ## Native post-turn review
@@ -546,7 +546,7 @@ controlled model fixture.
 
 ### Measured skill updates
 
-`python -m colony_hermes.review_evaluation --skill NAME --pending ID
+`python -m apsimo_hermes.review_evaluation --skill NAME --pending ID
 --oracle trusted_local_module:function` evaluates one explicitly selected,
 existing curator-owned `SKILL.md` proposal. It accepts native full-content
 edits or exact text patches, including a one-operation native batch. Text
@@ -594,12 +594,12 @@ recurring skill or an observed spontaneous model regression.
 ### Bounded operational reviews
 
 New `colony_work_initiative` reviews require a managed `colony-reviews`
-native profile. The existing guided `colony init --profile local` setup offers
+native profile. The existing guided `apsimo init --profile local` setup offers
 an optional review choice, default off; `--native-reviews` selects it explicitly.
 Existing attachments can use that same flag and their configured planning role.
 `--refresh-adapter` refreshes an already enabled review profile without enabling
 a previously disabled one. For private deployment staging, use the selected sidecar interpreter:
-`python -m colony_sidecar.setup_native_reviews --install /private/instance`.
+`python -m apsimo.setup_native_reviews --install /private/instance`.
 This prepares the profile and enables `plugins.colony.native_reviews` in the
 selected native root configuration. An existing profile belonging to another
 instance is retained and installation fails. Named conversation profiles must

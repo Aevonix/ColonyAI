@@ -18,10 +18,10 @@ for replay, changed scope and accepting-session lease behavior.
 
 ## Native execution
 
-`colony init --local-work` verifies function calling and creates a native
+`apsimo init --local-work` verifies function calling and creates a native
 `colony-drafts` board and worker profile. The selected Hermes gateway owns
 dispatch, claims, attempts, process recovery, terminal state and delivery.
-Colony retains the explicit acceptance, commitment scope and report validation.
+Apsimo retains the explicit acceptance, commitment scope and report validation.
 There is no new scheduler, service or Hermes core patch.
 
 The host selects `COLONY_LOCAL_WORK_ENABLED=true`,
@@ -47,7 +47,7 @@ not enter owner turn-memory capture. Retained history is still native history.
 
 ## Routing, results and recovery
 
-The gateway resolves the local `planning` role in the Colony interpreter and
+The gateway resolves the local `planning` role in the Apsimo interpreter and
 refreshes the dedicated native profile before promoting new work. Nonempty
 native dispatch ticks refresh that profile for subsequent attempts. The upstream
 tick hook runs after dispatch, so a worker already launched keeps its earlier
