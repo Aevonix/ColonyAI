@@ -150,6 +150,59 @@ def _read_rows(request):
                             if isinstance(part, dict) and part.get('type') == 'tool_result')
 
 
+def _restore_source_updates(original, filtered, updates):
+    """Keep validated steering when older Hermes appends it to a source read.
+
+    The source body remains withheld. Only registered carriers in an actual
+    native suffix survive; neither other suffix prose nor marker syntax grants
+    source ancestry or participant authority. Call after check_updates passes.
+    """
+    try:
+        from agent.prompt_builder import format_steer_marker, STEER_MARKER_OPEN, STEER_MARKER_CLOSE
+    except ImportError:
+        return filtered
+    restored = {}
+    for row in _read_rows(original):
+        if not _historical_source_read(row):
+            continue
+        identity = row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id')
+        value = _read_value(row)
+        text = _read_text(value)
+        if not isinstance(identity, str) or not identity or not isinstance(text, str):
+            continue
+        _, end = json.JSONDecoder().raw_decode(text.lstrip())
+        suffix = text.lstrip()[end:]
+        if isinstance(value, list) and len(value) > 1:
+            # Native Anthropic steering is a separate trailing text part.
+            suffix = value[-1].get('text', '') if isinstance(value[-1], dict) else ''
+        if not isinstance(suffix, str):
+            continue
+        marker = '\n\n' + STEER_MARKER_OPEN + '\n'
+        start = suffix.rfind(marker)
+        if start < 0 and isinstance(value, list) and suffix.startswith(marker.lstrip()):
+            suffix = '\n\n' + suffix
+            start = 0
+        if start < 0 or not suffix.endswith('\n' + STEER_MARKER_CLOSE):
+            continue
+        marked = suffix[start:]
+        inner = marked[len(marker):-len('\n' + STEER_MARKER_CLOSE)]
+        if format_steer_marker(inner) != marked:
+            continue
+        carriers = [entry['carrier'] for entry in updates if entry['carrier'] in inner]
+        carriers.sort(key=inner.index)
+        if carriers:
+            restored.setdefault(identity, []).append(carriers)
+    for row in _read_rows(filtered):
+        identity = row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id')
+        candidates = restored.get(identity, []) if isinstance(identity, str) else []
+        if len(candidates) != 1:
+            continue
+        field = 'output' if row.get('type') == 'function_call_output' else 'content'
+        if row.get(field) == '[Opened source withheld; read again after source freshness is restored.]':
+            row[field] += format_steer_marker('\n\n'.join(candidates[0]))
+    return filtered
+
+
 def _historical_source_read(row):
     try:
         # A source wrapper with unrecognized trailing text is not authenticated,
@@ -779,6 +832,7 @@ class RequestMemory:
                 return {'request': withheld_request(filtered, failure=supplied_input.failure),
                     'source': 'colony', 'freshness_retryable': False,
                     'reason': 'source_update_unavailable'}
+            filtered = _restore_source_updates(original_request, filtered, updates)
             supplied_input.admit_updates(scope, filtered, updates)
         if operational and not (fresh and observed and operational['contact_id'] == contact
                                 and operational['watermark'] == watermark):
