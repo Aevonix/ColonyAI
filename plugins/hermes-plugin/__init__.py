@@ -43,6 +43,7 @@ from . import source_forget
 from . import source_annotate
 from . import source_read
 from . import input_provenance
+from .task_controller import configured_tasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
 
 from .colony_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
@@ -311,6 +312,7 @@ _TOOL_SCHEMAS: list[dict[str, Any]] = sorted(
     [
         *copy.deepcopy(_CATALOG_ACTION_MODEL_TOOL_SCHEMAS),
         *_LOCAL_TOOL_SCHEMAS,
+        _NATIVE_TASK_SCHEMA,
     ],
     key=lambda item: item["name"],
 )
@@ -332,7 +334,7 @@ _ACTION_INTENT_TOOL_NAMES: tuple[str, ...] = tuple(
 )
 
 _OWNER_MESSAGE_TOOL_NAMES: tuple[str, ...] = ("colony_send_message",)
-_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_contacts', 'colony_followup', 'colony_read_work_source', 'colony_judgments', 'colony_memory_forget', 'colony_memory_annotate', 'colony_memory_read_source', 'colony_work_initiative')
+_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_contacts', 'colony_followup', 'colony_read_work_source', 'colony_judgments', 'colony_memory_forget', 'colony_memory_annotate', 'colony_memory_read_source', 'colony_work_initiative', 'colony_task')
 
 # No event can be injected until Colony exposes an exact viewer-attested event
 # projection.  An empty catalog is an intentional security and attribution
@@ -415,6 +417,7 @@ class _TransportScope:
     resolution_status: str
     user_message: str = ""
     authority_gateway: str = ""
+    parent_session_id: str = ""
 
     @property
     def valid_participant(self) -> bool:
@@ -534,11 +537,12 @@ class _TransportScopeRegistry:
                 return replace(binding[1], session_id=session,
                     task_id=str(kwargs.get("task_id") or ""),
                     turn_id=str(kwargs.get("turn_id") or ""),
-                    user_message=str(kwargs.get("user_message") or ""))
+                    user_message=str(kwargs.get("user_message") or ""),
+                    parent_session_id=parent_session)
         # A child's default CLI platform is not a fresh local owner attestation.
         return _TransportScope(session, str(kwargs.get("task_id") or ""),
             str(kwargs.get("turn_id") or ""), "subagent", "", "",
-            "unresolved", "parent_scope_missing")
+            "unresolved", "parent_scope_missing", parent_session_id=parent_session)
 
     def bind_current_session(self, **kwargs: Any) -> None:
         """Follow native compression rotation, without guessing by session recency."""
@@ -2346,6 +2350,10 @@ def register(ctx: Any) -> None:
     turn_writer_platforms = boundary.turn_writer_platforms
     turn_outbox = boundary.turn_outbox
     request_memory = RequestMemory(client, turn_outbox)
+    task_config = config.get('native_tasks')
+    native_tasks = (configured_tasks(client, turn_outbox, owner_contact_id, config=task_config,
+        attested_system_platforms=attested_system_platforms)
+        if isinstance(task_config, dict) and task_config.get('enabled') is True else None)
     native_memory = NativeMemoryRequests(request_memory)
     request_work = RequestWork(client)
     execution_observer = (
@@ -2397,7 +2405,17 @@ def register(ctx: Any) -> None:
                     initialized_turns.popitem(last=False)
         review = _native_background_review()
         parent = _REVIEW_PARENT_SCOPE.get() if review else None
-        scope = _background_review_scope(parent, **kwargs) if review else _TRANSPORT_SCOPES.child_scope(**kwargs) if kwargs.get("parent_session_id") else _resolve_scope(
+        scope = _background_review_scope(parent, **kwargs) if review else _TRANSPORT_SCOPES.child_scope(**kwargs) if kwargs.get("parent_session_id") else None
+        if scope is None and native_tasks is not None and kwargs.get('platform') == 'colony_task':
+            try:
+                fields = native_tasks.native_scope_fields(**kwargs)
+            except Exception:
+                fields = {'sender_id': '', 'contact_id': '', 'authority_lane': 'unresolved',
+                          'resolution_status': 'native_task_source_unavailable'}
+            scope = _TransportScope(*key, platform='colony_task',
+                user_message=direct_text(kwargs.get('user_message')), **fields)
+        if scope is None:
+            scope = _resolve_scope(
             client,
             session_id=str(kwargs.get("session_id") or ""),
             task_id=str(kwargs.get("task_id") or ""),
@@ -2494,7 +2512,12 @@ def register(ctx: Any) -> None:
                 if user_message and assistant_message else ""
             ),
             "model": str(kwargs.get("model") or ""),
-            "sender": {"platform": scope.platform, "user_id": scope.sender_id},
+            # A derived native task retains the actual admitting sender's
+            # authority channel. Its execution platform is not a new human
+            # handle; attributing that pair would create another contact and
+            # break the same-owner source dependency at final persistence.
+            "sender": {"platform": scope.authority_gateway or scope.platform,
+                       "user_id": scope.sender_id},
         }
         if supplied_input is not None:
             # The host already admitted the human input. This native turn is
@@ -2667,6 +2690,10 @@ def register(ctx: Any) -> None:
             result['request'] = input_provenance.withheld_request(result['request'],
                 failure=input_provenance.current().failure)
             result['reason'] = 'source_input_unavailable'
+        supplied = input_provenance.current()
+        if supplied is not None and not supplied.observe_updates(scope, result['request'], stage='middleware_visible'):
+            result['request'] = input_provenance.withheld_request(result['request'], failure=supplied.failure)
+            result['reason'] = 'source_update_receipt_unavailable'
         result['request'] = describe(result['request'])
         native_memory.checked(result['request'], scope)
         return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
@@ -2708,6 +2735,11 @@ def register(ctx: Any) -> None:
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
         return native_reviews.handle(args or {}, scope)
+    def native_task_handler(args=None, **kwargs):
+        context = _TOOL_EXECUTION_CONTEXT.get() or {}
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
+            task_id=context.get('task_id', ''), turn_id=context.get('turn_id', ''))
+        return native_tasks.handle(args or {}, scope)
     def source_forget_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
@@ -2727,6 +2759,8 @@ def register(ctx: Any) -> None:
         return source_read.handle(args or {}, scope, client, request_memory, context)
     for schema in _TOOL_SCHEMAS:
         name = schema["name"]
+        if name == 'colony_task' and native_tasks is None:
+            continue
         if name in _READ_TOOL_NAMES and name not in boundary.enabled_read_tools:
             continue
         if name in _ACTION_INTENT_TOOL_NAMES and name not in runtime_enabled_actions:
@@ -2738,6 +2772,7 @@ def register(ctx: Any) -> None:
             toolset="colony_local_work" if name == 'colony_read_work_source' else "colony",
             schema=schema,
             handler=(
+                native_task_handler if name == 'colony_task' else
                 initiative_work_handler if name == 'colony_work_initiative' else
                 source_annotate_handler if name == 'colony_memory_annotate' else
                 source_read_handler if name == 'colony_memory_read_source' else
@@ -2767,6 +2802,15 @@ def register(ctx: Any) -> None:
 
     ctx.register_hook('on_kanban_dispatch_tick', native_reviews.reconcile)
     ctx.register_hook('on_kanban_dispatch_tick', native_followups.reconcile)
+    if native_tasks is not None:
+        ctx.register_hook('pre_gateway_dispatch', native_tasks.observe_gateway)
+        ctx.register_platform(name='colony_task', label='Colony background tasks',
+            adapter_factory=native_tasks.create_adapter, check_fn=lambda: True,
+            is_connected=lambda selected: bool(getattr(selected, 'enabled', False)),
+            max_message_length=1000000)
+        ctx.register_hook('pre_llm_call', native_tasks.bind_native_turn)
+        ctx.register_hook('on_session_end', native_tasks.finish_native_turn)
+        ctx.register_hook('on_kanban_dispatch_tick', native_tasks.reconcile_pending)
 
     ctx.register_hook("pre_llm_call", pre_llm_call)
     def bind_child(**kwargs):

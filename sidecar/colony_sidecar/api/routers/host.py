@@ -20,7 +20,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional
 
 from fastapi import APIRouter, Body, HTTPException, Query, Request, Response, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from colony_sidecar.goals.store import GoalNotFoundError
 from colony_sidecar import get_state_dir
@@ -3753,8 +3753,14 @@ class SourceFreshnessRequest(BaseModel):
     contact_id: str = Field(min_length=1, max_length=256)
     session_id: str = Field(min_length=1, max_length=256)
     after: int = Field(default=0, ge=0)
-    source_refs: list[SourceReference] = Field(min_length=1, max_length=512)
+    source_refs: list[SourceReference] = Field(max_length=512)
     unannotated_input_refs: list[SourceInputReference] = Field(default_factory=list, max_length=512)
+
+    @model_validator(mode='after')
+    def exact_source_selector(self):
+        if not self.source_refs and not self.unannotated_input_refs:
+            raise ValueError('Exact source revisions or captured inputs are required')
+        return self
 
 
 @router.post('/memory/sources/erasures')
@@ -3766,7 +3772,10 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     an erasure watermark alone cannot certify cached recall after a correction.
     Optional exact input membership also rechecks that an operational excerpt
     has no applicable annotation, including a first note added after selection.
-    POST keeps the bounded reference set out of URLs and adds no persisted state.
+    Exact current input revisions are returned separately so a host that only
+    retained the original input hash can pin the canonical media revision, then
+    repeat the strict supplied-version check. Missing expected versions never
+    make sources_current true. POST adds no persisted state.
     """
     person = resolve_request_person(request, claimed_person_id=body.contact_id) or body.contact_id
     from colony_sidecar.turns import get_turn_idempotency_ledger
@@ -3782,15 +3791,21 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     if body.unannotated_input_refs:
         from colony_sidecar.turns.source_annotations import inputs_unannotated
         refs = [ref.model_dump() for ref in body.unannotated_input_refs]
+        page['input_source_refs'] = []
         try:
             inputs = ledger.resolve_input_dependencies(contact_id=person,
                 session_id=body.session_id, refs=refs)
         except ValueError:
             page['sources_current'] = False
         else:
-            page['sources_current'] &= (
-                {(ref['source_id'], ref['source_version']) for ref in inputs} <= expected
-                and inputs_unannotated(ledger, refs))
+            versions = {(ref['source_id'], ref['source_version']) for ref in inputs}
+            current_inputs = ledger.source_references([ref['source_id'] for ref in inputs],
+                contact_id=person, session_id=body.session_id)
+            inputs_current = (versions == {(ref['source_id'], ref['source_version']) for ref in current_inputs}
+                              and inputs_unannotated(ledger, refs))
+            if inputs_current:
+                page['input_source_refs'] = current_inputs
+            page['sources_current'] &= inputs_current and versions <= expected
     return page
 
 

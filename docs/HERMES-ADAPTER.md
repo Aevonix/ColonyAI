@@ -159,6 +159,10 @@ backend delivery or reconstruct unlinked historical paraphrases. See the
 [supplied-input contract](../plugins/hermes-plugin/SUPPLIED-INPUT.md), also
 included as `colony_hermes/SUPPLIED-INPUT.md` in the adapter package.
 
+Hosts can also register [source-bound updates during native work](NATIVE-SOURCE-UPDATES.md)
+on this same input context. Registration, request visibility and behavioral
+application are separate; native task execution stays with Hermes.
+
 ## Source erasure and replay
 
 `POST /v1/host/memory/sources/forget` accepts an authenticated contact and 1 to

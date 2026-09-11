@@ -1361,10 +1361,14 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     )
     default_context = _Context(default_config)
     module.register(default_context)
+    # Native background execution is a separate explicit opt-in. Its authored
+    # schema belongs to the catalog, but an ordinary profile must not expose it.
+    default_coordination = set(module._COORDINATION_TOOL_NAMES) - {"colony_task"}
+    assert "colony_task" not in default_context.tools
     expected_default = [
         schema for schema in module._TOOL_SCHEMAS
         if schema["name"] in module._READ_TOOL_NAMES
-        or schema["name"] in module._COORDINATION_TOOL_NAMES
+        or schema["name"] in default_coordination
         or schema["name"] == "colony_create_commitment"
         or schema["name"] == "colony_send_message"
     ]
@@ -1392,7 +1396,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     }
     message_only_context = _Context(message_only_config)
     module.register(message_only_context)
-    assert list(message_only_context.tools) == sorted([*module._COORDINATION_TOOL_NAMES, 'colony_send_message'])
+    assert list(message_only_context.tools) == sorted([*default_coordination, 'colony_send_message'])
     message_only_attestation = module.runtime_governance_attestation(
         message_only_config
     )

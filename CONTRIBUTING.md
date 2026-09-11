@@ -13,9 +13,9 @@ cd ColonyAI/sidecar
 pip install -e ".[dev]"
 ```
 
-You need Python 3.11+. A running Neo4j and model endpoints are only required
-to run the sidecar itself (`colony init` / `colony start`); the test suite
-stubs them.
+You need Python 3.11+. The lightweight profile uses local storage and one
+OpenAI-compatible model endpoint; Neo4j is optional. Tests use local fixtures
+unless a selected qualification explicitly requires a real model or service.
 
 ## Repository layout
 

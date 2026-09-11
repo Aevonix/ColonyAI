@@ -22,6 +22,9 @@ channels, model endpoints and optional hardware adapters.
   missing observations stay explicit. Accepted drafts retain their identity
   through delayed acknowledgments. Completed artifact prose opens on demand;
   its status, limitations and report receipt remain in automatic context.
+  Optional [conversation task controls](docs/NATIVE-TASK-CHANNELS.md) let the
+  same owner start, inspect, steer and stop work from different channels while
+  continuing the foreground conversation.
 - **A private instance:** source-backed preferences, inspectable attention and
   revisable relationship appraisals can guide relevant behavior. Relationship
   state and action permissions are separate. Automatic persistent opinions are
@@ -42,6 +45,9 @@ ordinary-use evidence for useful autonomous learning. The
 ## Start with Hermes
 
 The current qualification target is Hermes 0.21.1; 0.21.0 attachment remains supported.
+Optional [concurrent background tasks](docs/NATIVE-TASK-CHANNELS.md) require the
+callback correction in the [pinned Hermes compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
+The daily upstream check remains separate, and setup does not patch your runtime.
 Native final-summary memory filtering requires NeMo Relay 0.8.3, included in
 the `native-memory` extra below. Older attachments retain ordinary request filtering.
 Use the selected Hermes runtime's Python interpreter for attachment;
@@ -55,7 +61,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.17" "colony-hermes[native-memory]==1.1.17"
+python -m pip install "colonyai[hermes]==1.2.0" "colony-hermes[native-memory]==1.2.0"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 

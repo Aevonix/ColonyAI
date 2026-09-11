@@ -1,6 +1,6 @@
 # Governed Colony plugin for Hermes
 
-This is Colony's generic, zero-Hermes-patch sidecar integration. It gives Hermes
+This is Colony's generic sidecar integration through Hermes interfaces. It gives Hermes
 transport-scoped Colony reads, mediator-only action intents, one exact turn
 writer, and text ResponseGuard at the pinned `transform_llm_output` hook.
 
@@ -8,6 +8,13 @@ It intentionally does not provide a second memory/context engine, an event
 subscriber, cron autonomy, direct initiative/queue workers, voice handling, or
 deployment-specific identity. Colony memory is supplied by the separate
 `colony-memory` provider; execution belongs to an authenticated action plane.
+
+An optional [`colony_task` tool](../../docs/NATIVE-TASK-CHANNELS.md) starts
+background work through the existing Hermes gateway while the conversation
+continues. The same owner can inspect, steer or stop that task from another
+authenticated channel. This adds an adapter and durable source associations;
+it uses the native executor and keeps hardware and outward delivery in the
+deployment layer.
 
 ## Configuration
 

@@ -63,6 +63,9 @@ STANDARD.extend(MEMORY_CASES)
 CONSUMERS.update(MEMORY_CONSUMERS)
 EVALUATORS.update(MEMORY_EVALUATORS)
 
+from .structured_cases import CASES as STRUCTURED_CASES
+STANDARD.extend(STRUCTURED_CASES)
+
 
 def select_cases(roles):
     cases = [case for case in STANDARD if case.role in roles]

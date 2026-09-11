@@ -1649,6 +1649,15 @@ class ColonyMemoryProvider(_MemoryProviderABC):
         transient outage retries on the next turn."""
         if not sender:
             return None
+        try:
+            from colony_hermes.native_task_platform import bound_task_contact
+            task_contact = bound_task_contact(platform, sender, self._session_id)
+        except ImportError:
+            task_contact = None
+        if task_contact is not None or platform == 'colony_task':
+            # This execution channel has no human handle to auto-provision.
+            # Only the correlated, source-checked native turn can supply one.
+            return task_contact or None
         key = f"{platform}:{sender}"
         now = _ttime.monotonic()
         with self._handle_cache_lock:
