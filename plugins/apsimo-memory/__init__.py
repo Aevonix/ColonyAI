@@ -21,8 +21,8 @@ def register(ctx):
     Hermes updates — Hermes core lives under hermes-agent/ and is replaced on
     update, while ~/.hermes/plugins/ is not.
 
-    Hermes (v0.15.x) invokes hook callbacks SYNCHRONOUSLY as ``cb(**kwargs)`` and
-    injects any returned ``str`` / ``{"context": str}`` into the user message.
+    Hermes injects returned ``str`` / ``{"context": str}`` into the user
+    message's API content, which it also retains for later history replay.
     ``pre_llm_call`` is the only lifecycle hook that carries the message sender
     (``sender_id``) and ``platform``, so BOTH contact resolution and current-time
     injection happen here (the old ``agent:start`` hook is not a valid hook name
@@ -30,8 +30,8 @@ def register(ctx):
 
     - resolve the real contact from the sender → per-contact memory/affect/facts
       engage instead of 'default'
-    - inject the authoritative current date/time so the agent never anchors on the
-      (cached, stale) session-start date in long-running sessions
+    - attach a clock scoped to this user turn, so retained clocks are not
+      mistaken for the present time on later turns
     """
     provider = ApsimoMemoryProvider()
     ctx.register_memory_provider(provider)
@@ -46,18 +46,11 @@ def register(ctx):
             )
         except Exception:
             pass
-        # 2) Inject the authoritative current date/time as ephemeral user context.
+        # 2) Scope the clock to its owning turn: native api_content is replayed.
         try:
-            line = provider._current_time_line()
-            if line:
-                return {
-                    "context": (
-                        f"\u23f0 CURRENT DATE & TIME, right now: {line}. This is TODAY. Use this clock "
-                        "when needed to interpret or answer the request. Any 'Conversation started' "
-                        "date in your prompt is only when this long-running session "
-                        "began (often days ago), NOT today."
-                    )
-                }
+            context = provider._turn_clock_context()
+            if context:
+                return {"context": context}
         except Exception:
             pass
         return None

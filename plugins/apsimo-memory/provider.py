@@ -1014,7 +1014,7 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
             + "Do not re-announce it to the owner unprompted.\n\n" + txt
         )
 
-    # -- Authoritative current time (pre_llm_call hook) ------------------------
+    # -- Clock scoped to the owning user turn (pre_llm_call hook) --------------
 
     def _current_time_line(self) -> str:
         """Local, no-network current date/time in the agent's home timezone."""
@@ -1033,22 +1033,29 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
         hm = now.strftime("%I:%M %p").lstrip("0")
         return f"{now.strftime('%A, %B %d, %Y')}, {hm} {now.strftime('%Z') or 'UTC'}"
 
+    def _turn_clock_context(self) -> str:
+        """A retained clock describes its original turn, never all later turns."""
+        line = self._current_time_line()
+        if not line:
+            return ""
+        return (
+            f"Clock captured for this user turn: {line}. "
+            "This clock applies only to this turn; on later turns it is historical. "
+            "Use the latest turn's clock for relative dates, not earlier 'now' or 'today' "
+            "notes or the conversation-start date. Keep source event and observation "
+            "times separate. Tool results from earlier turns record earlier observations; "
+            "they do not establish that a source was inspected again in this turn."
+        )
+
     def inject_current_time(self, messages: list) -> list:
-        """pre_llm_call hook: inject the authoritative current time as a system
-        message so the model never anchors on the (cached, stale) session-start
-        date in long-running sessions. Generic — any Apsimo agent."""
+        """Compatibility hook: add the same turn-scoped clock as registration."""
         try:
-            line = self._current_time_line()
+            context = self._turn_clock_context()
         except Exception:
             return messages
-        note = {
-            "role": "system",
-            "content": (
-                f"⏰ CURRENT DATE & TIME, right now: {line}. This is TODAY. Use this clock "
-                "when needed to interpret or answer the request. Any 'Conversation started' date in your prompt is only "
-                "when this long-running session began (often days ago), NOT today."
-            ),
-        }
+        if not context:
+            return messages
+        note = {"role": "system", "content": context}
         result = list(messages)
         if result and isinstance(result[-1], dict) and result[-1].get("role") == "user":
             result.insert(-1, note)
