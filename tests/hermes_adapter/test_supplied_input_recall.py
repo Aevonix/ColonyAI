@@ -140,7 +140,7 @@ def respond(request):
    assert len(tool_rows)==1,tool_rows
    if step==3:
     assert record in tool_rows[0]['content'],tool_rows
-    if scenario=='rotate':
+    if scenario in ('rotate','transport_rotate'):
      # Simulate the compressor's session-ID change between native requests.
      # The next request uses the actual middleware/hook and source writer;
      # no supplied-input binding is manufactured by the fixture.
@@ -193,7 +193,7 @@ assert 'COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY' not in os.environ
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
 from run_agent import AIAgent
-from colony_hermes.input_provenance import supplied_input
+from colony_hermes.input_provenance import supplied_input, transport_input
 from colony_hermes import TurnOutbox
 def agent():
  value=AIAgent(api_key='fixture',base_url='http://model.fixture/v1',provider='custom',
@@ -213,7 +213,9 @@ if scenario in ('initial_timeout','initial_remote_protocol','initial_http_503'):
  # A fresh task must rebuild native admission, inherited context and automatic
  # recall. The failed scope itself remains unusable and is never reopened.
 parent=agent();initial_session=parent.session_id
-with supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=parents,source_refs=[ref]) as supplied:
+binding=(transport_input(contact_id='owner',platform='cli',input_refs=parents,source_refs=[ref])
+ if scenario.startswith('transport') else supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=parents,source_refs=[ref]))
+with binding as supplied:
  with patch.object(parent._memory_manager,'prefetch_all',wraps=parent._memory_manager.prefetch_all) as automatic:
   result=parent.run_conversation('Perform the admitted lamp maintenance task.',persist_user_message=original)
  automatic.assert_called_once_with(original,session_id=initial_session)
@@ -231,7 +233,7 @@ with supplied_input(contact_id='owner',session_id=parent.session_id,input_refs=p
  assert automatic_ref in supplied.result['source_refs'],supplied.result
  assert ledger.source_references(['original-input'],contact_id='owner',session_id=parent.session_id)[0] in supplied.result['source_refs']
  assert supplied.result['session_id']==parent.session_id
- if scenario=='rotate':assert parent.session_id!=initial_session
+ if scenario in ('rotate','transport_rotate'):assert parent.session_id!=initial_session
  assert len(generation)==4
 parent.close()
 first_user=next(row['content'] for row in reversed(generation[0]['messages']) if row['role']=='user')
@@ -269,7 +271,7 @@ print(json.dumps({'native_parent_automatic_recall':True,'no_gateway_sender':True
 '''
 
 
-@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate', 'initial_timeout', 'initial_remote_protocol', 'initial_http_503'])
+@pytest.mark.parametrize('scenario', ['normal', 'erase_during', 'rotate', 'initial_timeout', 'initial_remote_protocol', 'initial_http_503', 'transport', 'transport_rotate'])
 def test_supplied_native_input_reaches_automatic_recall_and_delegated_source_reader(artifacts, tmp_path, scenario):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified Hermes release for native request qualification')

@@ -33,17 +33,21 @@ def _refs(value, digest):
 
 
 class SuppliedInput:
-    def __init__(self, contact_id, session_id, input_refs, source_refs):
-        if any(not isinstance(value, str) or not 1 <= len(value) <= 256
-               for value in (contact_id, session_id)):
+    def __init__(self, contact_id, session_id, input_refs, source_refs, *, native_platform=None):
+        if (not isinstance(contact_id, str) or not 1 <= len(contact_id) <= 256
+                or (native_platform is None and (not isinstance(session_id, str)
+                                                or not 1 <= len(session_id) <= 256))
+                or (native_platform is not None and (session_id is not None
+                    or not isinstance(native_platform, str) or not 1 <= len(native_platform) <= 64))):
             raise ValueError('Exact participant and native session are required')
         self.contact_id, self.session_id = contact_id, session_id
+        self._native_platform = native_platform
         self._inputs = _refs(input_refs, 'input_message_hash')
         self._sources = _refs(source_refs, 'source_version') if source_refs else []
         self._lock = threading.Lock()
         self._bound = set()
-        self._sessions = {session_id}
-        self._root_sessions = {session_id}
+        self._sessions = {session_id} if session_id else set()
+        self._root_sessions = {session_id} if session_id else set()
         self._memory_sessions = set()
         self._closed = self._blocked = False
         self._admitted = False
@@ -67,6 +71,17 @@ class SuppliedInput:
 
     def bind(self, scope, parent_session_id=''):
         with self._lock:
+            # A native platform adapter wraps its actual message handler before
+            # Hermes allocates the session. Adopt only the first authenticated
+            # root scope on that declared platform; a child cannot claim it.
+            if (self.session_id is None and not self._closed and not self._blocked
+                    and not parent_session_id and scope.valid_participant
+                    and scope.contact_id == self.contact_id
+                    and scope.platform == self._native_platform
+                    and scope.authority_lane in {'owner', 'system'}):
+                self.session_id = scope.session_id
+                self._sessions.add(scope.session_id)
+                self._root_sessions.add(scope.session_id)
             self._memory_sessions.discard(scope.session_id)
             valid = (not self._closed and scope.valid_participant and scope.contact_id == self.contact_id
                      and (scope.session_id in self._root_sessions or parent_session_id in self._sessions))
@@ -168,6 +183,24 @@ validates exact parent ownership and hashes. The context is copied by native
 worker threads and becomes unusable when its owning call leaves this scope.
 """
     value = SuppliedInput(contact_id, session_id, input_refs, source_refs)
+    token = _CURRENT.set(value)
+    try:
+        yield value
+    finally:
+        with value._lock:
+            value._closed = True
+        _CURRENT.reset(token)
+
+
+@contextmanager
+def transport_input(*, contact_id, platform, input_refs, source_refs=()):
+    """Span a registered platform's actual native handler, not its admission.
+
+    The transport has already resolved these parents. Hermes still resolves
+    current authority and chooses the native root session in bind(). This
+    context alone grants no memory, tool or sender identity.
+    """
+    value = SuppliedInput(contact_id, None, input_refs, source_refs, native_platform=platform)
     token = _CURRENT.set(value)
     try:
         yield value
