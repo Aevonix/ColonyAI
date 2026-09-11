@@ -55,7 +55,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.15" "colony-hermes[native-memory]==1.1.15"
+python -m pip install "colonyai[hermes]==1.1.16" "colony-hermes[native-memory]==1.1.16"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -188,6 +188,10 @@ for native package installations and service bindings.
   Attested completion summaries can also become retained assistant evidence for
   later recall, with supplied source dependencies and erasure. They remain
   unverified machine reports, not owner facts or proof of an external effect.
+- **Measured model consumers.** Opt-in `colony models inspect`, `evaluate` and
+  `compare` record bounded results without changing deployed bindings. Direct
+  completion and actual memory-consumer cases stay separate, with failed and
+  interrupted attempts retained. [Model qualification](docs/MODEL-QUALIFICATION.md)
 - **Replaceable search indexes.** Optional Lance indexes record embedding
   identity and rebuild into a separate generation. Interrupted rebuilds resume;
   incompatible or unknown vectors are not compared. Canonical evidence remains

@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.1.16 - bounded model consumer qualification
+
+The opt-in `colony models inspect`, `evaluate` and `compare` commands inspect
+configured bindings and record finite consumer evaluations without changing
+deployed model selections. Recipes, cases, independent oracles, evaluator
+identity and first results are retained in private result directories. Resume
+continues untouched cases without replaying interrupted or failed attempts.
+
+The initial suite separates direct response semantics from actual memory
+formation, semantic admission review, explicit correction and later-session
+lexical recollection. Supporting judging retains its configured role. Empty
+outputs, unsupported capabilities, setup failures, timeouts and interruptions
+remain in result counts; fallback success cannot pass the requested primary.
+Comparisons separate durations by outcome and flag changed grading or system
+implementations. Unobserved serving weights and missing telemetry stay unknown.
+
+Controlled tests establish runner, transport and memory-consumer mechanics.
+This release does not yet measure installed-native Hermes foreground behavior,
+native tool effects, embedding/reranking quality, media, speech, hardware or
+model swaps. No useful model-quality or performance improvement is claimed
+before an explicit actual comparison. No evaluation service, database, model
+proxy, automatic promotion or approval layer is added.
+
 ## v1.1.15 - selected video sources and original-frame recall
 
 Explicitly supplied short MP4 clips now enter the existing source ledger and
