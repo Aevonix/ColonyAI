@@ -417,6 +417,7 @@ class _TransportScope:
     resolution_status: str
     user_message: str = ""
     authority_gateway: str = ""
+    parent_session_id: str = ""
 
     @property
     def valid_participant(self) -> bool:
@@ -536,11 +537,12 @@ class _TransportScopeRegistry:
                 return replace(binding[1], session_id=session,
                     task_id=str(kwargs.get("task_id") or ""),
                     turn_id=str(kwargs.get("turn_id") or ""),
-                    user_message=str(kwargs.get("user_message") or ""))
+                    user_message=str(kwargs.get("user_message") or ""),
+                    parent_session_id=parent_session)
         # A child's default CLI platform is not a fresh local owner attestation.
         return _TransportScope(session, str(kwargs.get("task_id") or ""),
             str(kwargs.get("turn_id") or ""), "subagent", "", "",
-            "unresolved", "parent_scope_missing")
+            "unresolved", "parent_scope_missing", parent_session_id=parent_session)
 
     def bind_current_session(self, **kwargs: Any) -> None:
         """Follow native compression rotation, without guessing by session recency."""

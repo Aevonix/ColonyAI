@@ -65,6 +65,7 @@ class NativeTaskSources:
         if (scope is None or not scope.valid_participant
                 or scope.authority_lane not in {'owner', 'system'}
                 or scope.platform in _NON_DIRECT or current() is not None
+                or getattr(scope, 'parent_session_id', '')
                 or not scope.session_id or not scope.turn_id):
             raise TaskHandoffError('An ordinary authenticated owner turn is required')
         origin = dict(platform=scope.platform,

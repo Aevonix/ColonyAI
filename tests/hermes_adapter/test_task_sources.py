@@ -25,7 +25,7 @@ from colony_sidecar.api.routers import host
 from colony_sidecar.contacts.config import ContactsConfig
 from colony_sidecar.contacts.store import SQLiteContactStore
 from colony_sidecar.turns import get_turn_idempotency_ledger
-from colony_hermes import _TransportScope
+from colony_hermes import _TransportScope, _TransportScopeRegistry
 from colony_hermes.client import ColonyClient, TurnOutbox, source_message_hash
 from colony_hermes.input_provenance import supplied_input
 from colony_hermes.task_handoffs import TaskHandoffs, TaskHandoffError, erase_task_handoffs
@@ -151,6 +151,23 @@ def authority_changes():
  fails(lambda:sources.capture(scope()),'configured owner')
  assert sources.resolve_owner(local,require_task_grant=False)==owner
 
+def joined_child_is_not_direct_input():
+ src=sources.capture(scope())
+ for parent in (scope(), scope('cli','',session='local-parent',turn='local-turn')):
+  registry=_TransportScopeRegistry()
+  registry.put(parent)
+  registry.bind_child(parent_session_id=parent.session_id,parent_turn_id=parent.turn_id,
+                      child_session_id='child-of-'+parent.session_id)
+  child=registry.child_scope(session_id='child-of-'+parent.session_id,
+    parent_session_id=parent.session_id,task_id='native-child-task',turn_id='native-child-turn',
+    user_message='An agent-created instruction is not another direct owner request.')
+  assert child.valid_participant and child.contact_id==parent.contact_id
+  assert child.platform==parent.platform
+  before=len(wire)
+  fails(lambda:sources.capture(child),'ordinary authenticated')
+  fails(lambda:sources.authorize_control(src,child),'ordinary authenticated')
+  assert len(wire)==before
+
 def erasure():
  global failure
  row=admit();src=row['source']
@@ -225,7 +242,8 @@ finally:
 
 
 @pytest.mark.parametrize('case', [
-    'ordinary', 'authority_changes', 'erasure', 'annotations', 'dependencies_and_outages',
+    'ordinary', 'authority_changes', 'joined_child_is_not_direct_input',
+    'erasure', 'annotations', 'dependencies_and_outages',
 ])
 def test_native_task_sources(artifacts, tmp_path, case):
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG') if key in os.environ}
