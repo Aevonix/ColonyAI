@@ -33,7 +33,7 @@ def _refs(value, digest):
 
 
 class SuppliedInput:
-    def __init__(self, contact_id, session_id, input_refs, source_refs, *, native_platform=None):
+    def __init__(self, contact_id, session_id, input_refs, source_refs, *, native_platform=None, recall_query=None):
         if (not isinstance(contact_id, str) or not 1 <= len(contact_id) <= 256
                 or (native_platform is None and (not isinstance(session_id, str)
                                                 or not 1 <= len(session_id) <= 256))
@@ -41,7 +41,10 @@ class SuppliedInput:
                     or not isinstance(native_platform, str) or not 1 <= len(native_platform) <= 64))):
             raise ValueError('Exact participant and native session are required')
         self.contact_id, self.session_id = contact_id, session_id
+        if recall_query is not None and (not isinstance(recall_query, str) or not 1 <= len(recall_query) <= 32768):
+            raise ValueError('A bounded retained task recall query is required')
         self._native_platform = native_platform
+        self._recall_query = recall_query
         self._inputs = _refs(input_refs, 'input_message_hash')
         self._sources = _refs(source_refs, 'source_version') if source_refs else []
         self._lock = threading.Lock()
@@ -134,6 +137,13 @@ class SuppliedInput:
             self._memory_sessions.add(scope.session_id)
             return True
 
+    def recollection_query(self, session_id, fallback):
+        """Retained root-task semantics for a native automatic resume query."""
+        if not self.memory_contact(session_id):
+            return fallback
+        with self._lock:
+            return self._recall_query if self._recall_query and session_id in self._root_sessions else fallback
+
     def memory_contact(self, session_id):
         """Share an already checked native participant with the memory provider.
 
@@ -193,14 +203,14 @@ worker threads and becomes unusable when its owning call leaves this scope.
 
 
 @contextmanager
-def transport_input(*, contact_id, platform, input_refs, source_refs=()):
+def transport_input(*, contact_id, platform, input_refs, source_refs=(), recall_query=None):
     """Span a registered platform's actual native handler, not its admission.
 
     The transport has already resolved these parents. Hermes still resolves
     current authority and chooses the native root session in bind(). This
     context alone grants no memory, tool or sender identity.
     """
-    value = SuppliedInput(contact_id, None, input_refs, source_refs, native_platform=platform)
+    value = SuppliedInput(contact_id, None, input_refs, source_refs, native_platform=platform, recall_query=recall_query)
     token = _CURRENT.set(value)
     try:
         yield value
