@@ -43,7 +43,7 @@ from . import source_forget
 from . import source_annotate
 from . import source_read
 from . import input_provenance
-from .task_controller import NativeTasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
+from .task_controller import configured_tasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
 
 from .colony_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
@@ -2349,8 +2349,7 @@ def register(ctx: Any) -> None:
     turn_outbox = boundary.turn_outbox
     request_memory = RequestMemory(client, turn_outbox)
     task_config = config.get('native_tasks')
-    native_tasks = (NativeTasks(client, turn_outbox, owner_contact_id,
-        state_path=task_config.get('state_path') or turn_outbox.path.parent/'colony-native-tasks.sqlite3',
+    native_tasks = (configured_tasks(client, turn_outbox, owner_contact_id, config=task_config,
         attested_system_platforms=attested_system_platforms)
         if isinstance(task_config, dict) and task_config.get('enabled') is True else None)
     native_memory = NativeMemoryRequests(request_memory)
@@ -2802,6 +2801,7 @@ def register(ctx: Any) -> None:
     ctx.register_hook('on_kanban_dispatch_tick', native_reviews.reconcile)
     ctx.register_hook('on_kanban_dispatch_tick', native_followups.reconcile)
     if native_tasks is not None:
+        ctx.register_hook('pre_gateway_dispatch', native_tasks.observe_gateway)
         ctx.register_platform(name='colony_task', label='Colony background tasks',
             adapter_factory=native_tasks.create_adapter, check_fn=lambda: True,
             is_connected=lambda selected: bool(getattr(selected, 'enabled', False)),

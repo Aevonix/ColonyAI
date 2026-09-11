@@ -100,6 +100,19 @@ class NativeTaskSources:
             'source_refs': [{'source_id': source_id, 'source_version': version}],
             'origin': origin})
 
+    def actor_contact(self, scope):
+        """Resolve the actual ordinary actor without manufacturing source input."""
+        return self._scope(scope)[1]
+
+    def execution_identity(self, source):
+        owner = self.resolve_owner(source, require_task_grant=True)
+        origin = source['origin']
+        local = origin['platform'] in self.attested_system_platforms
+        return {'sender_id': origin['sender_id'], 'contact_id': owner,
+                'authority_lane': 'system' if local else 'owner',
+                'resolution_status': 'attested_system' if local else 'resolved',
+                'authority_gateway': origin['authority_gateway']}
+
     def resolve_owner(self, source, *, require_task_grant):
         """Resolve current ownership without reading or refreshing old content.
 

@@ -7,6 +7,7 @@ import asyncio
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import contextmanager
 import hashlib
+import importlib
 import json
 import os
 from pathlib import Path
@@ -38,24 +39,38 @@ TOOL_SCHEMA = {
 
 
 class NativeTasks:
-    def __init__(self, client, outbox, owner_contact_id, *, state_path,
-                 attested_system_platforms=('cli',)):
-        self.path = Path(state_path).expanduser()
-        if self.path.resolve() == outbox.path.resolve():
+    def __init__(self, client, outbox, owner_contact_id, *, state_path=None,
+                 attested_system_platforms=('cli',), database=None, sources=None,
+                 adapter_type=None, adapter_resolver=None,
+                 error_type=TaskHandoffError, reply_effect='retained_for_transport'):
+        if database is not None and state_path is not None:
+            raise ValueError('Choose the existing task database or a state path')
+        self._database_factory = database
+        self.path = None if database is not None else Path(
+            state_path or outbox.path.parent / 'colony-native-tasks.sqlite3').expanduser()
+        if self.path is not None and self.path.resolve() == outbox.path.resolve():
             raise ValueError('Task associations cannot replace the turn outbox schema')
-        self.storage = PrivateSQLitePath(self.path)
-        self.sources = NativeTaskSources(client, outbox, owner_contact_id,
+        self.storage = PrivateSQLitePath(self.path) if self.path is not None else None
+        self.sources = sources or NativeTaskSources(client, outbox, owner_contact_id,
             attested_system_platforms=attested_system_platforms,
             erase=lambda contact, rules: erase_task_handoffs(self.database, contact, rules))
-        self.handoffs = TaskHandoffs(self.database, self.sources.resolve_source, self.sources.resolve_owner)
+        self.handoffs = TaskHandoffs(self.database, self.sources.resolve_source, self.sources.resolve_owner,
+            error_type=error_type, reply_effect=reply_effect)
         self.owner = owner_contact_id
+        self.adapter_type = adapter_type
+        self.adapter_resolver = adapter_resolver
         self.adapter = None
+        self.gateway = None
         self._draining = False
         self._pending_after = None
         self._updates_after = None
 
     @contextmanager
     def database(self):
+        if self._database_factory is not None:
+            with self._database_factory() as db:
+                yield db
+            return
         db, identity = self.storage.connect(timeout_seconds=1)
         db.row_factory = sqlite3.Row
         db.execute('PRAGMA synchronous=FULL')
@@ -70,15 +85,20 @@ class NativeTasks:
     def create_adapter(self, config):
         from .native_task_platform import NativeTaskAdapter
         controller = self
-        class ConnectedTaskAdapter(NativeTaskAdapter):
+        base = self.adapter_type or NativeTaskAdapter
+        if not isinstance(base, type) or not issubclass(base, NativeTaskAdapter):
+            raise TypeError('A native task adapter subclass is required')
+
+        class ConnectedTaskAdapter(base):
             @property
             def authorization_is_upstream(adapter):
-                # This adapter has no external ingress. The source controller
-                # and correlated handler authenticate the retained real owner
+                # The source controller and correlated handler authenticate
+                # the retained real owner
                 # before native dispatch, including recovery. Hermes' existing
                 # trusted-upstream contract avoids treating a canonical task
                 # owner as an unrelated external-channel allowlist entry.
-                # Transport subclasses retain the base default policy.
+                # A configured transport subclass must authenticate its own
+                # HTTP callback. The generic base rejects all external ingress.
                 return True
 
             async def connect(adapter, *, is_reconnect=False):
@@ -92,7 +112,77 @@ class NativeTasks:
                     controller.adapter = None
                 await super().disconnect()
 
-        return ConnectedTaskAdapter(config, handoffs=self.handoffs)
+            async def dispatch_http_event(adapter, payload):
+                return await controller.dispatch(payload)
+
+        adapter = ConnectedTaskAdapter(config, handoffs=self.handoffs)
+        if adapter.platform.value != 'colony_task':
+            raise ValueError('The shared task adapter must retain its registered platform')
+        return adapter
+
+    def observe_gateway(self, **kwargs):
+        """Capture the runtime supplied by the supported native dispatch hook."""
+        gateway, store = kwargs.get('gateway'), kwargs.get('session_store')
+        adapter = self.adapter
+        if (gateway is not None and adapter is not None
+                and store is getattr(adapter, '_session_store', None)
+                and callable(getattr(gateway, '_adapter_for_source', None))):
+            self.gateway = gateway
+
+    async def dispatch(self, payload):
+        """Route a retained ID to its actual native origin, including old adapters."""
+        from .native_task_platform import NativeTaskAdapter
+        from gateway.platforms.event import MessageEvent
+        if (not isinstance(payload, dict) or set(payload) not in (
+                {'handoff_id'}, {'handoff_id', 'action'}, {'handoff_id', 'action', 'update_id'})):
+            raise TaskHandoffError('An exact retained task callback is required')
+        adapter = self.adapter
+        if adapter is None:
+            raise TaskHandoffError('The native task gateway is not connected')
+        row = await asyncio.to_thread(self.handoffs.control, payload['handoff_id'])
+        stopped = self.handoffs.stop_view(row)
+        if row['response'] or (stopped and stopped['status'] == 'cancelled'):
+            # Retained completion and observed cancellation need no old adapter
+            # to be online. These native paths cannot admit or resume work.
+            return await adapter.dispatch_native_event(payload)
+        store = getattr(adapter, '_session_store', None)
+        entry = None
+        if store is not None:
+            if row['native_session_id']:
+                entry = await asyncio.to_thread(store.lookup_by_session_id, row['native_session_id'])
+                if entry is None:
+                    raise TaskHandoffError('The retained native task origin is unavailable')
+            else:
+                # A previous callback may have created native work before its
+                # first binding hook. Detect the exact existing origin rather
+                # than admitting that row again on another platform.
+                entries = await asyncio.to_thread(store.list_sessions)
+                matches = [candidate for candidate in entries if candidate.origin is not None
+                    and candidate.origin.chat_id == row['id']
+                    and candidate.origin.user_id == row['source']['contact_id']]
+                if len(matches) > 1:
+                    raise TaskHandoffError('The retained task has ambiguous native origins')
+                entry = matches[0] if matches else None
+        if entry is not None:
+            origin = entry.origin
+            if (origin is None or origin.chat_id != row['id']
+                    or origin.user_id != row['source']['contact_id']):
+                raise TaskHandoffError('The retained task origin does not match its owner')
+            source = adapter.build_source(chat_id=row['id'], chat_type='dm',
+                user_id=row['source']['contact_id'], message_id=row['id'])
+            key = adapter._event_session_key(MessageEvent(text='', source=source))
+            if origin.platform != adapter.platform or entry.session_key != key:
+                resolver = self.adapter_resolver or (self.gateway._adapter_for_source if self.gateway else None)
+                selected = resolver(origin) if resolver is not None else None
+                if (not isinstance(selected, NativeTaskAdapter)
+                        or getattr(selected, '_session_store', None) is not store):
+                    raise TaskHandoffError('The original native task adapter is unavailable')
+                adapter = selected
+                source = adapter.build_source(chat_id=row['id'], chat_type='dm',
+                    user_id=row['source']['contact_id'], message_id=row['id'])
+                key = adapter._event_session_key(MessageEvent(text='', source=source))
+            adapter._check_native_origin(entry, source, key)
+        return await adapter.dispatch_native_event(payload)
 
     def bind_native_turn(self, **kwargs):
         from .native_task_platform import ACTIVE, bind_native_turn
@@ -128,12 +218,14 @@ class NativeTasks:
         owner = self.sources.resolve_owner(row['source'], require_task_grant=True)
         if kwargs.get('sender_id') != owner:
             raise TaskHandoffError('The native task sender does not match its owner')
-        origin = row['source']['origin']
-        local = origin['platform'] in self.sources.attested_system_platforms
-        return {'sender_id': origin['sender_id'], 'contact_id': owner,
-                'authority_lane': 'system' if local else 'owner',
-                'resolution_status': 'attested_system' if local else 'resolved',
-                'authority_gateway': origin['authority_gateway']}
+        fields = self.sources.execution_identity(row['source'])
+        if (not isinstance(fields, dict) or set(fields) != {'sender_id', 'contact_id',
+                'authority_lane', 'resolution_status', 'authority_gateway'}
+                or fields['contact_id'] != owner or fields['authority_lane'] not in {'owner', 'system'}
+                or fields['resolution_status'] not in {'resolved', 'attested_system'}
+                or any(not isinstance(value, str) for value in fields.values())):
+            raise TaskHandoffError('The native task source identity is invalid')
+        return fields
 
     def _call(self, action, identity, *, update_id=None):
         adapter = self.adapter
@@ -155,7 +247,7 @@ class NativeTasks:
         # context, not the foreground tool's managed Relay callback ancestry.
         # Its owner and source lineage come from the retained handoff instead.
         future = adapter.dispatch_context.copy().run(asyncio.run_coroutine_threadsafe,
-            adapter.dispatch_http_event(payload), adapter.loop)
+            self.dispatch(payload), adapter.loop)
         try:
             return future.result(timeout=2)
         except FutureTimeout:
@@ -173,7 +265,7 @@ class NativeTasks:
             for identity in ids:
                 try:
                     row = await asyncio.to_thread(self.handoffs.control, identity)
-                    await adapter.dispatch_http_event({'handoff_id': identity,
+                    await self.dispatch({'handoff_id': identity,
                         'action': 'stop' if row['stop'] else 'submit'})
                 except Exception:
                     # Keep the same row and its stop intent. Native liveness is
@@ -183,7 +275,8 @@ class NativeTasks:
             self._updates_after = updates[-1]['id'] if updates else None
             for update in updates:
                 try:
-                    await adapter.steer(update['handoff_id'], update['id'])
+                    await self.dispatch({'handoff_id': update['handoff_id'], 'action':'steer',
+                                         'update_id':update['id']})
                 except Exception:
                     continue
         finally:
@@ -274,3 +367,22 @@ class NativeTasks:
             return json.dumps({'error': str(error) if isinstance(error, (TaskHandoffError, ValueError))
                 else type(error).__name__, **({'task_id': identity} if identity else {}),
                 'outcome': 'unconfirmed'})
+
+
+def configured_tasks(client, outbox, owner_contact_id, *, config,
+                     attested_system_platforms=('cli',)):
+    """Load one explicit deployment factory, without fallback to another store."""
+    specification = config.get('factory')
+    if specification is None:
+        return NativeTasks(client, outbox, owner_contact_id, state_path=config.get('state_path'),
+                           attested_system_platforms=attested_system_platforms)
+    if (not isinstance(specification, str) or specification.count(':') != 1
+            or any(not part.isidentifier() for part in specification.replace(':', '.').split('.'))
+            or not specification.split(':')[1].isidentifier()):
+        raise ValueError('The native task factory must be an importable module:callable')
+    module, name = specification.split(':')
+    factory = getattr(importlib.import_module(module), name)
+    controller = factory(client, outbox, owner_contact_id, config=dict(config))
+    if not isinstance(controller, NativeTasks):
+        raise TypeError('The configured native task factory must return NativeTasks')
+    return controller

@@ -39,8 +39,11 @@ The execution adapter uses the configured canonical owner as its native sender
 and the native trusted-upstream authorization contract. It has no external
 ingress, and its controller and correlated handler verify the retained actual
 owner before native admission or recovery. This avoids copying canonical owner
-IDs into each channel's unrelated environment allowlist. Transport subclasses
-keep the base adapter's ordinary authorization policy.
+IDs into each channel's unrelated environment allowlist. A configured shared
+transport must authenticate its own callback before dispatching a retained ID.
+Standalone transport subclasses keep the base adapter's ordinary authorization
+policy; the configured controller applies trusted upstream delegation only
+after the shared source and owner checks.
 It does not create a `colony_task` contact handle. Its public transport scope
 comes from the retained original channel and current owner binding, and keeps
 that original handle for ordinary per-tool authority checks. Explicitly
@@ -96,6 +99,42 @@ text platform does not automatically merge an existing hardware adapter's
 separate database or control surface. That bridge requires an explicit
 same-owner source adapter and its own integrated qualification.
 
+An existing transport can configure exactly one controller factory:
+
+```yaml
+plugins:
+  colony:
+    native_tasks:
+      enabled: true
+      factory: private_agent.task_sources:build
+      # Other fields are interpreted by this private factory.
+```
+
+The importable factory receives `build(client, outbox, owner_contact_id,
+*, config)`, where `config` is the `native_tasks` subsection, and returns a
+`NativeTasks` instance. Factory failures propagate; there is no fallback to a
+different registry or source policy. Its constructor accepts the existing
+`database()` context manager, `sources`, an optional `NativeTaskAdapter`
+subclass as `adapter_type`, and optional storage `error_type` and `reply_effect`
+compatibility values. The source policy supplies `capture`, `resolve_source`,
+`resolve_owner`, `authorize_control` and `execution_identity`. The last method
+projects an already verified source into the existing canonical sender fields;
+it cannot establish authority from caller-supplied contact IDs. The public
+`NativeTaskSources.actor_contact(scope)` resolves an ordinary actor without
+manufacturing an instruction or enrolling a voice session.
+
+The shared callback calls `controller.dispatch(payload)` with the retained ID
+and existing action fields. This selects the original adapter from the real
+native session store, then calls its `dispatch_native_event`. An optional
+constructor `adapter_resolver(origin)` can resolve an already owned adapter;
+otherwise the controller can capture the gateway from its native dispatch
+hook. This is not a startup adapter-discovery guarantee. A migration without
+a startup resolver must drain old admissions and confirm old native work is
+inactive and nonresumable before switching admission platforms. Missing or
+ambiguous origins remain unavailable, and old tasks are never relabelled or
+restarted on a new platform. Retained completion and observed cancellation
+remain inspectable without the old adapter being online.
+
 See [NATIVE-TASK-HANDOFFS.md](NATIVE-TASK-HANDOFFS.md) for storage and compatible
 rollback requirements. Stop-aware readers must remain in a recovery selection.
 
@@ -107,6 +146,9 @@ real canonical/contact APIs. It holds two native task roots, completes an
 ordinary foreground conversation, steers and stops one task from another owner
 channel, then confirms that the other task completes and the late stopped
 result is not retained. No synthetic task contact is enrolled.
+`test_task_controller_dependencies.py` uses the actual native session store to
+check injected-store compatibility, original-platform routing, missing-origin
+non-admission and retained terminal results without a running legacy adapter.
 
 This controlled test establishes transport, source and lifecycle behavior. It
 does not measure model instruction following, physical messaging, production

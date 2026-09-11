@@ -363,6 +363,9 @@ class NativeTaskAdapter(BasePlatformAdapter):
                 await asyncio.to_thread(self.handoffs.get_update, identity, update_id))}
 
     async def dispatch_http_event(self, payload):
+        return await self.dispatch_native_event(payload)
+
+    async def dispatch_native_event(self, payload):
         if set(payload) == {'handoff_id', 'action', 'update_id'} and payload.get('action') == 'steer':
             return await self.steer(payload['handoff_id'], payload['update_id'])
         if set(payload) not in ({'handoff_id'}, {'handoff_id', 'action'}):
