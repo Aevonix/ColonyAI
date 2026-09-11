@@ -135,7 +135,8 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
     assert [item['path'] for item in row.context['largest_files']] == [str(logs/'sidecar.log'), str(logs/'monitor.log')]
     review = NativeInitiativeWork(store).get(row.id)['review']
     assert review['action'] == 'operational_review'
-    assert 'bounded recent sample' in review['body'] and 'do not truncate or rotate' in review['body']
+    assert 'colony_read_work_source' in review['body'] and 'sources 1 through 5' in review['body']
+    assert 'Do not modify input files' in review['body'] and 'do not propose truncation or deletion' in review['body']
     assert 'disk pressure and retention are unverified' in review['body']
     assert str(canonical) not in json.dumps(row.context)
     await loop._phase_initiative()
