@@ -37,8 +37,15 @@ def handle(args, scope, client, request_memory, context):
             or not video_view and args.get('requested_ms') is not None):
         return json.dumps({'error': 'Video opening requires the original clip hash and clip-relative requested_ms in 0..30000, without a history/page selector'})
     ref = {key: args[key] for key in ('source_id', 'source_version')}
-    if ref not in (request_memory.supplied_snapshot(scope) or []):
-        return json.dumps({'error': 'The source revision must have been supplied to this participant and turn'})
+    supplied = request_memory.supplied_snapshot(scope) or []
+    if ref not in supplied:
+        error = {'error': 'The source revision must have been supplied to this participant and turn'}
+        matching = [candidate for candidate in supplied if candidate['source_version'] == args['source_version']]
+        if matching:
+            error.update(matching_supplied_sources=matching[:4], guidance=(
+                'Copy the matching canonical source_id and source_version together from recalled provenance. '
+                'A memory row ID or asset ID is not a source ID. No source was opened.'))
+        return json.dumps(error)
     try:
         deadline = time.monotonic() + 20 if video_view else None
         response = client.post('/v1/host/memory/read', timeout=20 if video_view else 3,

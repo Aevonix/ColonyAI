@@ -574,6 +574,7 @@ class SourceMedia:
                 candidates.append({'id': 'media:' + row['asset_hash'], 'kind': 'media_description',
                     'asset_id': 'sha256:' + row['asset_hash'], 'source_uri': 'turn:' + source['turn_id'],
                     'source_turn_id': source['turn_id'], 'role': source['role'], 'epistemic_state': 'derived_unverified',
+                    'source_message_hash': source['message_hash'],
                     'description_model': row['model'], 'description_version': row['description_version'],
                     'occurred_at': source['occurred_at'], 'content': row['description'],
                     'relevance': 1 / (61 + len(candidates))})
