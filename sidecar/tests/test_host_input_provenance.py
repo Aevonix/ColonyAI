@@ -436,3 +436,58 @@ def test_freshness_requires_actual_input_membership(handoff, annotated):
             'unannotated_input_refs': inputs})
         assert response.status_code == 200
         assert response.json()['sources_current'] is expected
+        assert response.json()['input_source_refs'] == ([ref] if expected else [])
+
+
+@pytest.mark.parametrize('media', [False, True])
+def test_exact_input_receipt_pins_current_canonical_revision_without_relaxing_freshness(handoff, media):
+    h = handoff
+    from colony_sidecar.turns.idempotency import canonical_turn_digest, source_message_hash
+    from test_source_media import message
+    original = message() if media else {'role': 'user', 'content': 'Use the violet reading.'}
+    captured = h.api.put('/v2/host/turns/receipt-input', json={
+        'identity': {'host_id': 'fixture'}, 'source_only': True,
+        'context': {'contact_id': 'owner', 'session_id': 'voice-receipt'}, 'user_message': original})
+    assert captured.status_code == 201 and captured.json()['source_recorded'] is True
+    inputs = [{'source_id': 'receipt-input', 'input_message_hash': source_message_hash('voice-receipt', original)}]
+    canonical = h.ledger.source_references(['receipt-input'], contact_id='owner', session_id='observer')
+    assert len(canonical) == 1
+    if media:
+        # Real canonical image retention replaces inline bytes with an asset
+        # handle. Hashing the transport payload would produce a wrong revision.
+        assert canonical[0]['source_version'] != canonical_turn_digest([original])
+    body = {'contact_id': 'owner', 'session_id': 'observer',
+            'source_refs': [], 'unannotated_input_refs': inputs}
+    receipt = h.api.post('/v1/host/memory/sources/erasures', json=body)
+    assert receipt.status_code == 200 and receipt.json()['sources_current'] is False
+    assert receipt.json()['input_source_refs'] == canonical
+    checked = h.api.post('/v1/host/memory/sources/erasures', json={**body, 'source_refs': canonical})
+    assert checked.status_code == 200 and checked.json()['sources_current'] is True
+    wrong = h.api.post('/v1/host/memory/sources/erasures', json={**body,
+        'source_refs': [{'source_id': 'receipt-input', 'source_version': 'f' * 64}]})
+    assert wrong.status_code == 200 and wrong.json()['sources_current'] is False
+    # Resolving input metadata never declares an explicitly wrong version fresh.
+    assert wrong.json()['input_source_refs'] == canonical
+    h.ledger.erase_sources(contact_id='owner', turn_ids=['receipt-input'])
+    erased = h.api.post('/v1/host/memory/sources/erasures', json=body)
+    assert erased.status_code == 200 and erased.json()['sources_current'] is False
+    assert erased.json()['input_source_refs'] == []
+
+
+def test_input_revision_receipt_requires_scoped_exact_membership(handoff):
+    h = handoff
+    from colony_sidecar.turns.idempotency import source_message_hash
+    original = {'role': 'user', 'content': 'Session-local calibration note.'}
+    h.ledger.record_source('session-input', contact_id='owner', session_id='private-session',
+                           scope='session', messages=[original], derive_claims=False)
+    inputs = [{'source_id': 'session-input', 'input_message_hash': source_message_hash('private-session', original)}]
+    body = {'contact_id': 'owner', 'session_id': 'observer',
+            'source_refs': [], 'unannotated_input_refs': inputs}
+    wrong_session = h.api.post('/v1/host/memory/sources/erasures', json=body)
+    assert wrong_session.status_code == 200 and wrong_session.json()['input_source_refs'] == []
+    right_session = h.api.post('/v1/host/memory/sources/erasures', json={**body, 'session_id': 'private-session'})
+    assert right_session.status_code == 200 and len(right_session.json()['input_source_refs']) == 1
+    wrong_person = h.api.post('/v1/host/memory/sources/erasures', json={**body, 'contact_id': 'someone-else'})
+    assert wrong_person.status_code == 403
+    no_selector = h.api.post('/v1/host/memory/sources/erasures', json={**body, 'unannotated_input_refs': []})
+    assert no_selector.status_code == 422
