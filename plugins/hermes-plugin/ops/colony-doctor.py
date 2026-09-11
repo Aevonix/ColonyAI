@@ -238,7 +238,7 @@ def live_checks():
 def config_checks():
     """Validate the durable, out-of-repo machine config this integration relies on
     (these survive Hermes updates but aren't in the repo, so the doctor is their
-    safety net): SOUL doctrine, colony LLM, model output/context window, cron
+    safety net): SOUL doctrine, colony LLM, cron
     delivery routing, and the scheduled launchd jobs."""
     print("\n[config & durability]")
     import subprocess as _sp
@@ -253,7 +253,7 @@ def config_checks():
         (warn if miss else ok)(f"SOUL doctrine: {'missing ' + ', '.join(miss) if miss else 'memory-as-self + time + outreach all present'}")
     except Exception:
         warn("SOUL.md not found")
-    # config.yaml: colony LLM + model output/context
+    # config.yaml: colony LLM
     try:
         from hermes_cli.config import load_config, cfg_get
         c = load_config()
@@ -263,12 +263,6 @@ def config_checks():
             ok(f"colony LLM configured (provider={col.get('llm_provider')}, model={col.get('llm_large')})")
         else:
             warn("plugins.colony LLM not explicitly configured (relies on auto-detect)")
-        mt = cfg_get(c, "model", "max_tokens", default=None)
-        cl = cfg_get(c, "model", "context_length", default=None)
-        if mt:
-            ok(f"model output cap set ({mt}); context_length {cl}")
-        else:
-            warn("model.max_tokens unset — a reasoning model can burn the budget on reasoning and truncate replies")
     except Exception as e:
         warn(f"config.yaml check skipped: {e}")
     # cron: colony jobs should not deliver to the owner DM (origin)
