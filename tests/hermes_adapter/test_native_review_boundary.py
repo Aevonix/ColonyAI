@@ -24,6 +24,7 @@ config={'model':{'provider':'custom','default':'fixture-model','base_url':'http:
  'providers':{'custom':{'base_url':'http://model.fixture/v1','api_key':'disposable-fixture'}},
  'agent':{'disabled_toolsets':['kanban'],'environment_probe':False},
  'toolsets':['colony_review'],'platform_toolsets':{'cli':['colony_review']},
+ 'tools':{'tool_search':{'enabled':False}},
  'plugins':{'enabled':['colony'],'colony':{'native_reviews':{'worker':True,'source_home':str(root),
  'owner_contact_id':'owner','log_directory':str(root/'logs')}}},
  'memory':{'memory_enabled':False,'user_profile_enabled':False},
@@ -52,13 +53,14 @@ from hermes_cli.kanban_db_dispatch import _worker_argv
 argv=_worker_argv(task,'colony-reviews',str(worker))
 assert argv[argv.index('--toolsets')+1]=='colony_review',argv
 from model_tools import get_tool_definitions
-schemas=get_tool_definitions(enabled_toolsets=['colony_review'],disabled_toolsets=['kanban'],quiet_mode=True,skip_tool_search_assembly=True)
+schemas=get_tool_definitions(enabled_toolsets=['colony_review'],disabled_toolsets=['kanban'],quiet_mode=True)
 names={s['function']['name'] for s in schemas}
 assert names=={'colony_read_work_source','colony_review_report'},names
 from run_agent import AIAgent
 agent=AIAgent(model='fixture-model',provider='custom',api_key='disposable-fixture',
  base_url='http://model.fixture/v1',quiet_mode=True,skip_context_files=True,skip_memory=True,
  enabled_toolsets=['colony_review'],disabled_toolsets=['kanban'],max_iterations=2,session_id='review-boundary-fixture')
+assert {s['function']['name'] for s in agent.tools}==names,agent.tools
 results=[]
 def invoke(name,args):
  call=types.SimpleNamespace(id='call-'+str(len(results)),type='function',

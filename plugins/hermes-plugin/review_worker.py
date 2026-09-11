@@ -21,6 +21,7 @@ def validate_profile(config, home, owner):
     if (config.get('toolsets') != [TOOLSET]
             or config.get('platform_toolsets', {}).get('cli') != [TOOLSET]
             or config.get('agent', {}).get('disabled_toolsets') != ['kanban']
+            or config.get('tools', {}).get('tool_search', {}).get('enabled') is not False
             or config.get('plugins', {}).get('enabled') != ['colony']
             or config.get('kanban', {}).get('dispatch_in_gateway') is not False
             or config.get('mcp_servers')
@@ -61,7 +62,7 @@ def refresh_profile(config, home, owner):
         'from model_tools import get_tool_definitions; '
         'names={x["function"]["name"] for x in get_tool_definitions('
         'enabled_toolsets=["colony_review"],disabled_toolsets=["kanban"],'
-        'quiet_mode=True,skip_tool_search_assembly=True)}; '
+        'quiet_mode=True)}; '
         'assert names=={"colony_read_work_source","colony_review_report"}, names'],
         env=environment, capture_output=True, text=True, timeout=30)
     if ready.returncode:
