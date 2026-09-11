@@ -129,7 +129,9 @@ def _read_rows(request):
 def _historical_source_read(row):
     try:
         payload = json.loads(_read_text(_read_value(row)))
-        return isinstance(payload, dict) and payload.get('colony_source_read_v1') is True
+        return isinstance(payload, dict) and (
+            payload.get('colony_source_read_v1') is True
+            or payload.get('apsimo_native_history_read_v1') is True)
     except (TypeError, ValueError):
         return False
 
@@ -141,22 +143,11 @@ def _user_input(row):
                         for part in row['content'])))
 
 
-def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None,
-                   read_receipts=None):
-    """Keep current-turn recall and remove exact evidence, preserving tool structure.
-
-    Hashes include original session and speaker. Trying those retained origins
-    also removes exact full-message copies carried into a child/new session;
-    this does not attempt substring or semantic paraphrase deletion.
-    """
+def erased_turn_indices(messages, rules, *, aliases=None, stop=None):
+    """Exact source hashes govern whole derived turn spans, including tools."""
     origins = {}
     for rule in rules:
         origins.setdefault(rule['session_id'], set()).update(rule['message_hashes'])
-
-    def erased(content):
-        return any(source_message_hash(session, {'role': role, 'content': content}) in hashes
-                   for session, hashes in origins.items() for role in ('user', 'assistant'))
-
     def erased_origin(row):
         # A whole historical turn can contain derived tool arguments, results
         # and reasoning absent from its canonical user/assistant source. Bind
@@ -178,6 +169,35 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
                 candidates.extend((texts[0], _PACKET.sub('', _MEMORY.sub('', texts[0]))))
         return any(source_message_hash(session, {'role': role, 'content': value}) in hashes
                    for value in candidates for session, hashes in origins.items())
+
+    stop = len(messages) if stop is None else stop
+    starts = [i for i, row in enumerate(messages) if _user_input(row)]
+    withheld = set()
+    for start, end in zip(starts, [*starts[1:], len(messages)]):
+        if start >= stop:
+            break
+        end = min(end, stop)
+        if any(erased_origin(row) for row in messages[start:end] if isinstance(row, dict)):
+            withheld.update(range(start, end))
+    return withheld
+
+
+def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None,
+                   read_receipts=None):
+    """Keep current-turn recall and remove exact evidence, preserving tool structure.
+
+    Hashes include original session and speaker. Trying those retained origins
+    also removes exact full-message copies carried into a child/new session;
+    this does not attempt substring or semantic paraphrase deletion.
+    """
+    origins = {}
+    for rule in rules:
+        origins.setdefault(rule['session_id'], set()).update(rule['message_hashes'])
+
+    def erased(content):
+        return any(source_message_hash(session, {'role': role, 'content': content}) in hashes
+                   for session, hashes in origins.items() for role in ('user', 'assistant'))
+
 
     def packet(match, keep_packet, native_context):
         block = match.group()
@@ -293,14 +313,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         # The authenticated, observed input still starts the active turn.
         current_user = max((i for i in user_indices if current_content is not None
                             and messages[i].get('content') == current_content), default=latest_user)
-        withheld = set()
-        if fresh and origins:
-            for start, end in zip(user_indices, [*user_indices[1:], len(messages)]):
-                if start >= current_user:
-                    break
-                end = min(end, current_user)
-                if any(erased_origin(row) for row in messages[start:end] if isinstance(row, dict)):
-                    withheld.update(range(start, end))
+        withheld = erased_turn_indices(messages, rules, aliases=aliases, stop=current_user) if fresh else set()
         retained = []
         for i, original in enumerate(messages):
             if not isinstance(original, dict):

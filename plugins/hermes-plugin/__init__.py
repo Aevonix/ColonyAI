@@ -2691,12 +2691,22 @@ def register(ctx: Any) -> None:
                 denial = native_drafts.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
                 if denial is not None:
                     return denial
+            def dispatch(selected_args):
+                value = next_call(selected_args)
+                context = _TOOL_EXECUTION_CONTEXT.get() or {}
+                if context.get('tool_name') == 'session_search':
+                    from .native_history import reconcile
+                    scope = _TRANSPORT_SCOPES.for_execution(
+                        session_id=context.get('session_id',''), task_id=context.get('task_id',''),
+                        turn_id=context.get('turn_id',''))
+                    return reconcile(selected_args,value,scope,context,request_memory)
+                return value
             if execution_observer is not None:
-                return execution_observer.tool(next_call, args, **{
+                return execution_observer.tool(dispatch, args, **{
                     key: value for key, value in kwargs.items()
                     if key not in {"next_call", "args"}
                 })
-            return next_call(args)
+            return dispatch(args)
         return _tool_execution_middleware(**{**kwargs, "next_call": observed,
             'revalidate_participant': lambda scope: _current_participant(client, scope),
             'revalidate_input': check_supplied_input})

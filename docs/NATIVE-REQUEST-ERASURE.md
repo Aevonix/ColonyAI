@@ -52,6 +52,41 @@ lineage. Memory from another contact requires that contact's erasure scope; a
 relationship to that contact is not itself source ownership. Storage redaction
 needs a supported native row-level operation with real dependency information.
 
+## Native history retrieval
+
+The existing `tool_execution` middleware also reconciles `session_search`
+after its ordinary native authority check and before its result reaches the
+model or execution observer. This covers discovery, reading, scrolling and
+browsing. It uses the selected native database read-only, resolves returned
+message IDs to their full bytes, and checks the bounded originating turn's
+user/assistant anchors. It does not dump whole sessions or rewrite history.
+The same exact source-hash rule used by request replay excludes a forgotten
+turn's assistant arguments and tool results, including a scroll window whose
+user anchor is outside the returned excerpt. Unrelated turns remain readable.
+
+Optional native message hashes on the existing scoped source-freshness API
+resolve to canonical source IDs and versions. The current principal and viewing
+session determine visibility; the native session selector supplies no grant.
+Known deleted hashes remain resolvable as erased. Authentic returned evidence
+uses the existing source-read receipt and supplied-source lineage, so a later
+erasure withholds an already-opened result and invalidates canonical descendants.
+Quoted marker text never registers a read receipt. Unknown native history has
+an explicit untracked count and no fabricated canonical parents.
+
+Native titles and browse previews have no exact source identity. They are
+omitted from model-facing history results; session links, time, channel, counts
+and traceable message excerpts remain available. Open a session to inspect its
+evidence. Unavailable storage, incomplete erasure freshness or an unresolved
+native turn returns an explicit failure rather than an empty successful result
+or an unchecked fallback.
+
+This is logical non-recollection of known sources, not physical deletion.
+Raw native SQLite/FTS history, communication summaries, archived prompts, logs,
+backups and previously unlinked paraphrases remain outside this projection.
+It does not revoke arbitrary owner shell/file access or make a claim about
+bytes already sent to a model. Do not report complete forgetting until the
+requested storage surfaces have actually been covered.
+
 The native qualification builds the public wheel, loads it in the pinned Hermes
 runtime, calls the real memory provider against canonical source recall, uses
 Hermes' own injection and SQLite persistence, then resumes twice through its
