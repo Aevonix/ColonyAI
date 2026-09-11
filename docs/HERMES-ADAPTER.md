@@ -605,6 +605,11 @@ selected native root configuration. An existing profile belonging to another
 instance is retained and installation fails. Named conversation profiles must
 select their root deployment for this shared worker.
 
+When enabled, the existing native dispatch tick discovers at most five new
+server-eligible read-only proposals and reconciles already bound work. A separate
+LLM queue steward or scheduling service is unnecessary. Disabling the choice
+stops new discovery while preserving observation of existing bindings.
+
 The profile exposes two tools: `colony_read_work_source` and
 `colony_review_report`. Native `agent.disabled_toolsets: [kanban]` removes
 the automatically added Kanban tools, including task creation and attachment

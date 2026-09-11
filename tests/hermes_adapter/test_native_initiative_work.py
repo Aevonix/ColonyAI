@@ -1,4 +1,4 @@
-"""Real Hermes board transitions, scoped HTTP and independent steward clients."""
+"""Real Hermes board transitions, scoped HTTP and concurrent dispatch ticks."""
 import importlib.util
 import os
 from pathlib import Path
@@ -68,8 +68,14 @@ clients=[TestClient(app),TestClient(app)]
 checked=clients[0].get('/v1/host/initiative-work/'+first.id,params={'contact_id':'owner'})
 assert checked.status_code==200,checked.text
 reviews=[NativeReviews(client,'owner',review_config) for client in clients]
+NativeReviews(clients[0],'owner').reconcile(board='default')
+reviews[0].reconcile(board='default',dry_run=True)
+reviews[0].reconcile(board='other')
+with kb.connect(board='default') as db:
+ assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==0
 with ThreadPoolExecutor(max_workers=2) as pool:
- results=list(pool.map(lambda index:reviews[index].work(first.id),range(2)))
+ list(pool.map(lambda index:reviews[index].reconcile(board='default'),range(2)))
+results=[review.work(first.id) for review in reviews]
 tid=results[0]['native_work']['native_task_id']
 assert all(r['native_work']['native_task_id']==tid and r['status']=='assigned' for r in results),results
 for i in range(2):reviews[i].reconcile(board='default',dry_run=False)
@@ -172,6 +178,7 @@ try:
 finally:manifest_path.write_bytes(manifest_before)
 with kb.connect(board='default') as db:assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==2
 print(json.dumps({'independent_cycles_one_task':True,'actual_native_completion':True,
+                  'dispatch_discovers_without_steward':True,'disabled_discovery_no_task':True,
                   'shared_visibility':True,'lost_ack_recovery':True,'failed_vs_blocked':True,
                   'planning_swap':True,'missing_profile_no_dispatch':True,'models':0,'network':0}))
 '''

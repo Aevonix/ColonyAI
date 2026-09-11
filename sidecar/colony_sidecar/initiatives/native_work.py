@@ -182,13 +182,28 @@ class NativeInitiativeWork:
             db.row_factory = sqlite3.Row
             return self.view(self.row(db, identifier))
 
-    def pending(self, contact_id):
+    def pending(self, contact_id, *, discover=False):
         with closing(sqlite3.connect(self.store._db_path, timeout=2)) as db:
             db.row_factory = sqlite3.Row
             rows = db.execute("SELECT * FROM initiatives WHERE created_by='autonomy_loop' "
                               "AND status IN ('pending','assigned','acknowledged','failed') ORDER BY created_at,id").fetchall()
-            return [self.view(row) for row in rows
-                    if json.loads(row['context'] or '{}').get('native_review', {}).get('contact_id') == contact_id][:50]
+            bound, available = [], []
+            for row in rows:
+                context = json.loads(row['context'] or '{}')
+                if 'native_review' in context:
+                    binding = context['native_review']
+                    if (isinstance(binding, dict) and binding.get('contact_id') == contact_id
+                            and len(bound) < 50):
+                        bound.append(self.view(row))
+                elif (discover and len(available) < 5 and row['status'] == 'pending'
+                      and not row['assigned_agent_id'] and not row['job_id']):
+                    try:
+                        available.append(self.view(row))
+                    except ValueError:
+                        # Other initiative kinds retain their existing path.
+                        # Selection never interprets proposal prose as authority.
+                        continue
+            return bound + available
 
     def attach(self, identifier, person, native, digest, *, prospective=False):
         with self.transaction() as db:

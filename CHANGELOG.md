@@ -8,6 +8,9 @@ The profile cannot invoke terminal, file mutation, arbitrary attachments,
 delegation or task creation. Registered log samples include current size and
 filesystem measurements; missing writer and retention configuration is explicit.
 The existing planning role is refreshed before new work is dispatched.
+The existing native dispatch tick discovers at most five new eligible proposals
+when reviews are enabled. Routine selection and reconciliation need no LLM
+queue steward or separate cron, and concurrent ticks reuse one native task.
 
 Guided attachment exposes `--native-reviews`; adapter refresh preserves the
 existing choice. Historical reviews still reconcile. New temporal follow-up

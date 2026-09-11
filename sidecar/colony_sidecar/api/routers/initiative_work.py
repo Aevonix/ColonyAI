@@ -69,9 +69,9 @@ def guarded(operation):
 
 
 @router.get('')
-def pending(contact_id: str, request: Request):
+def pending(contact_id: str, request: Request, discover: bool = False):
     ledger, person = store(request, contact_id)
-    return guarded(lambda: {'items': ledger.pending(person)})
+    return guarded(lambda: {'items': ledger.pending(person, discover=discover)})
 
 
 @router.get('/{initiative_id}')

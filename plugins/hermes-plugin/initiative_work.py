@@ -134,11 +134,15 @@ class NativeReviews:
                                'initiative_id': args['initiative_id'], 'execution_confirmed': False})
 
     def reconcile(self, **kwargs):
-        # The existing dispatch tick reconciles bound tasks only. Proposal
-        # selection remains with the existing steward's attested review tool.
+        # The native tick handles bookkeeping. Explicitly enabled reviews also
+        # discover a bounded batch of server-eligible proposals, without an LLM
+        # steward. Follow-ups keep their existing reconciliation contract.
         if kwargs.get('dry_run') or kwargs.get('board') != 'default' or os.environ.get('HERMES_KANBAN_TASK'):
             return
-        result = request(self.client, self.root+'?contact_id='+quote(self.owner, safe=''))
+        query = '?contact_id='+quote(self.owner, safe='')
+        if self.creator == 'colony-initiative' and self.config.get('enabled') is True:
+            query += '&discover=true'
+        result = request(self.client, self.root+query)
         for item in result['items']:
             try:
                 self.work(item.get('id') or item['wait_id'])

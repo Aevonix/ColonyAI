@@ -36,23 +36,26 @@ authorization path; proposal-only mode and the old executor remain unchanged.
 The native task starts blocked, with an idempotency key derived from the
 initiative ID. The adapter verifies and records its association in the existing
 initiative context before making it ready. A lost acknowledgment or repeated
-steward cycle reuses that task, including terminal tasks. The existing native
-dispatch tick reconciles bound tasks; it does not select new proposals. Only a
+dispatch tick reuses that task, including terminal tasks. The existing native
+dispatch tick reconciles bound tasks. With `native_reviews.enabled: true`, it
+also discovers at most five unassigned, server-eligible read-only proposals per
+tick. No LLM queue steward or separate cron is required. Other initiative kinds
+remain on their existing paths. Only a
 native done task with a completed run closes the initiative. Its reported
 summary remains unverified. A native exhausted `gave_up` failure is recorded
 with its actual outcome/error; a needs-input block stays resumable. Owner request views expose both the association
 and native state; guest views do not. This does not mark a broader commitment
 fulfilled or certify an external effect.
 
-These tasks use the ordinary default native profile, goal mode with at most
-four turns, a 480-second runtime bound and no task retry. They have no notifier
-subscription or model override. `READ_ONLY` describes admission and requested
-conduct, not a sandbox or a per-task tool allowlist: native Hermes resolves
-tools from the assigned profile, whose ordinary owner/system authority checks
-still apply. The request permits a local report and excludes input changes,
-backup creation, service changes and messages. Live qualification must inspect
-actual tool effects and preserve source preimages rather than infer conduct
-from the action label.
+New tasks use the managed `colony-reviews` native profile, ordinary completion,
+a 480-second runtime bound and one native attempt. They have no notifier
+subscription. The configured planning role supplies their replaceable model.
+The profile exposes only bounded source reads and a textual report; it excludes
+shell, file, general Kanban, memory and messaging tools. Existing default-profile
+bindings remain observable but cannot start a new unrestricted run. See
+[the worker contract](HERMES-ADAPTER.md#bounded-operational-reviews). Live
+qualification must inspect actual tool effects and report accuracy independently;
+a completed report does not establish factual quality.
 
 The retained backup-review generator used the ambiguous hint `Execute
 maintenance task`. Compatibility recognizes only its exact generated
