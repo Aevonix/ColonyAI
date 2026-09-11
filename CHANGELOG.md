@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.2.0 - shared native tasks during conversation
+
+The optional `colony_task` tool starts durable Hermes work while foreground
+conversation continues. The same authenticated owner can inspect, steer or stop
+that task from another enrolled channel. Hermes retains execution, native
+sessions, interruption and recovery. Colony supplies durable source associations
+through one generic adapter and controller, which private transports can reuse
+with their existing storage and authentication.
+
+Consumed updates become source parents before execution continues. Current
+source checks retain exact input hashes and canonical revisions, including
+inputs whose normalized media revision differs from the transport hash. An
+additive input-revision receipt supports existing transport adapters without
+relaxing the strict freshness result. Derived task contexts and inherited child
+authority cannot manufacture a new direct-owner instruction.
+
+The actual GatewayRunner fixture holds two task roots, completes foreground
+conversation, steers and stops one from another channel, and checks that the
+other completes with its source parents. Responses and channel transports are
+controlled; ordinary model usefulness and physical delivery remain deployment
+qualifications. Concurrent callbacks require the explicitly pinned
+[Hermes compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md). The separate
+daily upstream job continues to test unmodified Hermes.
+
+Model qualification adds structured cases for reasoning, planning, judging and
+coding. Each case retains its contract, evaluator and request limits; passing
+these cases does not establish a general model ranking or automatically change
+the active processor.
+
 ## v1.1.17 - diagnosable model qualification and faithful memory grading
 
 Explicit model evaluations retain bounded final completion text, its hash and
