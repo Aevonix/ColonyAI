@@ -4,8 +4,8 @@
 captured instruction and a Hermes-owned task. It has no worker, scheduler,
 model client, HTTP server, or tool registration. This extraction is available
 to adapters; importing it does not enable background tasks on a fresh install.
-Native text-channel submission and control still need the adapter wiring
-described below.
+The optional native text adapter is described in
+[NATIVE-TASK-CHANNELS.md](NATIVE-TASK-CHANNELS.md).
 
 ## Boundary
 
@@ -97,7 +97,7 @@ the additive SQLite columns is insufficient: an old reader that ignores
 Do not restore an old database snapshot or delete stop intent to make rollback
 appear compatible.
 
-## Native text integration still to connect
+## Native text integration
 
 1. Capture the current ordinary instruction through the existing
    `followups.capture_instruction(scope, client)` boundary. Use
