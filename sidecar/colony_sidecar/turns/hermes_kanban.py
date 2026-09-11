@@ -171,6 +171,13 @@ def task_snapshot(identifier, contact_id, native, *, review=False, followup=Fals
         db.execute('PRAGMA query_only=ON')
         db.execute('BEGIN')
         task = db.execute('SELECT * FROM tasks WHERE id=?', (native['native_task_id'],)).fetchone()
+        if review:
+            profile = 'colony-reviews'
+            # Preserve historical observations; an unrestricted never-run task
+            # cannot be associated through this API after the boundary change.
+            if task is not None and task['assignee'] == 'default' and db.execute(
+                    'SELECT 1 FROM task_runs WHERE task_id=? LIMIT 1', (task['id'],)).fetchone():
+                profile = 'default'
         creator = 'colony-followup' if followup else 'colony-initiative' if review else 'colony-local-work'
         if (task is None or task['created_by'] != creator
                 or task['idempotency_key'] != creator+':'+identifier

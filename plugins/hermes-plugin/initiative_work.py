@@ -16,8 +16,15 @@ class NativeReviews:
     prefix = PREFIX
     creator = 'colony-initiative'
 
-    def __init__(self, client, owner):
+    def __init__(self, client, owner, config=None):
         self.client, self.owner = client, owner
+        self.config = config or {}
+
+    def worker_profile(self, home):
+        if self.creator != 'colony-initiative':
+            return 'default'
+        from .review_worker import refresh_profile
+        return refresh_profile(self.config, home, self.owner)
 
     @classmethod
     def path(cls, identifier):
@@ -37,27 +44,55 @@ class NativeReviews:
         if self.terminal(value):
             return self.on_terminal(identifier, value, kb, connect)
         home = kb.kanban_home().resolve()
-        if (value['execution'] != {'native_board': 'default', 'worker_profile': 'default',
+        expected_profile = 'colony-reviews' if self.creator == 'colony-initiative' else 'default'
+        if (value['execution'] != {'native_board': 'default', 'worker_profile': expected_profile,
                                    'source_home_id': hashlib.sha256(str(home).encode()).hexdigest()}
                 or kb.kanban_db_path(board='default').resolve() != home/'kanban.db'):
             raise ValueError('selected_native_review_home_required')
         review = value['review']
         if hashlib.sha256(review['body'].encode()).hexdigest() != review['sha256']:
             raise ValueError('review_contract_mismatch')
-        # Use the same default profile and selected root home as ordinary
-        # native goal tools. No profile, model override or notifier is created.
+        # Old already-run reviews remain observable, but cannot acquire another
+        # unrestricted run. New work requires the managed read-only profile.
+        with closing(connect(board='default')) as db:
+            prior = db.execute('SELECT id FROM tasks WHERE idempotency_key=?',
+                               (self.prefix+identifier,)).fetchone()
+            if prior:
+                task = kb.get_task(db, prior['id'])
+                if task.assignee == 'default':
+                    if (task.created_by != self.creator or task.tenant != self.owner
+                            or task.body != review['body']):
+                        raise ValueError('unrestricted_native_review_cannot_dispatch')
+                    if task.status == 'ready':
+                        kb.block_task(db, task.id, reason='A bounded read-only review worker is required',
+                                      kind='needs_input')
+                    if self.creator == 'colony-initiative' and kb.latest_run(db, task.id) is None:
+                        raise ValueError('unrestricted_native_review_cannot_dispatch')
+                    return request(self.client, self.path(identifier)+'/observe', {
+                        'contact_id': self.owner, 'native_board': 'default',
+                        'native_task_id': task.id, 'contract_sha256': review['sha256']})
+                if (task.assignee == expected_profile and task.created_by == self.creator
+                        and task.tenant == self.owner and task.body == review['body']
+                        and task.status in {'running', 'blocked', 'done', 'archived'}
+                        and kb.latest_run(db, task.id) is not None):
+                    # Reconciliation observes existing work. Only a future
+                    # dispatch needs a fresh role/configuration readiness probe.
+                    return request(self.client, self.path(identifier)+'/observe', {
+                        'contact_id': self.owner, 'native_board': 'default',
+                        'native_task_id': task.id, 'contract_sha256': review['sha256']})
+        profile = self.worker_profile(home)
         with closing(connect(board='default')) as db:
             with kb.write_txn(db):
                 row = db.execute('SELECT id FROM tasks WHERE idempotency_key=? ORDER BY created_at LIMIT 1',
                                  (self.prefix+identifier,)).fetchone()
                 task_id = row['id'] if row else kb.create_task(db,
-                    title=review['title'], body=review['body'], assignee='default',
+                    title=review['title'], body=review['body'], assignee=profile,
                     created_by=self.creator, tenant=self.owner, idempotency_key=self.prefix+identifier,
                     board='default', initial_status='blocked', workspace_kind='scratch',
                     goal_mode=True, goal_max_turns=4, max_runtime_seconds=480, max_retries=1)
                 task = kb.get_task(db, task_id)
                 if (task.created_by != self.creator or task.tenant != self.owner
-                        or task.assignee != 'default' or task.body != review['body']):
+                        or task.assignee != profile or task.body != review['body']):
                     raise ValueError('native_review_association_changed')
             binding = {'contact_id': self.owner, 'native_board': 'default',
                        'native_task_id': task_id, 'contract_sha256': review['sha256']}
@@ -105,7 +140,11 @@ class NativeReviews:
             return
         result = request(self.client, self.root+'?contact_id='+quote(self.owner, safe=''))
         for item in result['items']:
-            self.work(item.get('id') or item['wait_id'])
+            try:
+                self.work(item.get('id') or item['wait_id'])
+            except ValueError as error:
+                if str(error) != 'readonly_followup_worker_unqualified':
+                    raise
 
 
 class NativeFollowups(NativeReviews):
@@ -118,6 +157,12 @@ class NativeFollowups(NativeReviews):
     root = '/v1/host/temporal-followups'
     prefix = 'colony-followup:'
     creator = 'colony-followup'
+
+    def worker_profile(self, home):
+        # This path previously shared the unrestricted default-profile review
+        # worker. Keep terminal reconciliation, but do not dispatch outreach
+        # reviews until bounded reports are integrated with the existing outbox.
+        raise ValueError('readonly_followup_worker_unqualified')
 
     @staticmethod
     def terminal(value):

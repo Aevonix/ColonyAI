@@ -9,11 +9,12 @@ import pytest
 
 
 PROBE = r'''
-import hashlib,importlib.util,json,os,socket,sys,types
+import hashlib,importlib.util,json,os,socket,sys,types,shutil
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
+if len(sys.argv)>4 and sys.argv[4]:sys.path.insert(0,sys.argv[4])
 package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native review qualification')
 socket.socket.connect=no_network
@@ -30,8 +31,24 @@ from colony_sidecar.initiatives.store import InitiativeStore
 from colony_sidecar.turns.local_work import local_work_view
 from colony_hermes.initiative_work import NativeReviews
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
-(root/'config.yaml').write_text('plugins: {enabled: []}\n')
+(root/'config.yaml').write_text('plugins: {enabled: [], colony: {owner_contact_id: owner}}\n')
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
+shutil.copytree(sys.argv[2],state/'adapter/colony_hermes')
+for name in ('catalog.py','contract.py'):
+ shutil.copyfile(Path(sys.argv[2]).parents[1]/'hostworker/colony_hostworker'/name,state/'adapter/colony_hermes/colony_hostworker'/name)
+(state/'instance.json').write_text(json.dumps({'version':1,'profile':'local','hermes_home':str(root),
+ 'hermes_python':sys.executable,'sidecar_python':sys.executable,'sidecar_module_root':sys.argv[1],
+ 'adapter_binding':{'mode':'private-directory'}}))
+routing={'provider':'vllm','models':{},'modelPool':{'planning-fixture':{
+ 'model':'replaceable-planning-model','baseUrl':'http://127.0.0.1:9/v1','supportsTools':True}},
+ 'functionRoles':{'planning':['planning-fixture']}}
+(state/'.colony-llm-config.json').write_text(json.dumps(routing))
+from colony_sidecar.setup_native_reviews import configure
+configure(state,install=True)
+review_config={'enabled':True,'instance_dir':str(state)}
+import yaml
+selected=yaml.safe_load((root/'profiles/colony-reviews/config.yaml').read_text())
+assert selected['model']['default']=='replaceable-planning-model' and 'max_tokens' not in selected['model']
 store=InitiativeStore(state);host._initiative_store=store;host._task_queue=None
 def proposal(label):
  return store.create(type='operational',description=label,priority=.5,
@@ -48,7 +65,9 @@ async def authority(request,next_call):
  return await next_call(request)
 app.include_router(initiative_work.router);app.include_router(executions.router)
 clients=[TestClient(app),TestClient(app)]
-reviews=[NativeReviews(client,'owner') for client in clients]
+checked=clients[0].get('/v1/host/initiative-work/'+first.id,params={'contact_id':'owner'})
+assert checked.status_code==200,checked.text
+reviews=[NativeReviews(client,'owner',review_config) for client in clients]
 with ThreadPoolExecutor(max_workers=2) as pool:
  results=list(pool.map(lambda index:reviews[index].work(first.id),range(2)))
 tid=results[0]['native_work']['native_task_id']
@@ -58,7 +77,7 @@ with kb.connect(board='default') as db:
  assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==1
  task=kb.get_task(db,tid)
  assert task.status=='ready' and task.goal_mode and task.goal_max_turns==4
- assert task.assignee=='default' and task.max_runtime_seconds==480 and task.max_retries==1
+ assert task.assignee=='colony-reviews' and task.max_runtime_seconds==480 and task.max_retries==1
  assert not db.execute('SELECT 1 FROM kanban_notify_subs').fetchone()
  claimed=kb.claim_task(db,tid);run=claimed.current_run_id
 reviews[0].reconcile(board='default')
@@ -87,19 +106,23 @@ for client in clients:
 # Lost association acknowledgment: one blocked task survives and the next
 # ordinary cycle recovers it. No fake worker or new task is needed.
 second=proposal('Review another local observation')
+routing['modelPool']['planning-fixture']['model']='replacement-planning-model'
+(state/'.colony-llm-config.json').write_text(json.dumps(routing))
 class LostAck:
  def get(self,*a,**kw):return clients[0].get(*a,**kw)
  def post(self,path,**kw):
   result=clients[0].post(path,**kw)
   if path.endswith('/native-task'):raise RuntimeError('lost acknowledgment')
   return result
-try:NativeReviews(LostAck(),'owner').work(second.id)
+try:NativeReviews(LostAck(),'owner',review_config).work(second.id)
 except RuntimeError:pass
 else:raise AssertionError('Lost acknowledgment was not retained')
 with kb.connect(board='default') as db:
  task=kb.get_task(db,db.execute('SELECT id FROM tasks WHERE idempotency_key=?',('colony-initiative:'+second.id,)).fetchone()[0])
  assert task.status=='blocked' and kb.latest_run(db,task.id) is None
 second_result=reviews[0].work(second.id)
+selected=yaml.safe_load((root/'profiles/colony-reviews/config.yaml').read_text())
+assert selected['model']['default']=='replacement-planning-model' and 'max_tokens' not in selected['model']
 with kb.connect(board='default') as db:
  assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==2
  assert kb.get_task(db,second_result['native_work']['native_task_id']).status=='ready'
@@ -135,8 +158,22 @@ with kb.connect(board='default') as db:
 blocked=reviews[1].work(second.id)
 assert blocked['status']=='assigned' and blocked['result']['native_status']=='blocked',blocked
 assert blocked['result']['run_outcome']=='blocked',blocked
+# A missing profile selection or manifest must not leave a new runnable task.
+third=proposal('Review missing worker readiness')
+try:NativeReviews(clients[0],'owner').work(third.id)
+except ValueError as error:assert str(error)=='read_only_review_profile_not_installed'
+else:raise AssertionError('Unconfigured review dispatched')
+manifest_path=root/'profiles/colony-reviews/plugins/colony/plugin.yaml'
+manifest_before=manifest_path.read_bytes();manifest_path.unlink()
+try:
+ try:reviews[0].work(third.id)
+ except ValueError as error:assert str(error)=='read_only_review_adapter_required'
+ else:raise AssertionError('Missing plugin manifest dispatched')
+finally:manifest_path.write_bytes(manifest_before)
+with kb.connect(board='default') as db:assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==2
 print(json.dumps({'independent_cycles_one_task':True,'actual_native_completion':True,
-                  'shared_visibility':True,'lost_ack_recovery':True,'failed_vs_blocked':True,'models':0,'network':0}))
+                  'shared_visibility':True,'lost_ack_recovery':True,'failed_vs_blocked':True,
+                  'planning_swap':True,'missing_profile_no_dispatch':True,'models':0,'network':0}))
 '''
 
 
@@ -148,8 +185,8 @@ def test_actual_native_initiative_handoff_and_reconciliation(tmp_path, judgments
             pytest.skip('Use the existing qualified Hermes interpreter for native integration')
         python = sys.executable
     root = Path(__file__).resolve().parents[2]
-    env = {key:os.environ[key] for key in ('PATH','HOME','LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'hermes'),HERMES_KANBAN_HOME=str(tmp_path/'hermes'),
+    env = {key:os.environ[key] for key in ('PATH','LANG') if key in os.environ}
+    env.update(HOME=str(tmp_path),HERMES_HOME=str(tmp_path/'hermes'),HERMES_KANBAN_HOME=str(tmp_path/'hermes'),
         COLONY_HERMES_HOME=str(tmp_path/'hermes'),COLONY_HERMES_WORK_BOARDS='["default"]',
         COLONY_STATE_DIR=str(tmp_path/'state'),COLONY_OWNER_CONTACT_ID='owner',
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),PYTHONDONTWRITEBYTECODE='1',
@@ -158,7 +195,8 @@ def test_actual_native_initiative_handoff_and_reconciliation(tmp_path, judgments
     if judgments_enabled:
         env['COLONY_SELF_JUDGMENTS_ENABLED'] = '1'
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
+        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+        os.environ.get('AEVA_HERMES_TEST_SOURCE','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode == 0,result.stdout+result.stderr
     assert '"independent_cycles_one_task": true' in result.stdout

@@ -590,3 +590,50 @@ review and exact text patch: its declared task scored 0/2 before, 2/2 with the
 candidate, and 2/2 after activation. An injected evaluator outage restored the
 original bytes through native rollback. This was a neutral fixture, not a live
 recurring skill or an observed spontaneous model regression.
+
+### Bounded operational reviews
+
+New `colony_work_initiative` reviews require a managed `colony-reviews`
+native profile. The existing guided `colony init --profile local` setup offers
+an optional review choice, default off; `--native-reviews` selects it explicitly.
+Existing attachments can use that same flag and their configured planning role.
+`--refresh-adapter` refreshes an already enabled review profile without enabling
+a previously disabled one. For private deployment staging, use the selected sidecar interpreter:
+`python -m colony_sidecar.setup_native_reviews --install /private/instance`.
+This prepares the profile and enables `plugins.colony.native_reviews` in the
+selected native root configuration. An existing profile belonging to another
+instance is retained and installation fails. Named conversation profiles must
+select their root deployment for this shared worker.
+
+The profile exposes two tools: `colony_read_work_source` and
+`colony_review_report`. Native `agent.disabled_toolsets: [kanban]` removes
+the automatically added Kanban tools, including task creation and attachment
+access. The report wrapper completes or blocks only the worker's current
+claimed task through native lifecycle handlers. It accepts text, not files,
+metadata, task identifiers or new work. Scratch artifact references in report
+text are rejected because Hermes otherwise infers attachments from them.
+The native goal judge and automatic heartbeat remain native.
+
+Source 0 returns the registered observation. For operational log reviews,
+sources 1 through 5 select that observation's `largest_files` list, restricted
+to the configured log directory. Each read measures current file size,
+modification time and filesystem capacity and returns at most 16 KiB of
+redacted text. Writer and retention configuration are explicitly marked
+unavailable. Neither a sample nor file age proves historical coverage or
+recovery readiness. The instance may set `operational_log_directory`; its
+default matches the existing producer's `~/.colony/logs`. A mismatched
+registered directory is unavailable, never substituted with another log.
+
+Before promotion, the adapter refreshes this profile from the existing
+`planning` function role and verifies actual native discovery exposes exactly
+the two tools. Missing installation, a missing manifest, failed imports or
+unavailable role configuration leave new work undispatched. No initial model
+output cap is added. Current owner conversations and shared tasks keep their
+own profiles and tools.
+
+Historical default-profile review tasks remain observable and are never
+automatically promoted; a queued old review is blocked. Follow-up review
+dispatch is currently unqualified and held until bounded reports integrate
+with its existing governed outbox. Historical completions and matched-reply
+cancellations still reconcile. This restriction does not stop ordinary owner
+messages or create an additional consent service.

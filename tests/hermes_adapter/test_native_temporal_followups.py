@@ -14,6 +14,7 @@ from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
+if len(sys.argv)>4 and sys.argv[4]:sys.path.insert(0,sys.argv[4])
 package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native followup qualification')
 socket.socket.connect=no_network
@@ -73,45 +74,70 @@ def reply(identifier):
     'matches':[{'external_ref':'message:reply-'+identifier,'reply_to_ref':row['outbound_ref'],
                 'receipt_ref':'receipt:reply-'+identifier,'ts':time.time(),'channel':'verified-other-channel','reaction':None}]})
 
+def seed_historical_task(identifier, client=None):
+ # A pre-upgrade native association, constructed with real native/HTTP APIs.
+ # Current adapters must never recreate this unrestricted worker.
+ value=clients[0].get(base+'/'+identifier,params={'contact_id':'owner'}).json()
+ review=value['review']
+ with kb.connect(board='default') as db:
+  tid=kb.create_task(db,title=review['title'],body=review['body'],assignee='default',
+      created_by='colony-followup',tenant='owner',idempotency_key='colony-followup:'+identifier,
+      workspace_kind='scratch',initial_status='blocked',goal_mode=True,goal_max_turns=4,
+      max_runtime_seconds=480,max_retries=1)
+ response=(client or clients[0]).post(base+'/'+identifier+'/native-task',json={
+     'contact_id':'owner','native_board':'default','native_task_id':tid,'contract_sha256':review['sha256']})
+ assert response.status_code==200,response.text
+ return tid
+
 first,parent=register('first')
-with ThreadPoolExecutor(2) as pool:
- result=list(pool.map(lambda i:reviews[i].work(first),range(2)))
-task_id=result[0]['native_task_id']
-assert all(r['native_task_id']==task_id for r in result)
+def refuse_new(index):
+ try:reviews[index].work(first)
+ except ValueError as error:assert str(error)=='readonly_followup_worker_unqualified'
+ else:raise AssertionError('New unrestricted followup worker was admitted')
+with ThreadPoolExecutor(2) as pool:list(pool.map(refuse_new,range(2)))
 for review in reviews:review.reconcile(board='default')
 with kb.connect(board='default') as db:
- assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==1
+ assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==0
+task_id=seed_historical_task(first)
+with kb.connect(board='default') as db:
+ assert kb.promote_task(db,task_id,actor='historical-fixture',reason='Pre-upgrade ready row')[0]
+for review in reviews:review.reconcile(board='default')
+with kb.connect(board='default') as db:
  task=kb.get_task(db,task_id)
- assert task.status=='ready' and task.created_by=='colony-followup'
- assert task.goal_mode and task.goal_max_turns==4 and task.max_runtime_seconds==480
+ assert task.status=='blocked' and task.block_kind=='needs_input'
+ # Native blocking records a synthetic ended run, without a worker claim.
+ assert kb.latest_run(db,task_id).claim_lock is None
+ assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==1
  assert db.execute('SELECT count(*) FROM kanban_notify_subs').fetchone()[0]==0
-# Reply on another verified alias cancels queued native work on next existing tick.
+# Reply on another verified alias cancels a historical queued task on the existing tick.
 reply(first)
 reviews[1].reconcile(board='default')
 with kb.connect(board='default') as db:
  assert kb.get_task(db,task_id).status=='archived'
- assert kb.latest_run(db,task_id) is None
+ assert kb.latest_run(db,task_id).claim_lock is None
 assert waiting.get(first)['state']=='resolved'
 assert waiting.get(first)['native_terminal_status']=='archived'
 assert store.get(parent)['status']=='pending' # Reply is not task fulfillment.
 assert clients[0].get(base+'/'+first,params={'contact_id':'owner'}).json()['status']=='cancelled'
 assert clients[1].get(base,params={'contact_id':'owner'}).json()['items']==[]
 
-# A reply races the blocked-task attachment itself. Association survives,
-# prepare cancels before promotion, and no native run exists.
+# A historical association whose attachment overlapped a reply remains
+# reconcilable; the new boundary cannot promote it.
 second,_=register('race')
 class ReplyDuringAttach:
  def get(self,*a,**kw):return clients[0].get(*a,**kw)
  def post(self,path,**kw):
   if path.endswith('/native-task'):reply(second)
   return clients[0].post(path,**kw)
-raced=NativeFollowups(ReplyDuringAttach(),'owner').work(second)
+seed_historical_task(second,ReplyDuringAttach())
+raced=reviews[0].work(second)
 assert raced['state']=='resolved' and raced['status']=='cancelled',raced
 with kb.connect(board='default') as db:
  assert kb.get_task(db,raced['native_task_id']).status=='archived'
  assert kb.latest_run(db,raced['native_task_id']) is None
 
-# Lost attachment ACK plus restart reuses one blocked task; no duplicate worker.
+# A historical lost attachment ACK remains bound after restart, without
+# promoting another unrestricted run.
 third,_=register('lost-ack')
 class LostAck:
  def get(self,*a,**kw):return clients[0].get(*a,**kw)
@@ -119,7 +145,7 @@ class LostAck:
   result=clients[0].post(path,**kw)
   if path.endswith('/native-task'):raise RuntimeError('lost attachment acknowledgment')
   return result
-try:NativeFollowups(LostAck(),'owner').work(third)
+try:seed_historical_task(third,LostAck())
 except RuntimeError:pass
 else:raise AssertionError('missing lost ACK')
 with kb.connect(board='default') as db:
@@ -127,10 +153,12 @@ with kb.connect(board='default') as db:
  assert kb.get_task(db,row['id']).status=='blocked'
 recovered=reviews[1].work(third)
 with kb.connect(board='default') as db:
- task=kb.get_task(db,recovered['native_task_id']);assert task.status=='ready'
+ task=kb.get_task(db,recovered['native_task_id']);assert task.status=='blocked'
  assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==3
- run=kb.claim_task(db,task.id)
- assert kb.complete_task(db,task.id,summary='Local task status inspected; response still unknown.',expected_run_id=run.current_run_id,fire_lifecycle_hook=False)
+ assert kb.latest_run(db,task.id) is None
+ # An owner closes the historical held task through the existing native API.
+ # The adapter must observe this newly terminal state before its dispatch gate.
+ assert kb.complete_task(db,task.id,summary='Historical local status reviewed; response remains unknown.',fire_lifecycle_hook=False)
 finished=reviews[0].work(third)
 assert finished['status']=='completed' and finished['state']=='open',finished
 assert finished['native_observation']['completed_run'] and not finished['effect_authorized']
@@ -146,8 +174,10 @@ source_ledger.append_source_annotation(contact_id='owner',session_id='owner-turn
 corrected=clients[1].get(base+'/'+fourth,params={'contact_id':'owner'}).json()
 assert corrected['state']=='cancelled',corrected
 assert not waiting.preflight(fourth)['review_allowed']
-print(json.dumps({'native_task_once':True,'reply_cancels_before_run':True,'attachment_race_cancelled':True,
-                  'lost_ack_recovered':True,'completion_is_not_send_or_fulfillment':True,'model_calls':0,'network':0}))
+print(json.dumps({'new_unrestricted_worker_refused':True,'historical_ready_task_held':True,
+                  'reply_cancels_before_run':True,'historical_attachment_race_cancelled':True,
+                  'historical_lost_ack_observed':True,'new_native_terminal_observed':True,
+                  'completion_is_not_send_or_fulfillment':True,'model_calls':0,'network':0}))
 '''
 
 
@@ -166,7 +196,8 @@ def test_actual_native_reply_wait_lifecycle(tmp_path):
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
+        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+        os.environ.get('AEVA_HERMES_TEST_SOURCE','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode == 0,result.stdout+result.stderr
-    assert '"native_task_once": true' in result.stdout
+    assert '"new_unrestricted_worker_refused": true' in result.stdout

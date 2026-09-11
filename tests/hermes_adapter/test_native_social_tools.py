@@ -15,6 +15,7 @@ from unittest.mock import patch
 from datetime import datetime,timezone
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
+if len(sys.argv)>4 and sys.argv[4]:sys.path.insert(0,sys.argv[4])
 def no_network(*args,**kwargs):raise AssertionError('Native social qualification is offline')
 socket.socket.connect=no_network;socket.create_connection=no_network
 from fastapi import FastAPI
@@ -321,8 +322,8 @@ resolver_access.update(allowed=True,available=True)
 write_keys()
 
 # A real provider receipt starts a short fixture expectation; loss of intake
-# coverage never means the recipient ignored it. This prepares one internal
-# native review under the existing owner task, without any provider send.
+# coverage never means the recipient ignored it. A new unqualified worker is
+# held; a historical native review remains reconcilable without any send.
 from colony_hermes.initiative_work import NativeFollowups
 from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
 from hermes_cli import kanban_db as kb
@@ -367,13 +368,30 @@ for connected in (False,True):
  assert checked.json()['transport_coverage']['observed'] is connected
 assert not waiting.preflight(wait)['dispatch_allowed']
 reviews=[NativeFollowups(api,owner.contact_id),NativeFollowups(api,owner.contact_id)]
+def refuse_unqualified(index):
+ try:reviews[index].work(wait)
+ except ValueError as error:assert str(error)=='readonly_followup_worker_unqualified'
+ else:raise AssertionError('New unrestricted followup worker was admitted')
 with ThreadPoolExecutor(2) as pool:
- prepared=list(pool.map(lambda index:reviews[index].work(wait),range(2)))
-native_id=prepared[0]['native_task_id']
-assert all(item['native_task_id']==native_id for item in prepared),prepared
+ list(pool.map(refuse_unqualified,range(2)))
 with kb.connect(board='default') as db:
- assert db.execute('SELECT count(*) FROM tasks WHERE idempotency_key=?',('colony-followup:'+wait,)).fetchone()[0]==1
- assert kb.get_task(db,native_id).status=='ready' and kb.latest_run(db,native_id) is None
+ assert db.execute('SELECT count(*) FROM tasks WHERE idempotency_key=?',('colony-followup:'+wait,)).fetchone()[0]==0
+# Seed the pre-upgrade association with real native/HTTP calls; this is not
+# an admission through the newly disabled dispatch path.
+review=api.get(url,params={'contact_id':owner.contact_id}).json()['review']
+with kb.connect(board='default') as db:
+ native_id=kb.create_task(db,title=review['title'],body=review['body'],assignee='default',
+     created_by='colony-followup',tenant=owner.contact_id,idempotency_key='colony-followup:'+wait,
+     workspace_kind='scratch',initial_status='blocked')
+association=api.post(url+'/native-task',json={'contact_id':owner.contact_id,'native_board':'default',
+    'native_task_id':native_id,'contract_sha256':review['sha256']})
+assert association.status_code==200,association.text
+with kb.connect(board='default') as db:
+ assert kb.promote_task(db,native_id,actor='historical-fixture',reason='Pre-upgrade queued task')[0]
+reviews[0].work(wait)
+with kb.connect(board='default') as db:
+ assert kb.get_task(db,native_id).status=='blocked' and kb.get_task(db,native_id).block_kind=='needs_input'
+ assert kb.latest_run(db,native_id).claim_lock is None # Native blocked receipt, no worker claim.
 reply=event('provider-reply','in',reply_to_ref='provider-original',reply_to_channel='whatsapp')
 reply['channel']='email'
 received=api.post('/v1/host/transport/observe',headers=provider,json=reply)
@@ -382,7 +400,7 @@ assert waiting.get(wait)['state']=='resolved'
 assert waiting.get(wait)['reply']['matches'][0]['provider_reply_to_ref']=='whatsapp:provider-original'
 reviews[0].reconcile(board='default')
 with kb.connect(board='default') as db:
- assert kb.get_task(db,native_id).status=='archived' and kb.latest_run(db,native_id) is None
+ assert kb.get_task(db,native_id).status=='archived' and kb.latest_run(db,native_id).claim_lock is None
 assert store.get(follow_parent['id'])['status']=='pending'
 assert not waiting.preflight(wait)['dispatch_allowed']
 
@@ -426,7 +444,8 @@ print(json.dumps({'native_tools_registered':True,'first_turn_capture_claim_wait'
                   'cached_recall_identity_correction_and_reversal':True,'exact_phone_handle_split':True,
                   'actual_credential_revocation':True,'resolver_outage_distinct':True,'attested_cli_preserved':True,
                   'native_cron_and_child':True,'dispatch_resolver_cost_ms':dispatch_resolve_cost_ms,'dispatch_total_ms':dispatch_total_ms,
-                  'receipt_starts_wait':True,'outage_not_silence':True,'one_native_followup_review':True,'matched_reply_cancels_review':True,
+                  'receipt_starts_wait':True,'outage_not_silence':True,'new_unrestricted_followup_refused':True,
+                  'historical_followup_held':True,'matched_reply_cancels_review':True,
                   'external_model_calls':0,'network':0}))
 '''
 
@@ -444,7 +463,8 @@ def test_actual_native_social_tools(tmp_path):
         COLONY_GENERAL_PLUGIN_ACTIVE='1',COLONY_MEMORY_WORKER_TOOLS='0',COLONY_MEMORY_TURN_WRITER='disabled',
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result=subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
+        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+        os.environ.get('AEVA_HERMES_TEST_SOURCE','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode==0,result.stdout+result.stderr
     assert '"first_turn_capture_claim_wait": true' in result.stdout
