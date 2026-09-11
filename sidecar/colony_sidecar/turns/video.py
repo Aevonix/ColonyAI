@@ -120,8 +120,9 @@ def _decode(data, requested_ms):
                         if len(raw) > MAX_FRAME_BYTES:
                             return disposition('unsupported', 'video_frame_bytes_exceed_limit', **metadata)
                         frames.append({'requested_ms': float(target), 'actual_ms': float(actual),
-                            'frame_pts': pts, 'time_base': str(time_base), 'stream_index': stream.index,
-                            'origin_pts': records[0][0], 'origin_time_base': str(records[0][1]),
+                            'frame_pts': pts, 'time_base': f'{time_base.numerator}/{time_base.denominator}', 'stream_index': stream.index,
+                            'origin_pts': records[0][0],
+                            'origin_time_base': f'{records[0][1].numerator}/{records[0][1].denominator}',
                             'selection': 'first_frame_at_or_after', 'timestamp_origin': 'first_decoded_frame',
                             'source_width': frame.width, 'source_height': frame.height,
                             'width': image.width, 'height': image.height, 'transform': 'rgb24_png_no_resize',

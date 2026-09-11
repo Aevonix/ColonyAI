@@ -20,10 +20,11 @@ from colony_sidecar.turns.video import decode_video, MAX_VIDEO_BYTES
 from test_turn_source_evidence import source_app
 
 
-def clip_bytes(times=(0, 250, 1000, 1500), *, size=(160, 120)):
+def clip_bytes(times=(0, 250, 1000, 1500), *, size=(160, 120), track_timescale=None):
     output = io.BytesIO()
-    with av.open(output, 'w', format='mp4') as container:
-        stream = container.add_stream('mpeg4', rate=4)
+    options = {'video_track_timescale': str(track_timescale)} if track_timescale is not None else {}
+    with av.open(output, 'w', format='mp4', options=options) as container:
+        stream = container.add_stream('mpeg4', rate=1 if track_timescale == 1 else 4)
         stream.width, stream.height = size; stream.pix_fmt = 'yuv420p'
         stream.time_base = Fraction(1, 1000)
         for index, time in enumerate(times):
@@ -49,6 +50,15 @@ def retained(tmp_path, data=None):
     selector = dict(contact_id='owner', session_id='later', **ref,
                     asset_hash=hashlib.sha256(data).hexdigest(), requested_ms=800)
     return ledger, selector, data
+
+
+@pytest.mark.asyncio
+async def test_actual_one_second_mp4_time_base_keeps_canonical_ratio(tmp_path):
+    ledger, selector, _ = retained(tmp_path, clip_bytes((0, 1000), track_timescale=1))
+    opened = await read_video(ledger, **selector)
+    frame = opened['video']
+    assert frame['frame_pts'] == 1 and frame['origin_pts'] == 0 and frame['actual_ms'] == 1000
+    assert frame['time_base'] == frame['origin_time_base'] == '1/1'
 
 
 def row(ledger):
