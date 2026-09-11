@@ -8,10 +8,10 @@ installer does not patch an existing Hermes checkout or change its selection.
 ## Published qualification target
 
 **SHIPPED source:** [Kurcide/hermes-agent at
-`a61595f46744674ca31f58ea8a7d9f65b4a536f1`](https://github.com/Kurcide/hermes-agent/commit/a61595f46744674ca31f58ea8a7d9f65b4a536f1),
-based on [Hermes v0.21.1,
-`2237be355906fbe6065ce1815711eee52b2d646e`](https://github.com/NousResearch/hermes-agent/commit/2237be355906fbe6065ce1815711eee52b2d646e),
-under the [MIT license](https://github.com/Kurcide/hermes-agent/blob/a61595f46744674ca31f58ea8a7d9f65b4a536f1/LICENSE).
+`09fbad8e4e4e3e15d9b459110403494f377b434f`](https://github.com/Kurcide/hermes-agent/commit/09fbad8e4e4e3e15d9b459110403494f377b434f),
+based on [Hermes v0.21.2,
+`939e45c91d751fadd94dcd1b873ac3cb44846213`](https://github.com/NousResearch/hermes-agent/commit/939e45c91d751fadd94dcd1b873ac3cb44846213),
+under the [MIT license](https://github.com/Kurcide/hermes-agent/blob/09fbad8e4e4e3e15d9b459110403494f377b434f/LICENSE).
 This is a published compatibility fork, not a claim that the change shipped in
 an upstream Hermes release.
 
@@ -41,7 +41,28 @@ agents read changed timeout settings on subsequent requests. No initial output
 cap is restored; native truncation recovery keeps its existing increasing
 budgets. These are per-attempt transport settings, not an overall task deadline.
 
+Hermes 0.21.2 deliberately omits ordinary persistence hooks for detached review
+forks. The compatibility build adds one `on_detached_turn_end` observer in
+`agent/turn_finalizer.py`, registered in `hermes_cli/plugins.py`. Its payload is
+limited to exact execution/parent identifiers, completion/failure/interruption
+flags, exit reason, model and platform. It carries no conversation or output
+content, ignores callback returns, and preserves the native persistence skips.
+The adapter binds review starts through existing synchronous request middleware.
+This small interface replaces reliance on user-turn hooks for detached work;
+it does not add a scheduler, review service or alternative memory store.
+Unmodified upstream 0.21.2 does not provide this completion observer.
+
 ## What is qualified
+
+The two existing compatibility changes were reapplied to the 0.21.2 release
+without conflicts. Their affected native suites passed 275 checks in a native-only
+environment. The detached observer then passed 24 focused checks, including
+successful, failed and interrupted endings, retained persistence-hook skips and
+unchanged ordinary turn endings. These are separate run scopes, not a claim that
+the entire upstream test suite ran.
+
+The following callback and timeout counts describe their earlier qualification;
+the retained behavior is rechecked on the current native candidate above.
 
 The two synchronized core invariants fail on the unmodified base and pass on
 the selected build. They cover distinct sessions retaining their own callback
@@ -99,7 +120,9 @@ Replace the fork with an unmodified upstream release when all of these hold:
    through the deployment's normal reversible upgrade path.
 
 Also retain or verify the named-provider timeout behavior before removing that
-part of the compatibility build.
+part of the compatibility build. Replace the detached observer when upstream
+provides an equivalent exact execution-end contract. Provider response hooks and
+final output transforms alone do not establish failed or interrupted completion.
 
 Keep the regression tests and upstream attribution after removing the fork
 selection. Do not carry an old dispatcher diff over a newer implementation

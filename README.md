@@ -48,7 +48,7 @@ remain valid.
 
 ## Start with Hermes
 
-The current qualification target is Hermes 0.21.1; 0.21.0 attachment remains supported.
+The current qualification target is Hermes 0.21.2; 0.21.0 and 0.21.1 attachment remain supported.
 Optional [concurrent background tasks](docs/NATIVE-TASK-CHANNELS.md) require the
 callback correction in the [pinned Hermes compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
 The daily upstream check remains separate, and setup does not patch your runtime.
@@ -65,7 +65,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.3.2" "apsimo-hermes[native-memory]==1.3.2"
+python -m pip install "apsimo[hermes]==1.3.3" "apsimo-hermes[native-memory]==1.3.3"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
