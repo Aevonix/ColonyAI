@@ -1,4 +1,4 @@
-# Apsimo PsuedoAGI Engine
+# Apsimo PsuedoAGI
 
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml)
