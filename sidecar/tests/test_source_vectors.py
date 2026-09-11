@@ -102,17 +102,20 @@ async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_e
     monkeypatch.setenv('COLONY_RECALL_RERANK', 'on')
     monkeypatch.delenv('COLONY_RECALL_RERANK_MIN_SCORE', raising=False)
     selector = RecallSelector(rerank)
-    async def recall():
+    async def recall(limit=5):
         lexical = ledger.search_sources(query, contact_id='c', session_id='later', limit=10)
         semantic, _ = await projection.search(query, contact_id='c', session_id='later', limit=20)
         hits = merge_source_hits(lexical, semantic)
         _, rows = claims.prepare_context([], hits, contact_id='c', session_id='later', time_query=MemoryTimeQuery())
-        return rows, await selector.select_context(query, [], rows)
+        return rows, await selector.select_context(query, [], rows, limit=limit)
     rows, (selected, context) = await recall()
     duplicates = [row for row in rows if row['content'] == query]
     assert len(duplicates) == 5  # Fusion retains all occurrences for claim/time expansion.
     assert calls[0].count(query) == 1
-    assert sum(row['content'] in useful for row in selected) == 4
+    assert {row['content'] for row in selected} == set(useful)
+    # Exact repeated requests are supplementary. A larger packet still exposes
+    # their intact lineage, and erasure must advance to a surviving occurrence.
+    _, (selected, _) = await recall(limit=6)
     retained = next(row for row in selected if row['content'] == query)
     for key in ('id', 'source_uri', 'source_turn_id', 'source_message_hash', 'occurred_at', 'ingested_at'):
         assert retained.get(key) == duplicates[0].get(key)
@@ -121,6 +124,8 @@ async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_e
     rows, (selected, context) = await recall()
     assert erased not in {row['source_turn_id'] for row in rows + selected}
     assert calls[-1].count(query) == 1
+    assert {row['content'] for row in selected} == set(useful)
+    _, (selected, _) = await recall(limit=6)
     replacement = next(row for row in selected if row['content'] == query)
     assert replacement['source_turn_id'] != erased
     assert replacement['source_message_hash'] != retained['source_message_hash']
