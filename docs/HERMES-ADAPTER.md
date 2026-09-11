@@ -608,7 +608,9 @@ select their root deployment for this shared worker.
 The profile exposes two tools: `colony_read_work_source` and
 `colony_review_report`. Native `agent.disabled_toolsets: [kanban]` removes
 the automatically added Kanban tools, including task creation and attachment
-access. The report wrapper completes or blocks only the worker's current
+access. Native `tools.tool_search.enabled: false` keeps both tools directly
+visible to the model; readiness checks the assembled schema array. The report
+wrapper completes or blocks only the worker's current
 claimed task through native lifecycle handlers. It accepts text, not files,
 metadata, task identifiers or new work. Scratch artifact references in report
 text are rejected because Hermes otherwise infers attachments from them.

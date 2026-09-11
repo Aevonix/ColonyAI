@@ -24,6 +24,7 @@ def worker_configuration(state, manifest, owner):
     config = {**model,
         'agent': {'max_turns': 12, 'disabled_toolsets': ['kanban']},
         'toolsets': ['colony_review'], 'platform_toolsets': {'cli': ['colony_review']},
+        'tools': {'tool_search': {'enabled': False}},
         'plugins': {'enabled': ['colony'], 'colony': {'native_reviews': {
             'worker': True, 'source_home': manifest['hermes_home'], 'owner_contact_id': owner,
             'log_directory': str(Path(manifest.get('operational_log_directory') or
