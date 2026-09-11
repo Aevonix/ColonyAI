@@ -8,14 +8,14 @@ installer does not patch an existing Hermes checkout or change its selection.
 ## Published qualification target
 
 **SHIPPED source:** [Kurcide/hermes-agent at
-`a78454b963030962ccefd7e37461e35d2082b587`](https://github.com/Kurcide/hermes-agent/commit/a78454b963030962ccefd7e37461e35d2082b587),
+`a61595f46744674ca31f58ea8a7d9f65b4a536f1`](https://github.com/Kurcide/hermes-agent/commit/a61595f46744674ca31f58ea8a7d9f65b4a536f1),
 based on [Hermes v0.21.1,
 `2237be355906fbe6065ce1815711eee52b2d646e`](https://github.com/NousResearch/hermes-agent/commit/2237be355906fbe6065ce1815711eee52b2d646e),
-under the [MIT license](https://github.com/Kurcide/hermes-agent/blob/a78454b963030962ccefd7e37461e35d2082b587/LICENSE).
+under the [MIT license](https://github.com/Kurcide/hermes-agent/blob/a61595f46744674ca31f58ea8a7d9f65b4a536f1/LICENSE).
 This is a published compatibility fork, not a claim that the change shipped in
 an upstream Hermes release.
 
-The change adapts [upstream PR #104763](https://github.com/NousResearch/hermes-agent/pull/104763),
+The callback change adapts [upstream PR #104763](https://github.com/NousResearch/hermes-agent/pull/104763),
 specifically [source commit
 `b9c112c83b60b91e918341cbb587a6a913d9d9eb`](https://github.com/NousResearch/hermes-agent/commit/b9c112c83b60b91e918341cbb587a6a913d9d9eb).
 The three production files match that proposal, and the original contributor's
@@ -33,6 +33,14 @@ observations. The correction operates within Hermes' existing callback
 dispatcher. It adds no Colony service, model route, deployment setting or new
 plugin registration API.
 
+The selected build also retains named custom-provider timeout settings after
+Hermes resolves a named endpoint to its generic transport. It uses the existing
+`requested_provider` identity and timeout schema. Per-model settings take
+precedence over the named provider, then the generic provider fallback. Cached
+agents read changed timeout settings on subsequent requests. No initial output
+cap is restored; native truncation recovery keeps its existing increasing
+budgets. These are per-attempt transport settings, not an overall task deadline.
+
 ## What is qualified
 
 The two synchronized core invariants fail on the unmodified base and pass on
@@ -40,6 +48,12 @@ the selected build. They cover distinct sessions retaining their own callback
 results and parallel tools in one session receiving separate policy decisions.
 The existing plugin, ownership-ledger and event-bus checks also passed, for 132
 affected core tests with file retries disabled.
+
+The timeout correction passed 139 focused native tests, including the pinned
+optional Anthropic SDK. Controlled SDK requests also verify distinct foreground
+and background provider policies, cached-agent refresh, separate-process task
+resume and native truncation recovery. These controlled responses establish
+configuration propagation, not model quality or measured timeout expiration.
 
 Colony's [actual native task fixture](../tests/hermes_adapter/test_native_task_channels.py)
 uses the installed adapter, real gateway, canonical source/contact APIs and
@@ -83,6 +97,9 @@ Replace the fork with an unmodified upstream release when all of these hold:
    ordinary conversation, source receipts, steering and targeted interruption.
 4. Update the pinned CI commit and documentation, then select the runtime
    through the deployment's normal reversible upgrade path.
+
+Also retain or verify the named-provider timeout behavior before removing that
+part of the compatibility build.
 
 Keep the regression tests and upstream attribution after removing the fork
 selection. Do not carry an old dispatcher diff over a newer implementation
