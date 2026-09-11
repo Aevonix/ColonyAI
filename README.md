@@ -41,6 +41,8 @@ ordinary-use evidence for useful autonomous learning. The
 ## Start with Hermes
 
 The current qualification target is Hermes 0.21.1; 0.21.0 attachment remains supported.
+Native final-summary memory filtering requires NeMo Relay 0.8.3, included in
+the `native-memory` extra below. Older attachments retain ordinary request filtering.
 Use the selected Hermes runtime's Python interpreter for attachment;
 Python 3.12 is exercised by native integration CI. One local OpenAI-compatible
 chat endpoint is sufficient. The lightweight profile needs no Docker, Neo4j,
@@ -52,7 +54,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.12" "colony-hermes==1.1.12"
+python -m pip install "colonyai[hermes]==1.1.13" "colony-hermes[native-memory]==1.1.13"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
