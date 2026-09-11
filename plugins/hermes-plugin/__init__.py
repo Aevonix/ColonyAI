@@ -2511,7 +2511,12 @@ def register(ctx: Any) -> None:
                 if user_message and assistant_message else ""
             ),
             "model": str(kwargs.get("model") or ""),
-            "sender": {"platform": scope.platform, "user_id": scope.sender_id},
+            # A derived native task retains the actual admitting sender's
+            # authority channel. Its execution platform is not a new human
+            # handle; attributing that pair would create another contact and
+            # break the same-owner source dependency at final persistence.
+            "sender": {"platform": scope.authority_gateway or scope.platform,
+                       "user_id": scope.sender_id},
         }
         if supplied_input is not None:
             # The host already admitted the human input. This native turn is

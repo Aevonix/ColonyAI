@@ -73,6 +73,10 @@ silently treated as unchanged merely because its source bytes still exist.
 `NativeTasks` captures instructions and schedules retained IDs onto its
 registered adapter's existing event loop. A bounded callback timeout leaves
 the same ID inspectable rather than cancelling partially admitted work.
+Independent dispatch uses a fresh copy of the context captured when that
+adapter connected. It preserves gateway/profile routing without inheriting the
+foreground tool's managed execution ancestry. Source lineage is retained in
+the handoff; it is not inferred from a calling thread's context.
 `NativeTaskAdapter` supplies source context around the real gateway message
 handler and records its exact session/task/turn. Native `/steer` and `/stop`
 events operate only on that owned origin. Terminal-before-stop stays complete;

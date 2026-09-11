@@ -7,7 +7,7 @@ The generic adapter accepts in-process control only and retains result text.
 from __future__ import annotations
 
 import asyncio
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 import json
 
 from gateway.config import Platform
@@ -48,6 +48,34 @@ def finish_native_turn(**kwargs):
         active['handoffs'].observe_terminal(active['id'], kwargs)
 
 
+def bound_task_contact(platform, sender, session_id):
+    """Return the source-checked native participant, never create a task handle.
+
+    None means this is not the active task adapter. An empty string means its
+    exact participant is not currently available; callers must not fall back to
+    ordinary sender provisioning. Joined children need their own checked
+    SuppliedInput session binding, while the retained root generation stays exact.
+    """
+    active = ACTIVE.get()
+    if active is None or platform != active['adapter'].platform.value:
+        return None
+    from .input_provenance import current
+    supplied = current()
+    if supplied is not active['supplied'] or not active.get('native'):
+        return ''
+    contact = supplied.memory_contact(session_id)
+    if not contact or sender != contact:
+        return ''
+    try:
+        row = active['handoffs'].control(active['id'], require_task_grant=True)
+    except Exception:
+        return ''
+    if (row['stop'] or row['source']['contact_id'] != contact
+            or any(row['native_' + key] != value for key, value in active['native'].items())):
+        return ''
+    return contact
+
+
 class NativeTaskAdapter(BasePlatformAdapter):
     """A native task channel; execution remains in the gateway."""
 
@@ -74,6 +102,7 @@ class NativeTaskAdapter(BasePlatformAdapter):
         self._control_lock = asyncio.Lock()
         self._active_inputs = {}
         self.loop = None
+        self.dispatch_context = None
 
     def set_authorization_check(self, callback):
         # Hermes supplies the current platform/profile sender policy through
@@ -99,6 +128,7 @@ class NativeTaskAdapter(BasePlatformAdapter):
 
     async def connect(self, *, is_reconnect=False):
         self.loop = asyncio.get_running_loop()
+        self.dispatch_context = copy_context()
         self._mark_connected()
         return True
 
@@ -106,6 +136,7 @@ class NativeTaskAdapter(BasePlatformAdapter):
         await self.cancel_background_tasks()
         self._mark_disconnected()
         self.loop = None
+        self.dispatch_context = None
 
     async def get_chat_info(self, chat_id):
         resolve = self.handoffs.control if CONTROL.get() == chat_id else self.handoffs.resolve

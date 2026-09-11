@@ -137,7 +137,8 @@ class NativeTasks:
 
     def _call(self, action, identity, *, update_id=None):
         adapter = self.adapter
-        if adapter is None or adapter.loop is None or not adapter.loop.is_running():
+        if (adapter is None or adapter.loop is None or not adapter.loop.is_running()
+                or adapter.dispatch_context is None):
             return None
         try:
             same_loop = asyncio.get_running_loop() is adapter.loop
@@ -150,7 +151,11 @@ class NativeTasks:
         payload = {'handoff_id': identity, 'action': action}
         if update_id is not None:
             payload['update_id'] = update_id
-        future = asyncio.run_coroutine_threadsafe(adapter.dispatch_http_event(payload), adapter.loop)
+        # This is an independent root. Copy the connected gateway/profile
+        # context, not the foreground tool's managed Relay callback ancestry.
+        # Its owner and source lineage come from the retained handoff instead.
+        future = adapter.dispatch_context.copy().run(asyncio.run_coroutine_threadsafe,
+            adapter.dispatch_http_event(payload), adapter.loop)
         try:
             return future.result(timeout=2)
         except FutureTimeout:
@@ -188,8 +193,10 @@ class NativeTasks:
         if kwargs.get('dry_run') or kwargs.get('board') not in (None, 'default') or os.environ.get('HERMES_KANBAN_TASK'):
             return
         adapter = self.adapter
-        if adapter is not None and adapter.loop is not None and adapter.loop.is_running():
-            asyncio.run_coroutine_threadsafe(self.reconcile(), adapter.loop)
+        if (adapter is not None and adapter.loop is not None and adapter.loop.is_running()
+                and adapter.dispatch_context is not None):
+            adapter.dispatch_context.copy().run(asyncio.run_coroutine_threadsafe,
+                self.reconcile(), adapter.loop)
 
     @staticmethod
     def _metadata(row):

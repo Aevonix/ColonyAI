@@ -121,13 +121,13 @@ class TaskHandoffs:
             result[key] = json.loads(result.pop(key + '_json') or 'null')
         return result
 
-    def control(self, identity, *, principal=None):
+    def control(self, identity, *, principal=None, require_task_grant=False):
         """Resolve retained ownership without requiring still-readable source content."""
         row = self.get(identity)
         source = row['source']
         if principal is not None and source['principal'] != principal:
             raise self._error('Unknown native task handoff')
-        self._checked_owner(source, require_task_grant=False)
+        self._checked_owner(source, require_task_grant=require_task_grant)
         return row
 
     def _checked_owner(self, source, *, require_task_grant):
