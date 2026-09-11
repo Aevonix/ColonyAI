@@ -63,6 +63,7 @@ from .slash import SLASH_COMMANDS
 from .executions import ExecutionObserver
 from .commitment_work import CommitmentCoordinator
 from .request_memory import RequestMemory
+from .native_memory import NativeMemoryRequests
 from .request_work import RequestWork
 
 
@@ -2344,6 +2345,7 @@ def register(ctx: Any) -> None:
     turn_writer_platforms = boundary.turn_writer_platforms
     turn_outbox = boundary.turn_outbox
     request_memory = RequestMemory(client, turn_outbox)
+    native_memory = NativeMemoryRequests(request_memory)
     request_work = RequestWork(client)
     execution_observer = (
         ExecutionObserver(client)
@@ -2415,6 +2417,7 @@ def register(ctx: Any) -> None:
             request_memory.observe(scope, kwargs.get('conversation_history') or [],
                 user_message=(None if review or kwargs.get('parent_session_id')
                               or scope.platform == 'cron' else kwargs.get('user_message')))
+            native_memory.bind(scope)
         if scope.valid_participant and not review:
             work_coordinator.bind_turn(**kwargs)
             local_work.bind_selected(scope, work_coordinator, kwargs)
@@ -2439,6 +2442,8 @@ def register(ctx: Any) -> None:
         return native_context
 
     def post_llm_call(**kwargs: Any) -> None:
+        native_memory.finish(str(kwargs.get('session_id') or ''),
+            str(kwargs.get('task_id') or ''), str(kwargs.get('turn_id') or ''))
         session_id = str(kwargs.get("session_id") or "")
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=session_id,
@@ -2662,6 +2667,7 @@ def register(ctx: Any) -> None:
                 failure=input_provenance.current().failure)
             result['reason'] = 'source_input_unavailable'
         result['request'] = describe(result['request'])
+        native_memory.checked(result['request'], scope)
         return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
 
     def commitment_work_handler(args=None, **kwargs):
