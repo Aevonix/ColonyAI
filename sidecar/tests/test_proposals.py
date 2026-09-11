@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from colony_sidecar.proposals import (
+from apsimo.proposals import (
     Proposal, ProposalStore, build_from_thinker, build_from_research,
     proposal_to_payload,
 )

@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from colony_sidecar.task_queue.models import Job
-from colony_sidecar.task_queue.queue_manager import QueueManager
-from colony_sidecar.turns.executions import request_work_context
-from colony_sidecar.turns.reported_workers import reported_worker_view
+from apsimo.task_queue.models import Job
+from apsimo.task_queue.queue_manager import QueueManager
+from apsimo.turns.executions import request_work_context
+from apsimo.turns.reported_workers import reported_worker_view
 
 
 @pytest.mark.asyncio

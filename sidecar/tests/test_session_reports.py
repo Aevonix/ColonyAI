@@ -9,8 +9,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from colony_sidecar.sessions.reports import SessionReport, SessionReportStore
-from colony_sidecar.api.schemas.host import (
+from apsimo.sessions.reports import SessionReport, SessionReportStore
+from apsimo.api.schemas.host import (
     SessionReportRequest,
     ContextDigestResponse,
     AgentSnapshotSystemState,
@@ -113,17 +113,17 @@ class TestSessionReportEndpoint:
 
     @pytest.fixture
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-        from colony_sidecar.api.routers.host import (
+        from apsimo.api.routers.host import (
             set_telemetry,
             set_autonomy_loop,
             set_session_report_store,
             set_initiative_store,
         )
-        from colony_sidecar.server import create_app
-        from colony_sidecar.telemetry import TelemetryStore
-        from colony_sidecar.initiatives.store import InitiativeStore
+        from apsimo.server import create_app
+        from apsimo.telemetry import TelemetryStore
+        from apsimo.initiatives.store import InitiativeStore
 
-        from colony_sidecar.api.routers import host as host_mod
+        from apsimo.api.routers import host as host_mod
 
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
 
@@ -196,7 +196,7 @@ class TestSessionReportEndpoint:
 
     def test_store_store_not_ready(self, client: TestClient, monkeypatch):
         """Return 501 if the store global is None."""
-        import colony_sidecar.api.routers.host as host_router
+        import apsimo.api.routers.host as host_router
 
         monkeypatch.setattr(host_router, "_session_report_store", None)
         resp = client.post(
@@ -216,17 +216,17 @@ class TestContextDigestEndpoint:
 
     @pytest.fixture
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-        from colony_sidecar.api.routers.host import (
+        from apsimo.api.routers.host import (
             set_telemetry,
             set_autonomy_loop,
             set_session_report_store,
             set_initiative_store,
         )
-        from colony_sidecar.server import create_app
-        from colony_sidecar.telemetry import TelemetryStore
-        from colony_sidecar.initiatives.store import InitiativeStore
+        from apsimo.server import create_app
+        from apsimo.telemetry import TelemetryStore
+        from apsimo.initiatives.store import InitiativeStore
 
-        from colony_sidecar.api.routers import host as host_mod
+        from apsimo.api.routers import host as host_mod
 
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
 

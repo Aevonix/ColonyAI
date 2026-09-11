@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from colony_sidecar.directives import Action, DirectiveManager, DirectiveStore
-from colony_sidecar.directives.extractor import extract_directives
-from colony_sidecar.directives.models import GLOBAL_PAUSE_TERM
+from apsimo.directives import Action, DirectiveManager, DirectiveStore
+from apsimo.directives.extractor import extract_directives
+from apsimo.directives.models import GLOBAL_PAUSE_TERM
 
 
 def _mgr():

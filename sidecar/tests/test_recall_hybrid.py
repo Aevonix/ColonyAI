@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.intelligence.graph.recall import (
+from apsimo.intelligence.graph.recall import (
     calibration_fingerprint, lexical_query, render_memory_context,
 )
 from test_recall_ranking import RecallFixture, _Hit, _node

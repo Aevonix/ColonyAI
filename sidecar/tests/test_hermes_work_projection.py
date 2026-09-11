@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.turns.hermes_work import cron_view
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions, host
+from apsimo.turns.hermes_work import cron_view
 
 
 @pytest.fixture
@@ -72,7 +72,7 @@ def test_unavailable_schema_does_not_claim_no_work(native):
 
 
 def test_request_projection_keeps_bounded_cron_name_with_exact_native_identity(native):
-    from colony_sidecar.turns.executions import request_work_context
+    from apsimo.turns.executions import request_work_context
     _, _, path = native
     before = path.read_bytes()
     now = datetime(2026, 9, 6, 12, 3, tzinfo=timezone.utc).timestamp()
@@ -110,7 +110,7 @@ async def test_only_attested_owner_current_work_and_context_can_read_native_prof
                 assert (await client.get('/v1/host/executions', params={'contact_id':'fixture-owner'})).status_code == 403
             else:
                 assert response.json()['native_cron']['total'] == 2
-                from colony_sidecar.api.schemas.host import ContextAssembleRequest
+                from apsimo.api.schemas.host import ContextAssembleRequest
                 body = ContextAssembleRequest(identity={'host_id':'fixture'},
                     context={'contact_id':person,'session_id':'different-session'},
                     incoming_message={'role':'user','content':'What are you doing now?'})

@@ -11,11 +11,11 @@ import inspect
 
 import pytest
 
-from colony_sidecar.tom import leveled
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.leveled import (
+from apsimo.tom import leveled
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.leveled import (
     LEVEL2_HEADER, UNAWARE_CAUTION, render_level1, render_level2)
-from colony_sidecar.tom.tom2 import Tom2Store, render_inference_for_contact
+from apsimo.tom.tom2 import Tom2Store, render_inference_for_contact
 
 READER = "cid-alice"
 

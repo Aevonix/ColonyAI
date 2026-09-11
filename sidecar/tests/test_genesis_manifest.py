@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from colony_sidecar.chain import identity
+from apsimo.chain import identity
 
 
 @pytest.fixture(autouse=True)

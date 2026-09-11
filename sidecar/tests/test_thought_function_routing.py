@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from colony_sidecar.cognition.goal_spine import ThoughtJobV1, parse_thought_output
-from colony_sidecar.self_model.workspace import ConcernStore
-from colony_sidecar.task_queue.handlers.inference import InferenceHandler
-from colony_sidecar.task_queue.models import Job, JobType
+from apsimo.cognition.goal_spine import ThoughtJobV1, parse_thought_output
+from apsimo.self_model.workspace import ConcernStore
+from apsimo.task_queue.handlers.inference import InferenceHandler
+from apsimo.task_queue.models import Job, JobType
 from test_cognition_goal_spine import concern
 from test_function_routing import config, endpoint, router
 from test_inference_context_gate import _big_doc

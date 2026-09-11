@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from test_accepted_local_work import body, local_api, native_run, post
-from colony_sidecar.commitments.local_work import LocalWork
+from apsimo.commitments.local_work import LocalWork
 from test_hermes_general_governance import runtime, _pre, _tool
 
 
@@ -248,7 +248,7 @@ def test_standalone_new_turn_and_legacy_acceptance_keep_their_identity(local_api
     old = post(api, path, body(tmp_path)).json()
     # Recreate predecessor storage shape: the original dedup key lived only
     # on the initiative, before acceptance aliases were recorded separately.
-    from colony_sidecar.commitments.local_work import SOURCE, encoded
+    from apsimo.commitments.local_work import SOURCE, encoded
     import hashlib
     material = {'commitment_id': obligation['id'], 'question': body(tmp_path)['question'],
                 'sources': body(tmp_path)['sources'], 'session_id': 'owner-chat', 'turn_id': 'owner-turn'}

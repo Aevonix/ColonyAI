@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
+from apsimo.api.routers import host as host_mod
 
 
 class _FakeWorldStore:

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
+from apsimo.autonomy.loop import AutonomyLoop
 
 
 @pytest.mark.asyncio

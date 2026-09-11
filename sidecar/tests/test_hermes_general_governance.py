@@ -1918,7 +1918,7 @@ def test_memory_coexistence_latches_fail_closed(monkeypatch):
 
 
 def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path):
-    from colony_sidecar.setup import _hermes_plugin_files
+    from apsimo.setup import _hermes_plugin_files
 
     home = tmp_path / "selected"
     for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], home):

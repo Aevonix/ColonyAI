@@ -15,8 +15,8 @@ from contextlib import asynccontextmanager
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.tom.facts import SharedFactsStore
+from apsimo.api.routers import host as host_mod
+from apsimo.tom.facts import SharedFactsStore
 
 
 class _RecordingGraph:

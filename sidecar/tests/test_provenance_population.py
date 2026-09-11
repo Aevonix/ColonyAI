@@ -3,10 +3,10 @@ its conversation context (channel_id), so cross-context leak detection has live 
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.schemas.host import (
+from apsimo.api.routers import host as host_mod
+from apsimo.api.schemas.host import (
     HostIdentity, HostMessage, HostTurnContext, TurnSyncRequest)
-from colony_sidecar.gate.context_provenance import ContextProvenanceStore
+from apsimo.gate.context_provenance import ContextProvenanceStore
 
 
 @pytest.mark.asyncio

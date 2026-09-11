@@ -6,11 +6,11 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.beliefs.source_time import interpret_time_query
-from colony_sidecar.intelligence.graph.recall import pack_memory_context
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_read import read
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.beliefs.source_time import interpret_time_query
+from apsimo.intelligence.graph.recall import pack_memory_context
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_read import read
 from test_source_claim_projection import Model, claim
 from test_turn_source_evidence import source_app
 
@@ -186,7 +186,7 @@ async def test_audio_message_unit_preserves_derived_status_and_current_ownership
 
 @pytest.mark.asyncio
 async def test_complete_message_keeps_current_annotation_and_erasure_dependencies(tmp_path):
-    from colony_sidecar.turns.source_annotations import expand, current_candidates
+    from apsimo.turns.source_annotations import expand, current_candidates
     ledger = TurnIdempotencyLedger(tmp_path/'ledger.db')
     projection = await project(ledger)
     ref = ledger.source_references(['procedure'], contact_id='person', session_id='later')[0]

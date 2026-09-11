@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, MagicMock, patch as mock_patch
 
 import pytest
 
-from colony_sidecar.intelligence.graph.client import (
+from apsimo.intelligence.graph.client import (
     ColonyGraph,
     EpistemicState,
     GraphConfig,
@@ -24,7 +24,7 @@ from colony_sidecar.intelligence.graph.client import (
     MemorySourceType,
     SOURCE_RELIABILITY,
 )
-from colony_sidecar.intelligence.graph.reconciler import FileReconciler
+from apsimo.intelligence.graph.reconciler import FileReconciler
 
 
 # ---------------------------------------------------------------------------
@@ -253,10 +253,10 @@ class TestWriteGovernance:
         assert MAX_IMPORTANCE[MemorySourceType.INFERENCE] == 0.7
 
     def test_source_reliability_ordering(self):
-        assert SOURCE_RELIABILITY[MemorySourceType.USER_ASSERTION] > \
-               SOURCE_RELIABILITY[MemorySourceType.FILE] > \
-               SOURCE_RELIABILITY[MemorySourceType.TOOL_OUTPUT] > \
-               SOURCE_RELIABILITY[MemorySourceType.CONVERSATION] > \
+        assert SOURCE_RELIABILITY[MemorySourceType.USER_ASSERTION] >\
+               SOURCE_RELIABILITY[MemorySourceType.FILE] >\
+               SOURCE_RELIABILITY[MemorySourceType.TOOL_OUTPUT] >\
+               SOURCE_RELIABILITY[MemorySourceType.CONVERSATION] >\
                SOURCE_RELIABILITY[MemorySourceType.INFERENCE]
 
 

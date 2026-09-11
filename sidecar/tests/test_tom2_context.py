@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-import colony_sidecar.api.routers.host as host
-from colony_sidecar.api.schemas.host import (
+import apsimo.api.routers.host as host
+from apsimo.api.schemas.host import (
     ContextAssembleRequest, HostIdentity, HostMessage, HostTurnContext,
 )
-from colony_sidecar.tom.asymmetry import tom2_context_enabled
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.tom2 import Tom2Store
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.tom.asymmetry import tom2_context_enabled
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.tom2 import Tom2Store
+from apsimo.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 

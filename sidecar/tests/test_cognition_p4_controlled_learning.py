@@ -12,25 +12,25 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.api.authority import required_scope
-from colony_sidecar.contacts.comms import CommsLog
-from colony_sidecar.initiatives.approval_authority import ApprovalAuthorityStore
-from colony_sidecar.intelligence.learning.feedback_store import (
+from apsimo.api.authority import required_scope
+from apsimo.contacts.comms import CommsLog
+from apsimo.initiatives.approval_authority import ApprovalAuthorityStore
+from apsimo.intelligence.learning.feedback_store import (
     FeedbackStore,
     UserCorrection,
 )
-from colony_sidecar.intelligence.cognition.strategy_adjuster import StrategyAdjuster
-from colony_sidecar.intelligence.cognition.gap_detector import (
+from apsimo.intelligence.cognition.strategy_adjuster import StrategyAdjuster
+from apsimo.intelligence.cognition.gap_detector import (
     Gap,
     GapDetector,
     GapType,
 )
-from colony_sidecar.intelligence.cognition.types import GapSeverity
-from colony_sidecar.intelligence.cognition.performance_index import (
+from apsimo.intelligence.cognition.types import GapSeverity
+from apsimo.intelligence.cognition.performance_index import (
     CognitivePerformanceIndex as LegacyCPI,
     PerformanceIndexComputer,
 )
-from colony_sidecar.self_model.benchmark import (
+from apsimo.self_model.benchmark import (
     BenchmarkStore,
     MetricDefinition,
     SelfhoodBenchmark,
@@ -38,12 +38,12 @@ from colony_sidecar.self_model.benchmark import (
     legacy_cpi_payload,
     week_window,
 )
-from colony_sidecar.self_model.experiments import (
+from apsimo.self_model.experiments import (
     ExperimentApprovalRequired,
     ExperimentEngine,
     ExperimentStore,
 )
-from colony_sidecar.self_model.params import AdaptiveParamStore
+from apsimo.self_model.params import AdaptiveParamStore
 
 
 METRIC = MetricDefinition(
@@ -420,18 +420,18 @@ async def test_legacy_gap_detector_can_only_persist_a_typed_proposal(
         "window_days": 7,
         "source": "legacy-cpi-gap:semantic_mismatch",
     }]
-    assert adjustment.result["details"][0]["proposal_id"] == \
+    assert adjustment.result["details"][0]["proposal_id"] ==\
         "exp-proposal-only"
 
 
 def test_dedicated_benchmark_and_experiment_scopes():
-    assert required_scope("GET", "/v1/host/self/benchmark") == \
+    assert required_scope("GET", "/v1/host/self/benchmark") ==\
         "cognition:benchmark-read"
-    assert required_scope("POST", "/v1/host/self/benchmark/samples") == \
+    assert required_scope("POST", "/v1/host/self/benchmark/samples") ==\
         "cognition:benchmark-manage"
-    assert required_scope("GET", "/v1/host/self/experiments") == \
+    assert required_scope("GET", "/v1/host/self/experiments") ==\
         "cognition:experiment-read"
-    assert required_scope("POST", "/v1/host/self/experiments") == \
+    assert required_scope("POST", "/v1/host/self/experiments") ==\
         "cognition:experiment-manage"
     assert required_scope(
         "POST", "/v1/host/self/experiments/exp-1/abort"

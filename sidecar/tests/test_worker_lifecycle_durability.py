@@ -8,13 +8,13 @@ import json
 
 import pytest
 
-from colony_sidecar.task_queue.models import (
+from apsimo.task_queue.models import (
     Job,
     JobStatus,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
-from colony_sidecar.task_queue.scheduler import Scheduler
+from apsimo.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.scheduler import Scheduler
 
 
 async def _manager(tmp_path, *, claim_timeout_secs=30.0):

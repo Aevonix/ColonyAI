@@ -6,12 +6,12 @@ import time
 
 import pytest
 
-from colony_sidecar.api.routers import host, temporal_followups, transport_ingress_api
-from colony_sidecar.commitments.work import CommitmentWork
-from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
-from colony_sidecar.self_model import reply_forecasts as forecasts
-from colony_sidecar.self_model.expectations import ExpectationEngine, ExpectationStore
-from colony_sidecar.turns import canonical_turn_digest
+from apsimo.api.routers import host, temporal_followups, transport_ingress_api
+from apsimo.commitments.work import CommitmentWork
+from apsimo.initiatives.temporal_followup import TemporalFollowups
+from apsimo.self_model import reply_forecasts as forecasts
+from apsimo.self_model.expectations import ExpectationEngine, ExpectationStore
+from apsimo.turns import canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 from test_transport_ingress_api import ingress, source_app, headers, status, PREFIX
 

@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from colony_sidecar.tom.facts import SharedFactsStore
+from apsimo.tom.facts import SharedFactsStore
 
 
 @pytest.fixture
@@ -191,7 +191,7 @@ class TestFactGraphMirror:
 
     @pytest.mark.asyncio
     async def test_mirror_stores_fact_memory(self, monkeypatch):
-        import colony_sidecar.api.routers.host as host_mod
+        import apsimo.api.routers.host as host_mod
 
         calls = []
 
@@ -213,7 +213,7 @@ class TestFactGraphMirror:
 
     @pytest.mark.asyncio
     async def test_mirror_noops_without_graph_or_text(self, monkeypatch):
-        import colony_sidecar.api.routers.host as host_mod
+        import apsimo.api.routers.host as host_mod
         monkeypatch.setattr(host_mod, "_graph", None)
         await host_mod._mirror_fact_to_graph("x", "c", "s", 0.5)   # no crash
         calls = []
@@ -228,7 +228,7 @@ class TestFactGraphMirror:
 
     @pytest.mark.asyncio
     async def test_mirror_swallows_graph_errors(self, monkeypatch):
-        import colony_sidecar.api.routers.host as host_mod
+        import apsimo.api.routers.host as host_mod
 
         class BrokenGraph:
             async def store_memory(self, **kw):

@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.turns import TurnIdempotencyLedger
 from test_hermes_turn_outbox import _load_plugin
 from test_hermes_general_governance import _Context
 from test_hermes_native_tool_authority import call
@@ -20,7 +20,7 @@ from test_turn_source_evidence import source_app
 @pytest.fixture
 def handoff(source_app, tmp_path, monkeypatch):
     module = _load_plugin('colony_supplied_input_test')
-    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    from apsimo.api.middleware import ApiKeyMiddleware
     keyring = tmp_path/'principals.json'
     keyring.write_text(json.dumps({'version':1, 'principals':[{
         'principal':'native-fixture', 'status':'active', 'scopes':['turns:write','context:read','memory:read'],
@@ -442,7 +442,7 @@ def test_freshness_requires_actual_input_membership(handoff, annotated):
 @pytest.mark.parametrize('media', [False, True])
 def test_exact_input_receipt_pins_current_canonical_revision_without_relaxing_freshness(handoff, media):
     h = handoff
-    from colony_sidecar.turns.idempotency import canonical_turn_digest, source_message_hash
+    from apsimo.turns.idempotency import canonical_turn_digest, source_message_hash
     from test_source_media import message
     original = message() if media else {'role': 'user', 'content': 'Use the violet reading.'}
     captured = h.api.put('/v2/host/turns/receipt-input', json={
@@ -476,7 +476,7 @@ def test_exact_input_receipt_pins_current_canonical_revision_without_relaxing_fr
 
 def test_input_revision_receipt_requires_scoped_exact_membership(handoff):
     h = handoff
-    from colony_sidecar.turns.idempotency import source_message_hash
+    from apsimo.turns.idempotency import source_message_hash
     original = {'role': 'user', 'content': 'Session-local calibration note.'}
     h.ledger.record_source('session-input', contact_id='owner', session_id='private-session',
                            scope='session', messages=[original], derive_claims=False)

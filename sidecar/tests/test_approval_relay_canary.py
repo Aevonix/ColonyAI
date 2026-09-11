@@ -9,15 +9,15 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from colony_sidecar.api.authority import RequestAuthority, required_scope
-from colony_sidecar.api.routers import task_queue as tq_router
-from colony_sidecar.initiatives.approval_authority import (
+from apsimo.api.authority import RequestAuthority, required_scope
+from apsimo.api.routers import task_queue as tq_router
+from apsimo.initiatives.approval_authority import (
     ApprovalAuthorityStore,
     DEFAULT_REQUEST_TTL_SECONDS,
     build_action_binding,
     build_approval_presentation,
 )
-from colony_sidecar.task_queue.approval_relay_canary import (
+from apsimo.task_queue.approval_relay_canary import (
     ACTION_HINT,
     APPROVAL_TTL_SECONDS,
     SCHEMA,
@@ -26,8 +26,8 @@ from colony_sidecar.task_queue.approval_relay_canary import (
     idempotency_digest,
     is_exact_job,
 )
-from colony_sidecar.task_queue.models import JobStatus, WorkerCapabilities
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.models import JobStatus, WorkerCapabilities
+from apsimo.task_queue.queue_manager import TaskQueueManager
 
 
 def _authority(*scopes: str, legacy: bool = False) -> RequestAuthority:

@@ -4,8 +4,8 @@ import sys
 
 import pytest
 
-from colony_hostworker import contract
-from colony_hostworker.contract import (
+from apsimo_hostworker import contract
+from apsimo_hostworker.contract import (
     GovernedContractError,
     canonical_json_ascii,
     canonical_json_utf8,
@@ -130,10 +130,10 @@ def test_package_is_stdlib_only_and_server_free():
     is enforced by sidecar/tests/test_hostworker_agreement.py.
     """
 
-    import colony_hostworker  # noqa: F401
-    import colony_hostworker.catalog  # noqa: F401
-    import colony_hostworker.gate  # noqa: F401
-    import colony_hostworker.intent  # noqa: F401
+    import apsimo_hostworker  # noqa: F401
+    import apsimo_hostworker.catalog  # noqa: F401
+    import apsimo_hostworker.gate  # noqa: F401
+    import apsimo_hostworker.intent  # noqa: F401
 
     for forbidden in ("fastapi", "colony_sidecar", "httpx", "pydantic"):
         assert forbidden not in sys.modules, (

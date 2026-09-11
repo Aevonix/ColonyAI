@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.intelligence.components.initiative_engine import InitiativeType
-from colony_sidecar.intelligence.components.self_directed_thinker import (
+from apsimo.intelligence.components.initiative_engine import InitiativeType
+from apsimo.intelligence.components.self_directed_thinker import (
     SelfDirectedThinker,
 )
 

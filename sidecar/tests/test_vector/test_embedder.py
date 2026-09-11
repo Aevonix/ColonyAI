@@ -1,14 +1,14 @@
 """Tests for colony_sidecar.vector.embedder — embedding providers and factory."""
 import pytest
-from colony_sidecar.vector.embedder import (
+from apsimo.vector.embedder import (
     CUDAEmbeddingProvider,
     CPUEmbeddingProvider,
     MLXEmbeddingProvider,
     NativeMLXEmbeddingProvider,
     make_provider,
 )
-from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
-from colony_sidecar.vector.config import EmbeddingConfig
+from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
+from apsimo.vector.config import EmbeddingConfig
 
 
 class TestMakeProvider:

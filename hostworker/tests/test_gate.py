@@ -4,8 +4,8 @@ import copy
 
 import pytest
 
-from colony_hostworker.catalog import TOOL_CATALOG
-from colony_hostworker.gate import (
+from apsimo_hostworker.catalog import TOOL_CATALOG
+from apsimo_hostworker.gate import (
     BOUNDED_GRANT_SHAPE,
     GATE_COMMON_FIELDS,
     GRANT_BINDING_METHOD,
@@ -84,7 +84,7 @@ def test_valid_standing_grant_proof_keeps_action_gate_bounded(golden_vectors):
     case = case_by_name(golden_vectors, "grant_valid")
     evidence = case["receipts"][0]["evidence"]
     evidence["bounded_grant_expires_at_epoch"] = GRANT_UNLIMITED_SENTINEL
-    from colony_hostworker.contract import sha256_json_utf8
+    from apsimo_hostworker.contract import sha256_json_utf8
 
     case["receipts"][0]["evidence_sha256"] = sha256_json_utf8(evidence)
 
@@ -410,7 +410,7 @@ def test_custom_shape_expiries_are_reenforced(golden_vectors):
         second_expires_at_epoch=now + 100.0,
     )
 
-    from colony_hostworker.contract import sha256_json_utf8
+    from apsimo_hostworker.contract import sha256_json_utf8
 
     def receipt_for(evidence_document):
         return {

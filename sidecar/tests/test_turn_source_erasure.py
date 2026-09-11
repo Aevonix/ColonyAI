@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient, Response, Request
 import pytest
-from colony_sidecar.api.routers import host
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import SourceErased
+from apsimo.api.routers import host
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import SourceErased
 from test_hermes_turn_outbox import _load_client, _create_database, _CURRENT_SCHEMA, _PENDING_INDEX, _APPLICATION_ID
 
 @pytest.fixture
@@ -137,7 +137,7 @@ async def test_api_erases_before_graph_cleanup_and_blocks_replay(ledger, monkeyp
 
 @pytest.mark.asyncio
 async def test_graph_lineage_and_late_projection_guard(ledger):
-    from colony_sidecar.intelligence.graph.client import ColonyGraph
+    from apsimo.intelligence.graph.client import ColonyGraph
     graph = object.__new__(ColonyGraph)
     graph.store_memory = AsyncMock(return_value="memory-a")
     source(ledger)
@@ -152,7 +152,7 @@ async def test_graph_lineage_and_late_projection_guard(ledger):
 
 @pytest.mark.asyncio
 async def test_authenticated_contact_cannot_select_another_person(ledger, monkeypatch):
-    from colony_sidecar.api.authority import RequestAuthority
+    from apsimo.api.authority import RequestAuthority
     source(ledger, contact="contact-b")
     app = FastAPI()
     @app.middleware("http")
@@ -182,7 +182,7 @@ def test_repeat_erase_retains_derived_cleanup_targets(ledger):
 @pytest.mark.asyncio
 async def test_mcp_forget_tool_reaches_the_real_erasure_api(ledger, monkeypatch):
     pytest.importorskip("mcp")
-    from colony_sidecar.mcp.server import create_server
+    from apsimo.mcp.server import create_server
     import httpx
     source(ledger)
     monkeypatch.setattr(host, "_graph", None)

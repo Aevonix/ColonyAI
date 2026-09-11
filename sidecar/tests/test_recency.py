@@ -1,6 +1,6 @@
 """Phase 4: configurable recency weighting for retrieval (v0.21.0)."""
 
-from colony_sidecar.intelligence.graph.client import _recency_factor
+from apsimo.intelligence.graph.client import _recency_factor
 
 
 def test_recency_defaults(monkeypatch):

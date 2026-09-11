@@ -11,11 +11,11 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.tom.exposure import (
+from apsimo.api.routers import host as host_mod
+from apsimo.tom.exposure import (
     Tom2ExposureStore, budget_global_day, budget_pair_day,
     budget_reader_day)
-from colony_sidecar.tom.facts import SharedFactsStore
+from apsimo.tom.facts import SharedFactsStore
 
 
 def _expose(s, reader="cid-alice", subject="cid-bob", fact_ref="fact-1",

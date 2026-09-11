@@ -10,34 +10,34 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.cognition.external_events import (
+from apsimo.api.authority import RequestAuthority
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.cognition.external_events import (
     ExternalCognitionEventV1,
     ExternalEventInboxStore,
     ExternalEventIntake,
 )
-from colony_sidecar.cognition.goal_spine import (
+from apsimo.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtJobV1,
     ThoughtQueueAdapter,
 )
-from colony_sidecar.cognition.runtime import CognitionRuntimeContractV1
-from colony_sidecar.events.journal import replay_events
-from colony_sidecar.governed_actions import GovernedActionLedger
-from colony_sidecar.initiatives.approval_authority import ApprovalAuthorityStore
-from colony_sidecar.projects import Project, ProjectEngine, ProjectStore, Step
-from colony_sidecar.self_model.event_concerns import (
+from apsimo.cognition.runtime import CognitionRuntimeContractV1
+from apsimo.events.journal import replay_events
+from apsimo.governed_actions import GovernedActionLedger
+from apsimo.initiatives.approval_authority import ApprovalAuthorityStore
+from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
+from apsimo.self_model.event_concerns import (
     EventConcernReducer,
     ExternalEventConcernReducer,
     external_event_concern_mode,
     project_external_event,
 )
-from colony_sidecar.self_model.store import CompetenceStore
-from colony_sidecar.self_model.workspace import ConcernStore, WorkspaceEngine
-from colony_sidecar.task_queue.models import JobResult, JobStatus, JobType
-from colony_sidecar.work_orders import QueueWorkOrderAdapter
+from apsimo.self_model.store import CompetenceStore
+from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
+from apsimo.task_queue.models import JobResult, JobStatus, JobType
+from apsimo.work_orders import QueueWorkOrderAdapter
 
 
 NOW = datetime(2026, 7, 12, 20, 0, tzinfo=timezone.utc)

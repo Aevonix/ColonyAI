@@ -17,8 +17,8 @@ import types
 
 import pytest
 
-import colony_sidecar.autonomy.scheduler as scheduler_module
-from colony_sidecar.autonomy.scheduler import (
+import apsimo.autonomy.scheduler as scheduler_module
+from apsimo.autonomy.scheduler import (
     AutonomyScheduler,
     ScheduleStore,
     TaskSchedule,

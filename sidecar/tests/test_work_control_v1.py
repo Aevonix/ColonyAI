@@ -11,23 +11,23 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.authority import required_scope
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import task_queue as queue_router
-from colony_sidecar.task_queue.models import (
+from apsimo.api.authority import required_scope
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import task_queue as queue_router
+from apsimo.task_queue.models import (
     Job,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import QueueManager
-from colony_sidecar.task_queue.scheduler import Scheduler
-from colony_sidecar.task_queue.work_control import (
+from apsimo.task_queue.queue_manager import QueueManager
+from apsimo.task_queue.scheduler import Scheduler
+from apsimo.task_queue.work_control import (
     WorkControlError,
     interrupt_capability,
     steer_capability,
 )
-from colony_sidecar.task_queue.worker import JobHandler, WorkerNode
+from apsimo.task_queue.worker import JobHandler, WorkerNode
 
 
 @pytest.fixture(autouse=True)

@@ -2,12 +2,12 @@
 
 import pytest
 
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.contacts.config import ContactsConfig
 
 
 async def _set_history(store, cid, first_days_ago, last_days_ago, count):
-    from colony_sidecar.util import temporal as T
+    from apsimo.util import temporal as T
     from datetime import timedelta
     now = T.now_utc()
     first = (now - timedelta(days=first_days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -55,7 +55,7 @@ async def test_cadence_overdue_is_relative_to_rhythm():
 @pytest.mark.asyncio
 async def test_telemetry_persists_across_instances(tmp_path, monkeypatch):
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    from colony_sidecar.telemetry import TelemetryStore
+    from apsimo.telemetry import TelemetryStore
 
     t = TelemetryStore()
     await t.touch("last_sync_at")

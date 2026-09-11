@@ -18,10 +18,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.directed import DirectedActionService, ScopedTaskStore
-from colony_sidecar.directives.guard import boundary_fail_closed
+from apsimo.autonomy.config import AutonomyConfig
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.directed import DirectedActionService, ScopedTaskStore
+from apsimo.directives.guard import boundary_fail_closed
 
 
 class _ExplodingDirectives:

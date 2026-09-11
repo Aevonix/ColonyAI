@@ -22,24 +22,24 @@ from types import SimpleNamespace
 
 import pytest
 
-import colony_sidecar.api.routers.host as host
-from colony_sidecar.api.schemas.host import (
+import apsimo.api.routers.host as host
+from apsimo.api.schemas.host import (
     ContextAssembleRequest, ContextSection, HostIdentity, HostMessage,
     HostTurnContext,
 )
-from colony_sidecar.channels.presence import ConversationPresenceStore
-from colony_sidecar.gate.guard_audit import GuardAuditStore
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
-from colony_sidecar.gate.taint import TaintRegistry
-from colony_sidecar.proposals import ProposalStore
-from colony_sidecar.tom import leveled as leveled_mod
-from colony_sidecar.tom import levels as levels_mod
-from colony_sidecar.tom.approvals import Tom2ApprovalRegistry
-from colony_sidecar.tom.exposure import Tom2ExposureStore
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.levels import clear_level_cache, set_evidence_probe
-from colony_sidecar.tom.tom2 import Tom2Store
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.channels.presence import ConversationPresenceStore
+from apsimo.gate.guard_audit import GuardAuditStore
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.gate.taint import TaintRegistry
+from apsimo.proposals import ProposalStore
+from apsimo.tom import leveled as leveled_mod
+from apsimo.tom import levels as levels_mod
+from apsimo.tom.approvals import Tom2ApprovalRegistry
+from apsimo.tom.exposure import Tom2ExposureStore
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.levels import clear_level_cache, set_evidence_probe
+from apsimo.tom.tom2 import Tom2Store
+from apsimo.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 READER = "cid-alice"
@@ -305,7 +305,7 @@ async def test_subject_joining_vanishes_their_inferences(world, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_candidate_verdict_rows_never_unlock_level_2(world, monkeypatch):
-    from colony_sidecar.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+    from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
     monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
     monkeypatch.setenv("COLONY_GUARD_TRIP_BLOCKS", "1")

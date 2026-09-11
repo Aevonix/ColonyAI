@@ -13,11 +13,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.api.authority import RequestAuthority, required_scope
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.self_model import settlement
-from colony_sidecar.self_model.workspace import (
+import apsimo.api.routers.host as host_mod
+from apsimo.api.authority import RequestAuthority, required_scope
+from apsimo.commitments.store import CommitmentStore
+from apsimo.self_model import settlement
+from apsimo.self_model.workspace import (
     RECENT_RESOLUTIONS_LIMIT,
     ConcernResolutionConflict,
     ConcernStore,

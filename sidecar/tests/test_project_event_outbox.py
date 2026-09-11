@@ -4,12 +4,12 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.execution_results import ExecutionResultV1
-from colony_sidecar.events.journal import event_record_request_digest
-from colony_sidecar.projects.event_outbox import ProjectEventProjector
-from colony_sidecar.projects.models import Project, Step
-from colony_sidecar.projects.store import ProjectStore
-from colony_sidecar.work_orders import WorkOrderV1
+from apsimo.execution_results import ExecutionResultV1
+from apsimo.events.journal import event_record_request_digest
+from apsimo.projects.event_outbox import ProjectEventProjector
+from apsimo.projects.models import Project, Step
+from apsimo.projects.store import ProjectStore
+from apsimo.work_orders import WorkOrderV1
 
 
 def _verified_result(store: ProjectStore):

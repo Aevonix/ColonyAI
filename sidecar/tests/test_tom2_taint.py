@@ -13,7 +13,7 @@ import time
 
 import pytest
 
-from colony_sidecar.gate.taint import (
+from apsimo.gate.taint import (
     DEFAULT_TTL_SECS, TaintRegistry, taint_ttl_secs)
 
 

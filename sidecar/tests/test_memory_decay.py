@@ -15,7 +15,7 @@ import math
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
+from apsimo.intelligence.graph import client as client_mod
 
 
 # --- _compute_decay_factor unit math -------------------------------------------
@@ -197,7 +197,7 @@ class _ExplodingGraph:
 @pytest.mark.asyncio
 async def test_stale_data_gap_only_proposes_without_decaying_memories():
     from types import SimpleNamespace
-    from colony_sidecar.intelligence.cognition.strategy_adjuster import StrategyAdjuster, AdjustmentStatus
+    from apsimo.intelligence.cognition.strategy_adjuster import StrategyAdjuster, AdjustmentStatus
 
     adjuster = StrategyAdjuster(graph=_ExplodingGraph())
     adjustment = await adjuster.generate(SimpleNamespace(gap_type="stale_data"))

@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.tom.visibility import (
+from apsimo.tom.visibility import (
     FactCandidateV1,
     FactVisibilityV1,
     ViewerContextV1,

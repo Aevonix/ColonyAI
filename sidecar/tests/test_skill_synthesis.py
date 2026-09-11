@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from colony_sidecar.skills.learning.pattern_extractor import PatternExtractor
-from colony_sidecar.skills.models import TaskSolution
+from apsimo.skills.learning.pattern_extractor import PatternExtractor
+from apsimo.skills.models import TaskSolution
 
 
 def _solution(trace):

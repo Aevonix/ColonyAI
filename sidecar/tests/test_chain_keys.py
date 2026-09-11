@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from colony_sidecar.chain.keys import BackupFileShareBackend, KeyShare
+from apsimo.chain.keys import BackupFileShareBackend, KeyShare
 
 
 def _share(index: int = 1) -> KeyShare:

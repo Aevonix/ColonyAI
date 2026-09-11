@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.services.agent_bridge import AgentBridgeService
-from colony_sidecar.task_queue.models import Job, JobType
+from apsimo.services.agent_bridge import AgentBridgeService
+from apsimo.task_queue.models import Job, JobType
 
 
 class _Queue:

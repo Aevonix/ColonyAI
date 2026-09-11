@@ -7,9 +7,9 @@ import uuid
 
 import pytest
 
-from colony_hostworker import contract
-from colony_hostworker._private_io import strict_json_bytes
-from colony_hostworker.client import (
+from apsimo_hostworker import contract
+from apsimo_hostworker._private_io import strict_json_bytes
+from apsimo_hostworker.client import (
     ClientCredential,
     GovernedActionClient,
     GovernedActionClientError,

@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from colony_sidecar.directives import (
+from apsimo.directives import (
     DirectiveStore, DirectiveManager, DirectiveGuard, Action, Directive, Polarity,
 )
-from colony_sidecar.directives.extractor import extract_directives, is_revocation
+from apsimo.directives.extractor import extract_directives, is_revocation
 
 
 # ---------------------------------------------------------------------------
@@ -28,7 +28,7 @@ def test_extract_prohibition_variants():
 
 
 def test_read_only_adjective_does_not_escalate_boundary_to_observe():
-    from colony_sidecar.directives.models import Level
+    from apsimo.directives.models import Level
 
     goal = extract_directives(
         "Goal: verify Colony cognition is live with a read-only internal "
@@ -207,7 +207,7 @@ def test_act_boundary_allows_read_blocks_actions():
     m = DirectiveManager(DirectiveStore(db_path=None))
     m.capture_from_message("From now on, leave the widget-api repo alone")
     d = m.store.active()[0]
-    from colony_sidecar.directives.models import Level
+    from apsimo.directives.models import Level
     assert d.level == Level.ACT                              # default level
     # reads / perception stay OPEN
     assert m.check(Action(kind="repo_read", text="widget-api README")).allowed is True
@@ -223,7 +223,7 @@ def test_observe_boundary_blocks_reads_too():
     m = DirectiveManager(DirectiveStore(db_path=None))
     m.capture_from_message("From now on, don't look at the widget-api repo")
     d = m.store.active()[0]
-    from colony_sidecar.directives.models import Level
+    from apsimo.directives.models import Level
     assert d.level == Level.OBSERVE
     v = m.check(Action(kind="repo_read", text="widget-api README"))
     assert v.allowed is False
@@ -317,8 +317,8 @@ def test_manager_non_affirmation_does_not_lift():
 # ---------------------------------------------------------------------------
 
 def _mgr():
-    from colony_sidecar.directives.service import DirectiveManager
-    from colony_sidecar.directives.store import DirectiveStore
+    from apsimo.directives.service import DirectiveManager
+    from apsimo.directives.store import DirectiveStore
     return DirectiveManager(DirectiveStore())
 
 
@@ -362,8 +362,8 @@ def test_duplicate_captures_do_not_pile_up():
 
 
 def test_common_term_fragment_cannot_match_everything():
-    from colony_sidecar.directives.guard import _terms_match
-    from colony_sidecar.directives.models import normalize_terms
+    from apsimo.directives.guard import _terms_match
+    from apsimo.directives.models import normalize_terms
     # A fragment whose only surviving terms are generic + the product name
     # ("wipe", "colony") must not bind an unrelated internal job text.
     directive_terms = normalize_terms("that and wipe it from colony")
@@ -374,8 +374,8 @@ def test_common_term_fragment_cannot_match_everything():
 
 
 def test_specific_subjects_still_match():
-    from colony_sidecar.directives.guard import _terms_match
-    from colony_sidecar.directives.models import normalize_terms
+    from apsimo.directives.guard import _terms_match
+    from apsimo.directives.models import normalize_terms
     # Real boundaries keep binding: distinctive token…
     assert _terms_match(normalize_terms("touching the payments-api repo"),
                         normalize_terms("open a PR against payments-api"))
@@ -385,8 +385,8 @@ def test_specific_subjects_still_match():
 
 
 def test_mid_generic_word_alone_is_not_distinctive():
-    from colony_sidecar.directives.guard import _terms_match
-    from colony_sidecar.directives.models import normalize_terms
+    from apsimo.directives.guard import _terms_match
+    from apsimo.directives.models import normalize_terms
     # "attempt them" -> ["attempt"]; a random action that happens to contain
     # "attempting" must not be blocked by the fragment.
     assert _terms_match(normalize_terms("attempt them"),
@@ -394,8 +394,8 @@ def test_mid_generic_word_alone_is_not_distinctive():
 
 
 def test_short_word_is_not_a_stem_of_a_long_term():
-    from colony_sidecar.directives.guard import _terms_match
-    from colony_sidecar.directives.models import normalize_terms
+    from apsimo.directives.guard import _terms_match
+    from apsimo.directives.models import normalize_terms
     # "what" must not count as a morphological variant of "whatsapp": a
     # WhatsApp boundary cannot bind every sentence containing "what".
     assert _terms_match(

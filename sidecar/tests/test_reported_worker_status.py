@@ -7,11 +7,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.api.schemas.host import ContextAssembleRequest
-from colony_sidecar.turns.reported_workers import reported_worker_view
-from colony_sidecar.turns.executions import request_work_context
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions, host
+from apsimo.api.schemas.host import ContextAssembleRequest
+from apsimo.turns.reported_workers import reported_worker_view
+from apsimo.turns.executions import request_work_context
 
 
 def test_unset_mapping_adds_no_worker_report(monkeypatch):

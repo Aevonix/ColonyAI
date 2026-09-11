@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.tom.tom2 import Tom2Store
+from apsimo.tom.tom2 import Tom2Store
 
 
 def test_record_and_upsert_by_triple():

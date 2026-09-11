@@ -28,7 +28,7 @@ from pathlib import Path
 
 def _resolve_main():
     try:
-        from colony_sidecar.workers.skills_sync import main
+        from apsimo.workers.skills_sync import main
         return main
     except ImportError:
         # Repo-relative fallback: this file lives at
@@ -37,7 +37,7 @@ def _resolve_main():
         if sidecar.is_dir():
             sys.path.insert(0, str(sidecar))
             try:
-                from colony_sidecar.workers.skills_sync import main
+                from apsimo.workers.skills_sync import main
                 return main
             except ImportError:
                 pass

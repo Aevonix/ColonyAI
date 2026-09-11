@@ -23,13 +23,13 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.world_model.config import WorldModelConfig
-from colony_sidecar.world_model.entities import BaseEntity
-from colony_sidecar.world_model.expectation_resolvers import (
+from apsimo.world_model.config import WorldModelConfig
+from apsimo.world_model.entities import BaseEntity
+from apsimo.world_model.expectation_resolvers import (
     resolve_relationship_still_active,
 )
-from colony_sidecar.world_model.relationships import WorldRelationship
-from colony_sidecar.world_model.store import WorldModelStore
+from apsimo.world_model.relationships import WorldRelationship
+from apsimo.world_model.store import WorldModelStore
 
 CAUSAL_EDGE_ID = "wr-causal-guard"
 KNOWS_EDGE_ID = "wr-knows-guard"
@@ -121,8 +121,8 @@ def test_find_path_never_walks_causal_edges():
 
 @pytest.mark.asyncio
 async def test_context_assemble_output_carries_no_causal_edge(monkeypatch):
-    from colony_sidecar.api.routers import host as host_mod
-    from colony_sidecar.api.schemas.host import (
+    from apsimo.api.routers import host as host_mod
+    from apsimo.api.schemas.host import (
         ContextAssembleRequest, HostIdentity, HostMessage, HostTurnContext,
     )
     async with _seeded_store() as s:
@@ -141,7 +141,7 @@ async def test_context_assemble_output_carries_no_causal_edge(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_expectation_resolution_ignores_causal(monkeypatch):
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
     async with _seeded_store() as s:
         monkeypatch.setattr(host_mod, "_world_store", s)
 
@@ -180,7 +180,7 @@ def test_typed_query_returns_causal_edge():
 
 @pytest.mark.asyncio
 async def test_world_causal_chain_serves_the_edge(monkeypatch):
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
     async with _seeded_store() as s:
         monkeypatch.setattr(host_mod, "_world_store", s)
         chain = await host_mod.world_causal_chain(

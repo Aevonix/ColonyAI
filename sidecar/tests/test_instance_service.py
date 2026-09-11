@@ -10,7 +10,7 @@ import subprocess
 import pytest
 import yaml
 
-from colony_sidecar.services.instance import InstanceService, ServiceError
+from apsimo.services.instance import InstanceService, ServiceError
 
 
 class Manager:
@@ -185,7 +185,7 @@ def test_occupied_port_is_not_started_or_stopped(service_factory, monkeypatch):
 
 
 def test_selected_instance_and_managed_foreground_use_same_binding(tmp_path, monkeypatch):
-    from colony_sidecar import cli
+    from apsimo import cli
     state, home = tmp_path/'instance', tmp_path/'hermes'
     state.mkdir(); home.mkdir()
     (state/'instance.json').write_text(json.dumps({'version': 1, 'profile': 'local', 'hermes_home': str(home)}))

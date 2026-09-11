@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.intelligence.components.research_orchestrator import (
+from apsimo.intelligence.components.research_orchestrator import (
     ResearchOrchestrator,
     ResearchResult,
     ResearchSource,
     SourceType,
 )
-from colony_sidecar.research.search.base import SearchResult
+from apsimo.research.search.base import SearchResult
 
 
 class _StubSearchOrchestrator:

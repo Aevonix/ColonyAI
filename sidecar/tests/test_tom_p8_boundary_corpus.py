@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from colony_sidecar.tom.arcs import ArcEventV1, ArcStore
-from colony_sidecar.tom.recipient_simulator import (
+from apsimo.tom.arcs import ArcEventV1, ArcStore
+from apsimo.tom.recipient_simulator import (
     RecipientSimulationRequestV1,
     RecipientSimulator,
 )
-from colony_sidecar.tom.visibility import (
+from apsimo.tom.visibility import (
     FactCandidateV1,
     FactVisibilityV1,
     ViewerContextV1,

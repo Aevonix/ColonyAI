@@ -14,23 +14,23 @@ from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
-from colony_sidecar.api.authority import RequestAuthority, required_scope
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import task_queue as tq_router
-from colony_sidecar.initiatives.approval_authority import (
+from apsimo.api.authority import RequestAuthority, required_scope
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import task_queue as tq_router
+from apsimo.initiatives.approval_authority import (
     ApprovalAuthorityError,
     ApprovalAuthorityStore,
     build_action_binding,
     build_approval_presentation,
     prepare_action_approval,
 )
-from colony_sidecar.task_queue.models import (
+from apsimo.task_queue.models import (
     Job,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.queue_manager import TaskQueueManager
 
 
 def _binding(job_id: str, *, pr: str = "17", message: str = "merge"):
@@ -222,7 +222,7 @@ def test_store_closes_every_transient_sqlite_connection(tmp_path, monkeypatch):
     hide a lifecycle leak that exhausts macOS's default descriptor limit.
     """
 
-    import colony_sidecar.initiatives.approval_authority as authority_module
+    import apsimo.initiatives.approval_authority as authority_module
 
     original_connect = authority_module.sqlite3.connect
     opened = []

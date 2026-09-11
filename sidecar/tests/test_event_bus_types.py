@@ -5,7 +5,7 @@ import asyncio
 import pytest
 from datetime import datetime
 
-from colony_sidecar.events.types import (
+from apsimo.events.types import (
     CognitionEvent,
     Event,
     IntegrationEvent,
@@ -14,10 +14,10 @@ from colony_sidecar.events.types import (
     PersonEvent,
     SignalEvent,
 )
-from colony_sidecar.events.bus import EventBus, Subscription, TypedEventBus
-from colony_sidecar.models.memory import Memory, MemoryType
-from colony_sidecar.models.mesh import NodeRole
-from colony_sidecar.models.signal import Signal, SignalType
+from apsimo.events.bus import EventBus, Subscription, TypedEventBus
+from apsimo.models.memory import Memory, MemoryType
+from apsimo.models.mesh import NodeRole
+from apsimo.models.signal import Signal, SignalType
 
 
 # --- Event type tests ---
@@ -468,7 +468,7 @@ class TestPackageImports:
     """Verify all public names are importable from the package."""
 
     def test_import_all_from_package(self):
-        from colony_sidecar.events import (
+        from apsimo.events import (
             CognitionEvent,
             Event,
             EventBus,

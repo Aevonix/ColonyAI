@@ -8,13 +8,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.auth_telemetry import AuthTelemetry
-from colony_sidecar.api.authority import (
+from apsimo.api.auth_telemetry import AuthTelemetry
+from apsimo.api.authority import (
     WORK_READ_SURFACE_V1,
     compatible_scopes,
     required_scope,
 )
-from colony_sidecar.api.middleware import ApiKeyMiddleware
+from apsimo.api.middleware import ApiKeyMiddleware
 
 
 _EXPECTED_SURFACE = frozenset({

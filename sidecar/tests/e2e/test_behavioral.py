@@ -334,8 +334,8 @@ class TestWorldModelBehavior:
         stats_before = client.get("/v1/host/world/stats").json()
 
         # Upsert same entity (MERGE by ID)
-        from colony_sidecar.world_model.entities import PersonEntity
-        from colony_sidecar.world_model.neo4j.backend import _generate_id
+        from apsimo.world_model.entities import PersonEntity
+        from apsimo.world_model.neo4j.backend import _generate_id
         # Can't directly upsert by ID via API (it generates IDs), 
         # so test that creating with same name creates separate entity
         r2 = client.post("/v1/host/world/entities", json={
@@ -432,7 +432,7 @@ class TestCrossSubsystemBehavior:
         context_text = json.dumps(r.json())
 
         # The commitment description should appear in context
-        assert "Ship v0.6.0" in context_text or "commitment" in context_text.lower() or "pending" in context_text.lower(), \
+        assert "Ship v0.6.0" in context_text or "commitment" in context_text.lower() or "pending" in context_text.lower(),\
             f"Context should reference the commitment or commitments section, got: {context_text[:500]}"
 
     def test_context_assembly_includes_facts(self, client):
@@ -456,7 +456,7 @@ class TestCrossSubsystemBehavior:
         context_text = json.dumps(r.json())
 
         # The fact should surface in context
-        assert "Python" in context_text or "fact" in context_text.lower() or "preference" in context_text.lower(), \
+        assert "Python" in context_text or "fact" in context_text.lower() or "preference" in context_text.lower(),\
             f"Context should reference the shared fact, got: {context_text[:500]}"
 
     def test_health_reflects_all_subsystems(self, client):

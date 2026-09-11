@@ -8,14 +8,14 @@ from datetime import timedelta
 
 import pytest
 
-import colony_sidecar.self_model.store as store_mod
-from colony_sidecar.self_model.benchmark import (
+import apsimo.self_model.store as store_mod
+from apsimo.self_model.benchmark import (
     BenchmarkStore, SelfhoodBenchmark, week_window,
 )
-from colony_sidecar.self_model.reconcile import main as reconcile_main
-from colony_sidecar.self_model.store import CompetenceStore
-from colony_sidecar.self_model.store import SelfModel
-from colony_sidecar.self_model.trust import TrustEngine
+from apsimo.self_model.reconcile import main as reconcile_main
+from apsimo.self_model.store import CompetenceStore
+from apsimo.self_model.store import SelfModel
+from apsimo.self_model.trust import TrustEngine
 
 
 WEEK = "2026-W26"

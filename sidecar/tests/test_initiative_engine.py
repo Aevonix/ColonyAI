@@ -9,7 +9,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.intelligence.components.initiative_engine import (
     Initiative,
     InitiativeEngine,
     InitiativeType,

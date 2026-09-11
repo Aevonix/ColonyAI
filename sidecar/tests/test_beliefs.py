@@ -8,11 +8,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.beliefs import (
+from apsimo.beliefs import (
     BeliefEngine, BeliefStore, Claim, claims_from_text, detect_conflicts,
     pick_winner, source_trust,
 )
-from colony_sidecar.self_model import ActionJournal
+from apsimo.self_model import ActionJournal
 
 
 # ---------------------------------------------------------------------------
@@ -265,7 +265,7 @@ async def test_decay_shadow_does_not_mutate(monkeypatch):
 
 
 def test_beliefs_graduation_requires_act_first(monkeypatch):
-    from colony_sidecar.self_model import (
+    from apsimo.self_model import (
         ActionJournal, CompetenceStore, SelfModel, TrustEngine,
     )
     monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
@@ -298,7 +298,7 @@ def test_inline_property_hook_records_audit():
 # ---------------------------------------------------------------------------
 
 def _self_model_at(stage, monkeypatch=None):
-    from colony_sidecar.self_model import (
+    from apsimo.self_model import (
         ActionJournal, CompetenceStore, SelfModel, TrustEngine,
     )
     cstore = CompetenceStore()

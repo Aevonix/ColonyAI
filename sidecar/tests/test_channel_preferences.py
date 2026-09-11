@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from colony_sidecar import setup_hermes
+from apsimo import setup_hermes
 
 
 def attached(tmp_path, config):
@@ -59,7 +59,7 @@ def test_omitted_receipt_preference_retains_config_bytes(tmp_path):
 
 def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
     import sys
-    from colony_sidecar import cli, setup
+    from apsimo import cli, setup
     observed = []
     monkeypatch.setattr(sys, 'argv', ['colony', 'init', '--whatsapp-read-receipts', 'on',
                                      '--hermes-home', str(tmp_path), '--non-interactive'])
@@ -73,7 +73,7 @@ def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
 @pytest.mark.parametrize('preview', [True, False])
 def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path, monkeypatch, preview):
     import sys
-    from colony_sidecar import cli
+    from apsimo import cli
     home = tmp_path/'home'
     home.mkdir()
     config = home/'config.yaml'
@@ -107,7 +107,7 @@ def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path,
     {'mcp_harnesses': 'fixture'}, {'host_framework': 'standalone'},
 ])
 def test_preference_only_rejects_setup_combinations_before_writes(tmp_path, options):
-    from colony_sidecar import setup
+    from apsimo import setup
     (tmp_path/'config.yaml').write_text('whatsapp: {enabled: false}\n')
     args = SimpleNamespace(hermes_home=str(tmp_path), preferences_only=True,
                            whatsapp_read_receipts='on', **options)
@@ -137,7 +137,7 @@ def test_projection_does_not_mutate_a_shared_yaml_alias():
 
 
 def test_config_race_is_rejected_and_concurrent_bytes_remain(tmp_path, monkeypatch):
-    from colony_sidecar import setup
+    from apsimo import setup
     path = tmp_path/'config.yaml'
     path.write_text('whatsapp: {enabled: false}\n')
     actual_writer = setup._atomic_hermes_config_write

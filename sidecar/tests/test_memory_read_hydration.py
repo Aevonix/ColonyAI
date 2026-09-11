@@ -14,7 +14,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host
+from apsimo.api.routers import host
 
 
 class _Neo4jDateTime:

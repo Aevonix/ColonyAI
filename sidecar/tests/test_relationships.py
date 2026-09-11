@@ -5,15 +5,15 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.contacts.comms import CommsLog
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.identity.participants import (
+from apsimo.contacts.comms import CommsLog
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.identity.participants import (
     SYSTEM_CONTACT_ID,
     ParticipantResolver,
     is_machine_turn,
 )
-from colony_sidecar.intelligence.relationships.profiler import (
+from apsimo.intelligence.relationships.profiler import (
     RelationshipBrief,
     RelationshipProfiler,
 )
@@ -261,7 +261,7 @@ class TestProfiler:
 
 class TestDoctorAttribution:
     def test_placeholder_fraction_warns(self, tmp_path, monkeypatch):
-        from colony_sidecar import doctor
+        from apsimo import doctor
         monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
         conn = sqlite3.connect(tmp_path / "colony-comms.db")
         conn.execute(
@@ -279,7 +279,7 @@ class TestDoctorAttribution:
         assert r.status == doctor.WARN
 
     def test_healthy_attribution_passes(self, tmp_path, monkeypatch):
-        from colony_sidecar import doctor
+        from apsimo import doctor
         monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
         conn = sqlite3.connect(tmp_path / "colony-comms.db")
         conn.execute(
@@ -297,7 +297,7 @@ class TestDoctorAttribution:
         assert r.status == doctor.PASS
 
     def test_no_ledger_skips(self, tmp_path, monkeypatch):
-        from colony_sidecar import doctor
+        from apsimo import doctor
         monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
         r = doctor.check_relationship_attribution()
         assert r.status == doctor.SKIP
@@ -325,8 +325,8 @@ class TestCanonicalIdResolution:
 
 class TestResearchReviewGate:
     async def test_injection_in_artifact_is_flagged(self):
-        from colony_sidecar.research.pipeline import ResearchPipeline
-        from colony_sidecar.research.artifact import Artifact, ArtifactFormat
+        from apsimo.research.pipeline import ResearchPipeline
+        from apsimo.research.artifact import Artifact, ArtifactFormat
         p = ResearchPipeline()
 
         class _Run:
@@ -339,8 +339,8 @@ class TestResearchReviewGate:
         assert res.injection_clean is False and res.passed is False
 
     async def test_clean_artifact_passes(self):
-        from colony_sidecar.research.pipeline import ResearchPipeline
-        from colony_sidecar.research.artifact import Artifact, ArtifactFormat
+        from apsimo.research.pipeline import ResearchPipeline
+        from apsimo.research.artifact import Artifact, ArtifactFormat
         p = ResearchPipeline()
 
         class _Run:

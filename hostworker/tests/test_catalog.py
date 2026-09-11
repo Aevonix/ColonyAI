@@ -2,7 +2,7 @@
 
 import pytest
 
-from colony_hostworker.catalog import (
+from apsimo_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS,
     ACTION_TOOL_NAMES,
     GRANT_AUTHORIZABLE_TOOL_NAMES,
@@ -11,7 +11,7 @@ from colony_hostworker.catalog import (
     ToolCatalogError,
     validate_tool_args,
 )
-from colony_hostworker.contract import GovernedContractError, sha256_json_ascii
+from apsimo_hostworker.contract import GovernedContractError, sha256_json_ascii
 
 
 def test_catalog_contains_exactly_the_governed_tools():

@@ -9,11 +9,11 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from colony_sidecar.intelligence.graph.recall import pack_memory_context, render_memory_context
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.media import SourceMedia
-from colony_sidecar.turns.source_annotations import expand, current_candidates
-from colony_sidecar.turns.source_read import read
+from apsimo.intelligence.graph.recall import pack_memory_context, render_memory_context
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.media import SourceMedia
+from apsimo.turns.source_annotations import expand, current_candidates
+from apsimo.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 from test_recall_source_presentation import rendered_rows
 from test_source_media import Vision, image_bytes, message

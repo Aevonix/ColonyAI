@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_attribution import correct as reattribute
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_attribution import correct as reattribute
 from test_source_claim_projection import Model, claim, prepared
 
 ORIGINAL = 'The loading cupboard contains 14 units.'
@@ -156,8 +156,8 @@ def remove_original(projection, action):
         reattribute(projection.ledger, operation_id='root-attribution', performed_by='operator',
             old_contact_id='owner', contact_id='other', source_ids=['original'], evidence_refs=['operator:correction'])
     else:
-        from colony_sidecar.turns.idempotency import canonical_turn_digest
-        from colony_sidecar.turns.source_annotations import append
+        from apsimo.turns.idempotency import canonical_turn_digest
+        from apsimo.turns.source_annotations import append
         with projection.ledger._connect() as conn:
             messages = json.loads(conn.execute("SELECT messages_json FROM turn_sources WHERE turn_id='original'").fetchone()[0])
         append(projection.ledger, contact_id='owner', session_id='annotation-session', annotation_id='root-note',
@@ -249,7 +249,7 @@ async def test_inherited_change_requires_observed_time(occurred, tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('action', ['erase', 'reattribute', 'annotate'])
 async def test_actual_admitted_correction_judgment_retains_subject_source_dependency(action, tmp_path, monkeypatch):
-    from colony_sidecar.self_model.judgments import SelfJudgments
+    from apsimo.self_model.judgments import SelfJudgments
     from test_self_judgments import Clock, Processor, revise
     monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '0')
     projection = await start(tmp_path)
@@ -281,7 +281,7 @@ async def test_actual_admitted_correction_judgment_retains_subject_source_depend
 @pytest.mark.asyncio
 @pytest.mark.parametrize('action', ['erase', 'reattribute', 'annotate'])
 async def test_appraisal_preference_reads_actual_inherited_claim_and_revokes_with_root(action, tmp_path):
-    from colony_sidecar.self_model.appraisals import AppraisalStore
+    from apsimo.self_model.appraisals import AppraisalStore
     projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path/'sources.db'))
     await add(projection, 'original', 'I prefer brief replies.', 'brief', subject='I',
         predicate='reply length', memory_kind='preference')
@@ -298,7 +298,7 @@ async def test_appraisal_preference_reads_actual_inherited_claim_and_revokes_wit
 
 @pytest.mark.asyncio
 async def test_unselected_candidate_subject_does_not_erase_independent_judgment(tmp_path, monkeypatch):
-    from colony_sidecar.self_model.judgments import SelfJudgments
+    from apsimo.self_model.judgments import SelfJudgments
     from test_self_judgments import Clock, Processor, revise
     monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '0')
     projection = await start(tmp_path)
@@ -328,7 +328,7 @@ async def test_unselected_candidate_subject_does_not_erase_independent_judgment(
 
 @pytest.mark.asyncio
 async def test_judgment_cannot_commit_after_subject_root_erased_during_processing(tmp_path, monkeypatch):
-    from colony_sidecar.self_model.judgments import SelfJudgments
+    from apsimo.self_model.judgments import SelfJudgments
     from test_self_judgments import Clock, Processor
     monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '0')
     projection = await start(tmp_path)
@@ -348,7 +348,7 @@ async def test_judgment_cannot_commit_after_subject_root_erased_during_processin
 @pytest.mark.asyncio
 async def test_canonical_context_links_both_current_value_and_original_subject_sources(tmp_path):
     from datetime import datetime
-    from colony_sidecar.beliefs.source_time import interpret_time_query
+    from apsimo.beliefs.source_time import interpret_time_query
     projection = await start(tmp_path)
     await add(projection, 'correction', CORRECTION, '17', operation='correct', match_prior=True)
     query = 'cupboard count'

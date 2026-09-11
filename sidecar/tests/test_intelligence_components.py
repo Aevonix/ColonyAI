@@ -17,42 +17,42 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from colony_sidecar.intelligence.components.tool_learner import (
+from apsimo.intelligence.components.tool_learner import (
     ToolLearner,
     ToolPreference,
     ToolUsage,
 )
-from colony_sidecar.intelligence.components.self_reflector import (
+from apsimo.intelligence.components.self_reflector import (
     Reflection,
     SelfReflector,
 )
-from colony_sidecar.intelligence.components.task_planner import (
+from apsimo.intelligence.components.task_planner import (
     SubTask,
     TaskPlan,
     TaskPlanner,
     TaskPriority,
 )
-from colony_sidecar.intelligence.components.session_continuity import (
+from apsimo.intelligence.components.session_continuity import (
     SessionContext,
     SessionContinuity,
 )
-from colony_sidecar.intelligence.components.research_orchestrator import (
+from apsimo.intelligence.components.research_orchestrator import (
     ResearchOrchestrator,
     ResearchReport,
     ResearchResult,
     ResearchSource,
     SourceType,
 )
-from colony_sidecar.intelligence.components.preference_learner import (
+from apsimo.intelligence.components.preference_learner import (
     Preference,
     PreferenceLearner,
 )
-from colony_sidecar.intelligence.components.anomaly_detector import (
+from apsimo.intelligence.components.anomaly_detector import (
     Anomaly,
     AnomalyDetector,
     AnomalyType,
 )
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.intelligence.components.initiative_engine import (
     Initiative,
     InitiativeEngine,
     InitiativeType,
@@ -853,7 +853,7 @@ class TestPackageImports:
     """Verify all components are importable from the package."""
 
     def test_all_imports(self):
-        from colony_sidecar.intelligence.components import (
+        from apsimo.intelligence.components import (
             ToolLearner,
             ToolUsage,
             ToolPreference,

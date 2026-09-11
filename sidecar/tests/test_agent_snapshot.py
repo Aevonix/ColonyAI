@@ -7,8 +7,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from colony_sidecar.telemetry import TelemetryStore
-from colony_sidecar.initiatives.store import InitiativeStore
+from apsimo.telemetry import TelemetryStore
+from apsimo.initiatives.store import InitiativeStore
 
 
 class TestAgentSnapshot:
@@ -17,13 +17,13 @@ class TestAgentSnapshot:
     @pytest.fixture
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         """Create a test client with telemetry and initiative stores injected."""
-        from colony_sidecar.api.routers import host as host_mod
-        from colony_sidecar.api.routers.host import (
+        from apsimo.api.routers import host as host_mod
+        from apsimo.api.routers.host import (
             set_telemetry,
             set_initiative_store,
             set_autonomy_loop,
         )
-        from colony_sidecar.server import create_app
+        from apsimo.server import create_app
 
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
 
@@ -78,8 +78,8 @@ class TestAgentSnapshot:
 
     def test_agent_snapshot_with_initiatives(self, client: TestClient, tmp_path: Path):
         """Snapshot reflects pending and failed initiatives."""
-        from colony_sidecar.api.routers.host import set_initiative_store
-        from colony_sidecar.initiatives.store import InitiativeStore
+        from apsimo.api.routers.host import set_initiative_store
+        from apsimo.initiatives.store import InitiativeStore
 
         store = InitiativeStore(state_dir=tmp_path)
         set_initiative_store(store)
@@ -114,8 +114,8 @@ class TestAgentSnapshot:
 
     def test_agent_snapshot_stale_tick(self, client: TestClient):
         """Flag stale_autonomy_loop when last tick is old."""
-        from colony_sidecar.api.routers.host import set_telemetry
-        from colony_sidecar.telemetry import TelemetryStore
+        from apsimo.api.routers.host import set_telemetry
+        from apsimo.telemetry import TelemetryStore
 
         telemetry = TelemetryStore()
         telemetry.last_tick_at = datetime(2020, 1, 1, tzinfo=timezone.utc)
@@ -131,8 +131,8 @@ class TestAgentSnapshot:
 
     def test_agent_snapshot_long_initiative_silence(self, client: TestClient):
         """Flag long_initiative_silence when no initiatives for 4+ hours."""
-        from colony_sidecar.api.routers.host import set_telemetry
-        from colony_sidecar.telemetry import TelemetryStore
+        from apsimo.api.routers.host import set_telemetry
+        from apsimo.telemetry import TelemetryStore
 
         telemetry = TelemetryStore()
         telemetry.last_initiative_at = datetime(2020, 1, 1, tzinfo=timezone.utc)

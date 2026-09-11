@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from colony_sidecar.turns.source_read import read
+from apsimo.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 from test_source_media import image_bytes, message
 
@@ -90,7 +90,7 @@ def test_original_parts_verified_on_each_request_then_withheld_when_stale(image_
             **rt.ref, excerpt='Please retain this reference image.', correction='This is a diagram, not a photograph.',
             author_principal='operator')
     elif change == 'attribution':
-        from colony_sidecar.turns.source_attribution import correct
+        from apsimo.turns.source_attribution import correct
         correct(rt.ledger, operation_id='identity-correction', performed_by='operator', old_contact_id='owner',
                 contact_id='actual-person', source_ids=['image'], evidence_refs=['owner-confirmation'])
     else:

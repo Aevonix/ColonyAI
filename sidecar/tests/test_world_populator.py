@@ -5,10 +5,10 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 
-from colony_sidecar.world_model.store import WorldModelStore
-from colony_sidecar.world_model.config import WorldModelConfig
-from colony_sidecar.world_model.populator import WorldModelPopulator
-from colony_sidecar.directives import DirectiveManager, DirectiveStore
+from apsimo.world_model.store import WorldModelStore
+from apsimo.world_model.config import WorldModelConfig
+from apsimo.world_model.populator import WorldModelPopulator
+from apsimo.directives import DirectiveManager, DirectiveStore
 
 
 _TEXT = "I met Alice Chen who works at Acme Corp about the launch. Bob Smith joined too."
@@ -86,7 +86,7 @@ def test_boundary_check_error_fails_closed():
     pop = WorldModelPopulator(None, directive_manager=_BoomDM(), mode="shadow")
     assert pop._boundary_ok("Acme Corp") is False
 
-    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    from apsimo.world_model.llm_extract import WorldLLMExtractor
     ext = WorldLLMExtractor(None, directive_manager=_BoomDM())
     assert ext._boundary_ok("Acme Corp") is False
 

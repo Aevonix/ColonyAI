@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.telemetry import TelemetryStore
+from apsimo.telemetry import TelemetryStore
 
 # Mirror the defaults in api/routers/host.py::host_health.
 HEALTH_THRESHOLDS = {"sync": 2.0, "tick": 24.0, "initiative": 48.0, "prefetch": 24.0}
@@ -55,7 +55,7 @@ async def test_stuck_internal_loop_is_still_caught():
 async def test_host_health_enforces_temporal_staleness_by_default(
     monkeypatch, configured,
 ):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     telemetry = _store(
         last_sync_at=3.0,
@@ -81,7 +81,7 @@ async def test_host_health_enforces_temporal_staleness_by_default(
 async def test_advisory_policy_preserves_stale_flags_without_degrading_health(
     monkeypatch,
 ):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     telemetry = _store(
         last_sync_at=3.0,
@@ -104,8 +104,8 @@ async def test_advisory_policy_preserves_stale_flags_without_degrading_health(
 async def test_failed_probe_paths_degrade_health(monkeypatch):
     """A crashing embedder probe or staleness computation must degrade
     /health — never be swallowed into an unconditional 'ok'."""
-    from colony_sidecar.api.routers import host
-    from colony_sidecar import vector
+    from apsimo.api.routers import host
+    from apsimo import vector
 
     class BrokenEmbedder:
         async def health_check(self):
@@ -159,8 +159,8 @@ async def test_corrupt_telemetry_reset_is_visible_and_flaggable(
 
 @pytest.mark.asyncio
 async def test_advisory_policy_does_not_clear_model_degradation(monkeypatch):
-    from colony_sidecar.api.routers import host
-    from colony_sidecar import vector
+    from apsimo.api.routers import host
+    from apsimo import vector
 
     class Config:
         model_id = "configured-model"

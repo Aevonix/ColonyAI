@@ -10,12 +10,12 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.schemas.host import MemoryReadRequest
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.documents import disposition
-from colony_sidecar.turns.idempotency import source_message_hash
-from colony_sidecar.turns.source_read import read
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.schemas.host import MemoryReadRequest
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.documents import disposition
+from apsimo.turns.idempotency import source_message_hash
+from apsimo.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_documents import pdf_bytes
@@ -85,8 +85,8 @@ def all_content(original, **changes):
 
 
 def test_page_chunks_keep_original_page_numbers_without_parsing_or_returning_original_bytes(original, monkeypatch):
-    from colony_sidecar.turns.media import SourceMedia
-    from colony_sidecar.turns import documents
+    from apsimo.turns.media import SourceMedia
+    from apsimo.turns import documents
     def forbidden(*args, **kwargs):
         raise AssertionError('readback must not invoke a parser or generic asset read')
     monkeypatch.setattr(SourceMedia, 'read', forbidden)
@@ -187,8 +187,8 @@ def test_derivative_change_racing_readback_is_withheld(original, monkeypatch):
 
 @pytest.mark.parametrize('damage', ['missing', 'corrupt', 'oversized'])
 def test_missing_or_corrupt_original_never_serves_normal_document_evidence(original, damage):
-    from colony_sidecar.turns.documents import MAX_DOCUMENT_BYTES
-    from colony_sidecar.turns.media import SourceMedia
+    from apsimo.turns.documents import MAX_DOCUMENT_BYTES
+    from apsimo.turns.media import SourceMedia
     first = opened(original, page=3)
     path = SourceMedia(original[0]).store._original_path(ASSET, 'application/pdf')
     if damage == 'missing':
@@ -287,11 +287,11 @@ def test_native_dispatch_revalidates_actual_document_derivative_and_corrections(
     elif change == 'erase':
         rt.ledger.erase_sources(contact_id='owner', turn_ids=['document'])
     elif change == 'attribution':
-        from colony_sidecar.turns.source_attribution import correct
+        from apsimo.turns.source_attribution import correct
         correct(rt.ledger, operation_id='identity-correction', performed_by='operator', old_contact_id='owner',
                 contact_id='actual-person', source_ids=['document'], evidence_refs=['owner-confirmation'])
     elif change == 'missing_original':
-        from colony_sidecar.turns.media import SourceMedia
+        from apsimo.turns.media import SourceMedia
         SourceMedia(rt.ledger).store._original_path(ASSET, 'application/pdf').unlink()
     else:
         rt.client.post = lambda *args, **kwargs: (_ for _ in ()).throw(OSError('offline'))

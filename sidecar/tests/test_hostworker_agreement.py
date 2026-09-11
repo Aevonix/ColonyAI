@@ -27,7 +27,7 @@ import sys
 import pytest
 from jsonschema import Draft202012Validator
 
-from colony_sidecar import governed_actions as endpoint
+from apsimo import governed_actions as endpoint
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _HOSTWORKER_DIR = _REPO_ROOT / "hostworker"
@@ -37,9 +37,9 @@ _PLUGIN_INIT = _REPO_ROOT / "plugins" / "hermes-plugin" / "__init__.py"
 if str(_HOSTWORKER_DIR) not in sys.path:
     sys.path.insert(0, str(_HOSTWORKER_DIR))
 
-import colony_hostworker as hostworker  # noqa: E402
-from colony_hostworker import catalog as hw_catalog  # noqa: E402
-from colony_hostworker import contract as hw_contract  # noqa: E402
+import apsimo_hostworker as hostworker  # noqa: E402
+from apsimo_hostworker import catalog as hw_catalog  # noqa: E402
+from apsimo_hostworker import contract as hw_contract  # noqa: E402
 
 
 @pytest.fixture(scope="module")

@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.commitments.store import (
+import apsimo.api.routers.host as host_mod
+from apsimo.commitments.store import (
     CommitmentResolutionSchemaError,
     CommitmentStore,
     RESOLUTION_RECOVERY_CAPABILITY,
@@ -452,7 +452,7 @@ async def test_host_capability_and_health_follow_live_recovery_readiness(
 
 
 def test_server_validates_before_wiring_and_fails_lifespan_closed():
-    from colony_sidecar import server
+    from apsimo import server
 
     source = inspect.getsource(server.lifespan)
     section = source[

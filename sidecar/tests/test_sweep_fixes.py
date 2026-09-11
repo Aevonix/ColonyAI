@@ -9,8 +9,8 @@ from typing import Optional
 
 import pytest
 
-from colony_sidecar.events.journal import replay_events
-from colony_sidecar.tom.affect import AffectStore
+from apsimo.events.journal import replay_events
+from apsimo.tom.affect import AffectStore
 
 
 # --- journal: newest_first drops the OLD end of an over-cap window -----------
@@ -104,7 +104,7 @@ class _FakeGoalEngine:
 
 
 def test_goal_engine_aggregator(tmp_path):
-    from colony_sidecar.briefings.aggregators import GoalEngineAggregator
+    from apsimo.briefings.aggregators import GoalEngineAggregator
     now = datetime.now(timezone.utc)
     created = now - timedelta(hours=1)   # explicit: default-now would land after period_end
     overdue = _FakeGoal("g1", "ship the report", deadline=now - timedelta(hours=2),
@@ -138,7 +138,7 @@ class _Registry:
 
 
 async def test_handle_list_goals_returns_goals():
-    from colony_sidecar.tools.handlers import handle_list_goals
+    from apsimo.tools.handlers import handle_list_goals
     from enum import Enum
 
     class _St(str, Enum):
@@ -164,14 +164,14 @@ async def test_handle_list_goals_returns_goals():
 # --- autonomy: hourly condition-check phase exists and dedups ----------------
 
 async def test_phase_condition_checks_runs_and_dedups(monkeypatch):
-    from colony_sidecar.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.loop import AutonomyLoop
     calls = {"n": 0}
 
     async def fake_check(params):
         calls["n"] += 1
         return {"condition_met": False}
 
-    import colony_sidecar.autonomy.condition_worker as cw
+    import apsimo.autonomy.condition_worker as cw
     monkeypatch.setattr(cw, "_check_commitment_overdue", fake_check)
     monkeypatch.setattr(cw, "_check_affect_decline", fake_check)
     monkeypatch.setattr(cw, "_check_surprise_accumulation", fake_check)

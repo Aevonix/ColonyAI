@@ -1,8 +1,8 @@
 """Tests for colony_sidecar.vector.openai_provider — API embedding provider."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from colony_sidecar.vector.config import EmbeddingConfig
-from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
+from apsimo.vector.config import EmbeddingConfig
+from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
 
 
 class TestOpenAIAPIEmbeddingProvider:
@@ -34,13 +34,13 @@ class TestOpenAIAPIEmbeddingProvider:
 
 class TestMakeProvider:
     def test_openai_api_provider(self):
-        from colony_sidecar.vector.embedder import make_provider
+        from apsimo.vector.embedder import make_provider
         config = EmbeddingConfig(provider="openai_api", model_id="text-embedding-3-small", dimensions=1536)
         provider = make_provider(config)
         assert isinstance(provider, OpenAIAPIEmbeddingProvider)
 
     def test_unknown_provider_raises(self):
-        from colony_sidecar.vector.embedder import make_provider
+        from apsimo.vector.embedder import make_provider
         config = EmbeddingConfig(provider="nonexistent", model_id="test", dimensions=384)
         with pytest.raises(ValueError, match="Unknown embedding provider"):
             make_provider(config)

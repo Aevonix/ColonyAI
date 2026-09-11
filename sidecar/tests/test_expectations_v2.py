@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from colony_sidecar.self_model.expectations import (
+from apsimo.self_model.expectations import (
     ExpectationEngine,
     ExpectationStore,
     OutcomeObservationV1,

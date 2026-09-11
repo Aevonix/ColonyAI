@@ -4,9 +4,9 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.intelligence.graph.recall import pack_memory_context
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.intelligence.graph.recall import pack_memory_context
+from apsimo.turns import TurnIdempotencyLedger
 from test_procedure_source_context import ProcedureModel, candidates
 from test_source_claim_projection import Model, claim, ingest
 from test_turn_source_evidence import source_app

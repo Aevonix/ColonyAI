@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from colony_sidecar.persona.engine import (
+from apsimo.persona.engine import (
     PersonaEngine,
     _has_circular_deps,
     _resolve_templates,

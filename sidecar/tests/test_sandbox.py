@@ -12,15 +12,15 @@ import os
 import pytest
 from starlette.requests import Request
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.api.authority import (
+import apsimo.api.routers.host as host_mod
+from apsimo.api.authority import (
     RequestAuthority,
     anonymous_authority,
     required_scope,
 )
-from colony_sidecar.directives import Verdict
-from colony_sidecar.sandbox import SandboxManager, resolve_limits
-from colony_sidecar.sandbox.backend import (
+from apsimo.directives import Verdict
+from apsimo.sandbox import SandboxManager, resolve_limits
+from apsimo.sandbox.backend import (
     DisabledSandbox, DockerSandbox, SandboxLimits, SandboxResult,
 )
 

@@ -7,12 +7,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import colony_sidecar.api.routers.host as host_mod
-from colony_sidecar.self_model.benchmark import BenchmarkStore, SelfhoodBenchmark
-from colony_sidecar.self_model.experiments import (
+import apsimo.api.routers.host as host_mod
+from apsimo.self_model.benchmark import BenchmarkStore, SelfhoodBenchmark
+from apsimo.self_model.experiments import (
     ExperimentEngine, ExperimentStore,
 )
-from colony_sidecar.self_model.params import AdaptiveParamStore
+from apsimo.self_model.params import AdaptiveParamStore
 
 
 def make_engine(tmp_path, *, rollups=None):

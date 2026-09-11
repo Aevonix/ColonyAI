@@ -13,15 +13,15 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
-from colony_sidecar.vector.collections import Collection
+from apsimo.intelligence.graph import client as client_mod
+from apsimo.vector.collections import Collection
 
 
 # --- VectorStore.list_ids (real LanceDB) --------------------------------------
 
 @pytest.mark.asyncio
 async def test_list_ids_projected_query():
-    from colony_sidecar.vector.store import VectorStore
+    from apsimo.vector.store import VectorStore
     with tempfile.TemporaryDirectory() as d:
         vs = VectorStore(data_dir=d)
         await vs.connect(dimensions=4)
@@ -153,7 +153,7 @@ async def test_no_vector_store_reports_unavailable():
 
 # --- endpoint -------------------------------------------------------------------
 
-from colony_sidecar.api.routers import host as host_mod  # noqa: E402
+from apsimo.api.routers import host as host_mod  # noqa: E402
 
 
 @asynccontextmanager
@@ -209,7 +209,7 @@ async def test_endpoint_live_run_and_fail_closed():
 # --- post-prune sweep gate --------------------------------------------------------
 
 def _loop_with_graph(graph):
-    from colony_sidecar.autonomy.loop import AutonomyLoop, LoopStats
+    from apsimo.autonomy.loop import AutonomyLoop, LoopStats
 
     class _Reg:
         pass

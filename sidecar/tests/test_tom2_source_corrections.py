@@ -4,9 +4,9 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.tom.tom2 import Tom2Store
-from colony_sidecar.turns.source_annotations import append as annotate
+from apsimo.api.routers import host
+from apsimo.tom.tom2 import Tom2Store
+from apsimo.turns.source_annotations import append as annotate
 from test_contact_fact_recall import contact_context
 from test_turn_source_evidence import source_app
 from test_tom2_wiring import world, _arm_level2, _req, OWNER, READER, FACT_TEXT

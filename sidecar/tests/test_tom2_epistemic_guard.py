@@ -16,12 +16,12 @@ import time
 
 import pytest
 
-from colony_sidecar.gate.guard_audit import GuardAuditStore
-from colony_sidecar.gate.layers.tom2_epistemic import Tom2EpistemicGuard
-from colony_sidecar.gate.response_guard import (
+from apsimo.gate.guard_audit import GuardAuditStore
+from apsimo.gate.layers.tom2_epistemic import Tom2EpistemicGuard
+from apsimo.gate.response_guard import (
     GuardMode, ResponseGuard, enforce_allowlist)
-from colony_sidecar.gate.taint import TaintRegistry
-from colony_sidecar.tom.facts import SharedFactsStore
+from apsimo.gate.taint import TaintRegistry
+from apsimo.tom.facts import SharedFactsStore
 
 CONV = "dm:cid-alice"
 OTHER_CONV = "dm:cid-carol"
@@ -261,7 +261,7 @@ async def test_registry_fault_marks_check_unavailable(world):
 # ---------------------------------------------------------------------------
 
 def _seed_enforce_rows(audit, gateway="dm", n=3):
-    from colony_sidecar.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+    from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
     for _ in range(n):
         audit.record(conversation_key=f"{gateway}:x", mode="enforce",

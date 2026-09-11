@@ -2,7 +2,7 @@
 
 import pytest
 
-from colony_sidecar.compression import (
+from apsimo.compression import (
     CompressionConfig,
     CompressionMode,
     SectionInfo,

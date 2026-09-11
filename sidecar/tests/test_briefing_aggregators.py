@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import Optional
 
-from colony_sidecar.briefings.aggregators import (
+from apsimo.briefings.aggregators import (
     AnomalyDetectorAggregator,
     DiscovererSynthesisAggregator,
 )

@@ -16,7 +16,7 @@ from typing import Any, Dict, List
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from colony_sidecar.intelligence.graph.client import (
+from apsimo.intelligence.graph.client import (
     ColonyGraph,
     GraphConfig,
     EpistemicState,

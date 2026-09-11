@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.world_model.entities import ProductEntity
-from colony_sidecar.world_model.populator import _is_low_quality
-from colony_sidecar.world_model.sqlite.backend import SQLiteBackend, _fts_escape
+from apsimo.world_model.entities import ProductEntity
+from apsimo.world_model.populator import _is_low_quality
+from apsimo.world_model.sqlite.backend import SQLiteBackend, _fts_escape
 
 
 # ---------------------------------------------------------------------------

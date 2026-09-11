@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar import doctor
-from colony_sidecar.doctor import (
+from apsimo import doctor
+from apsimo.doctor import (
     FAIL,
     PASS,
     SKIP,
@@ -845,8 +845,8 @@ def test_run_doctor_combines_local_and_server(clean_env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_health_endpoint_ok(monkeypatch):
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.router.tiers import ModelTier
+    from apsimo.api.routers import host
+    from apsimo.router.tiers import ModelTier
 
     class FakeResp:
         tier_used = ModelTier.SMALL
@@ -865,7 +865,7 @@ async def test_llm_health_endpoint_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_health_endpoint_all_tiers_exhausted(monkeypatch):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     class BrokenRouter:
         async def complete(self, messages, **kwargs):
@@ -879,7 +879,7 @@ async def test_llm_health_endpoint_all_tiers_exhausted(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_health_endpoint_not_wired(monkeypatch):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     monkeypatch.setattr(host, "_llm_router", None)
     out = await host.llm_health()
@@ -947,7 +947,7 @@ def test_skip_dominated_run_is_not_healthy():
 
 
 def test_cmd_doctor_json_output_and_exit_code(clean_env, monkeypatch, capsys):
-    from colony_sidecar import cli
+    from apsimo import cli
 
     fake = [CheckResult("a", PASS, "ok"), CheckResult("b", FAIL, "boom", "fix")]
     monkeypatch.setattr(doctor, "run_doctor", lambda **kwargs: fake)
@@ -961,7 +961,7 @@ def test_cmd_doctor_json_output_and_exit_code(clean_env, monkeypatch, capsys):
 
 
 def test_cmd_doctor_human_output_exit_zero(clean_env, monkeypatch, capsys):
-    from colony_sidecar import cli
+    from apsimo import cli
 
     fake = [CheckResult("a", PASS, "ok"), CheckResult("b", WARN, "meh", "tweak")]
     monkeypatch.setattr(doctor, "run_doctor", lambda **kwargs: fake)
@@ -1205,7 +1205,7 @@ def test_contacts_db_state_dir_default_not_cwd(clean_env, monkeypatch, tmp_path)
     # the process CWD (the world-model incident class).
     monkeypatch.delenv("COLONY_STATE_DIR", raising=False)
     monkeypatch.delenv("COLONY_CONTACTS_DB", raising=False)
-    from colony_sidecar.contacts.config import ContactsConfig
+    from apsimo.contacts.config import ContactsConfig
     p = ContactsConfig.from_env().sqlite_path
     assert not p.startswith("./")
     assert ".colony" in p

@@ -11,7 +11,7 @@ import pytest
 # Skip if mcp package is not installed (config imports from __init__ which imports server)
 pytest.importorskip("mcp")
 
-from colony_sidecar.mcp.config import (
+from apsimo.mcp.config import (
     HARNESS_DEFS,
     add_to_harness,
     detect_harnesses,

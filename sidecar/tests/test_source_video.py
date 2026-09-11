@@ -13,10 +13,10 @@ import httpx
 from PIL import Image
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.media import SourceMedia
-from colony_sidecar.turns.source_read import read, read_video
-from colony_sidecar.turns.video import decode_video, MAX_VIDEO_BYTES
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.media import SourceMedia
+from apsimo.turns.source_read import read, read_video
+from apsimo.turns.video import decode_video, MAX_VIDEO_BYTES
 from test_turn_source_evidence import source_app
 
 
@@ -79,7 +79,7 @@ async def test_actual_variable_time_frame_and_decode_free_metadata(tmp_path, mon
     pixels = base64.b64decode(opened['image']['data_url'].split(',', 1)[1])
     assert hashlib.sha256(pixels).hexdigest() == opened['image']['asset_hash'] != selector['asset_hash']
     r, g, b = Image.open(io.BytesIO(pixels)).getpixel((80, 60)); assert b > 240 and r < 15 and g < 15
-    import colony_sidecar.turns.video as video
+    import apsimo.turns.video as video
     async def forbidden(*a, **kw): raise AssertionError('Metadata verification must not decode')
     monkeypatch.setattr(video, 'decode_video', forbidden)
     checked = await read_video(ledger, **selector, read_revision=opened['read_revision'])
@@ -91,9 +91,9 @@ async def test_actual_variable_time_frame_and_decode_free_metadata(tmp_path, mon
 
 @pytest.mark.asyncio
 async def test_original_http_admission_retry_and_frame_read(source_app, tmp_path):
-    from colony_sidecar.turns import get_turn_idempotency_ledger
-    from colony_sidecar import get_state_dir
-    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    from apsimo.turns import get_turn_idempotency_ledger
+    from apsimo import get_state_dir
+    from apsimo.api.middleware import ApiKeyMiddleware
     from test_scoped_api_authority import _principal, _write_keyring
     keyring = tmp_path/'video-keyring.json'
     _write_keyring(keyring, [_principal(principal='video-reader', secret='fixture-video', viewer='owner',
@@ -150,7 +150,7 @@ async def test_correction_changes_read_revision_and_erasure_mid_decode_withholds
     with pytest.raises(ValueError, match='restart_at_zero'):
         await read_video(ledger, **selector, read_revision=opened['read_revision'])
     revised = await read_video(ledger, **selector); assert 'synthetic evidence' in revised['content']
-    import colony_sidecar.turns.video as video
+    import apsimo.turns.video as video
     original = video.decode_video
     async def erase_during(data, requested_ms=None):
         result = await original(data, requested_ms)
@@ -164,7 +164,7 @@ async def test_correction_changes_read_revision_and_erasure_mid_decode_withholds
 
 @pytest.mark.asyncio
 async def test_shared_original_backup_restore_and_late_worker_result(tmp_path):
-    from colony_sidecar import backup
+    from apsimo import backup
     ledger, selector, data = retained(tmp_path/'state')
     ledger.record_source('other', contact_id='other', session_id='s', messages=[message(data)], derive_claims=False)
     archive = backup.create_full_backup(tmp_path/'state', tmp_path/'archives', include_graph=False, include_vectors=False)
@@ -209,7 +209,7 @@ async def test_malformed_duration_and_missing_target_are_explicit(tmp_path):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_exact_decoder_child_reaped_on_timeout_or_cancellation(monkeypatch, cancel):
-    import colony_sidecar.turns.video as video
+    import apsimo.turns.video as video
     actual_spawn = asyncio.create_subprocess_exec; children = []
     async def held(*args, **kwargs):
         process = await actual_spawn(args[0], '-c', 'import time; time.sleep(20)', **kwargs)
@@ -242,7 +242,7 @@ async def test_missing_optional_decoder_stops_worker_without_model_or_retry(tmp_
 @pytest.mark.asyncio
 async def test_erasure_during_worker_decode_does_not_start_caption(tmp_path, monkeypatch):
     ledger, _, _ = retained(tmp_path)
-    import colony_sidecar.turns.video as video
+    import apsimo.turns.video as video
     actual = video.decode_video
     async def erase(data, requested_ms=None):
         result = await actual(data, requested_ms)
@@ -293,7 +293,7 @@ async def test_current_video_cannot_be_borrowed_from_another_person_or_source(tm
     for change in ({'contact_id': 'stranger'}, {'asset_hash': '0' * 64}, ref):
         with pytest.raises((ValueError, KeyError)):
             await read_video(ledger, **(selector | change))
-    from colony_sidecar.turns.source_attribution import correct
+    from apsimo.turns.source_attribution import correct
     opened = await read_video(ledger, **selector)
     correct(ledger, operation_id='fix', performed_by='operator', old_contact_id='owner', contact_id='other',
             source_ids=['clip'], evidence_refs=['verified-correction'])

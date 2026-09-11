@@ -16,36 +16,36 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import required_scope
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.cognition.drive_governance import (
+from apsimo.api.authority import required_scope
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.cognition.drive_governance import (
     DriveGovernance,
     DriveGovernanceStore,
     DriveRanker,
     DriveV1,
     ScopeV1,
 )
-from colony_sidecar.initiatives.approval_authority import (
+from apsimo.initiatives.approval_authority import (
     ApprovalAuthorityStore,
     ApprovalSubjectBinding,
     legacy_action_binding,
 )
-from colony_sidecar.projects.models import Project
-from colony_sidecar.projects.store import ProjectStore
-from colony_sidecar.self_model.situation import (
+from apsimo.projects.models import Project
+from apsimo.projects.store import ProjectStore
+from apsimo.self_model.situation import (
     SituationObservationV1,
     SituationReducer,
     SituationStore,
 )
-from colony_sidecar.self_model.workspace import ConcernStore
-from colony_sidecar.server import (
+from apsimo.self_model.workspace import ConcernStore
+from apsimo.server import (
     _attach_drive_governance,
     _attach_situation_spine,
     _capacity_plus_attachment_failure,
     _compose_p7_charter_admission,
 )
-from colony_sidecar.cognition.drive_governance import (
+from apsimo.cognition.drive_governance import (
     CharterAdmissionConstraintsV1,
     ScopeV1,
 )
@@ -169,7 +169,7 @@ def test_p6_shadow_is_periodic_observer_and_never_replaces_p3_validator(
     assert "situation" in host.supported_capabilities()
     assert "situation_reduce" in scheduler.callbacks
     assert scheduler.callbacks["situation_reduce"]["interval_seconds"] >= 5
-    assert scheduler.callbacks["situation_reduce"]["callback"]()["mode"] == \
+    assert scheduler.callbacks["situation_reduce"]["callback"]()["mode"] ==\
         "shadow"
 
 
@@ -410,7 +410,7 @@ def test_p7_bootstrap_attaches_authority_without_replacing_shadow_p3_validator(
 
     assert wiring["mode"] == "bootstrap"
     assert wiring["governance"].approval_store is not None
-    assert wiring["governance"].approval_store.path == \
+    assert wiring["governance"].approval_store.path ==\
         tmp_path / "approval_authority.db"
     assert cognition._charter is original
 
@@ -1225,7 +1225,7 @@ async def test_live_p7_http_flow_is_proposal_approval_and_ranking_only(
             json=signal_payload,
         )
         assert signal_response.status_code == 200
-        assert signal_response.json()["signal"]["goal_fingerprint"] == \
+        assert signal_response.json()["signal"]["goal_fingerprint"] ==\
             "fingerprint-api-flow"
         hidden_project = await client.post(
             "/v1/host/cognition/drive-signals",
@@ -1485,10 +1485,10 @@ async def test_owner_typed_charter_approval_http_contract_is_discoverable_and_at
     ]
     assert decided.status_code == 200
     assert decided.json()["status"] == "approved_applied"
-    assert decided.json()["authority_evidence"] == \
+    assert decided.json()["authority_evidence"] ==\
         "scoped_principal:charter-owner:current"
     assert replay.status_code == 200
-    assert replay.json()["application"]["event_id"] == \
+    assert replay.json()["application"]["event_id"] ==\
         decided.json()["application"]["event_id"]
     assert drive_store.active_revision("default") is not None
     assert approval_store.list_grants() == []

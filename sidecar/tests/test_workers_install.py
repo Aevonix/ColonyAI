@@ -21,8 +21,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar import setup as wizard
-from colony_sidecar.setup import (
+from apsimo import setup as wizard
+from apsimo.setup import (
     WORKER_SPECS,
     build_cron_lines,
     build_worker_command,
@@ -30,7 +30,7 @@ from colony_sidecar.setup import (
     merge_crontab,
     run_workers_step,
 )
-from colony_sidecar.workers import colony_worker, queue_worker, skills_sync
+from apsimo.workers import colony_worker, queue_worker, skills_sync
 
 
 @pytest.fixture(autouse=True)

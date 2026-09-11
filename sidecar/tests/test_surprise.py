@@ -5,9 +5,9 @@ import tempfile
 
 import pytest
 
-from colony_sidecar.surprise.store import SurpriseStore
-from colony_sidecar.surprise.scorer import compute_surprise
-from colony_sidecar.patterns.store import PatternStore
+from apsimo.surprise.store import SurpriseStore
+from apsimo.surprise.scorer import compute_surprise
+from apsimo.patterns.store import PatternStore
 
 
 @pytest.fixture
@@ -176,8 +176,8 @@ class TestSurpriseScorer:
 
 from datetime import datetime, timedelta, timezone
 
-from colony_sidecar.events import broadcaster
-from colony_sidecar.surprise.accumulation import (
+from apsimo.events import broadcaster
+from apsimo.surprise.accumulation import (
     handle_surprise_accumulation, register as register_consumer,
 )
 
@@ -243,13 +243,13 @@ class TestAccumulationConsumer:
         assert handle_surprise_accumulation(_event(7)) is False
 
     def test_noop_when_workspace_enabled_but_unwired(self, monkeypatch):
-        import colony_sidecar.api.routers.host as host_mod
+        import apsimo.api.routers.host as host_mod
         monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
         monkeypatch.setattr(host_mod, "_workspace", None)
         assert handle_surprise_accumulation(_event(7)) is False
 
     def test_raises_concern_when_workspace_on(self, monkeypatch):
-        import colony_sidecar.api.routers.host as host_mod
+        import apsimo.api.routers.host as host_mod
         ws = _FakeWorkspace()
         monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
         monkeypatch.setattr(host_mod, "_workspace", ws)
@@ -265,7 +265,7 @@ class TestAccumulationConsumer:
 
     def test_end_to_end_via_emit(self, monkeypatch):
         """register() + emit('surprise.accumulation') lands as a concern."""
-        import colony_sidecar.api.routers.host as host_mod
+        import apsimo.api.routers.host as host_mod
         ws = _FakeWorkspace()
         monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
         monkeypatch.setattr(host_mod, "_workspace", ws)

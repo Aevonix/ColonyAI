@@ -3,7 +3,7 @@ import json
 
 import pytest
 
-from colony_sidecar.self_model import appraisals as module
+from apsimo.self_model import appraisals as module
 from test_source_appraisals import Processor, observation, resolved, source, state, view
 
 

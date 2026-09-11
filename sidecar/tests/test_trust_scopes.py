@@ -6,8 +6,8 @@ my DMs" primitive (any agent that embeds Colony can use it).
 
 import pytest
 
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
 
 
 @pytest.fixture

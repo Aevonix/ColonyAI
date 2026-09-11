@@ -14,10 +14,10 @@ from unittest.mock import Mock, patch, AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from colony_sidecar.agents.store import AgentStore, InviteStore
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.initiatives.assignment import AssignmentEngine
-from colony_sidecar.agents.websocket import WebSocketManager
+from apsimo.agents.store import AgentStore, InviteStore
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.initiatives.assignment import AssignmentEngine
+from apsimo.agents.websocket import WebSocketManager
 
 # Previously skipped due to SQLite threading with TestClient.
 # Fixed by adding check_same_thread=False to AgentStore._connect().
@@ -35,14 +35,14 @@ class TestAgentEndpoints:
         live under _ALWAYS_AUTH_REQUIRED in middleware.py — are reachable.
         Without a key those endpoints (correctly) return 503 in dev mode.
         """
-        from colony_sidecar.api.routers.host import (
+        from apsimo.api.routers.host import (
             set_agent_store,
             set_invite_store,
             set_initiative_store,
             set_assignment_engine,
             set_websocket_manager,
         )
-        from colony_sidecar.server import create_app
+        from apsimo.server import create_app
 
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
 
@@ -289,14 +289,14 @@ class TestInitiativeEndpoints:
         live under _ALWAYS_AUTH_REQUIRED in middleware.py — are reachable.
         Without a key those endpoints (correctly) return 503 in dev mode.
         """
-        from colony_sidecar.api.routers.host import (
+        from apsimo.api.routers.host import (
             set_agent_store,
             set_invite_store,
             set_initiative_store,
             set_assignment_engine,
             set_websocket_manager,
         )
-        from colony_sidecar.server import create_app
+        from apsimo.server import create_app
 
         monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
 
@@ -359,7 +359,7 @@ class TestInitiativeEndpoints:
     def test_status_filter_finds_active_work_beyond_default_page(
         self, client: TestClient
     ) -> None:
-        from colony_sidecar.api.routers import host
+        from apsimo.api.routers import host
 
         store = host._initiative_store
         terminal_ids = set()

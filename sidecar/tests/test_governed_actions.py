@@ -19,15 +19,15 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import (
+from apsimo.api.authority import (
     KeyringError,
     RequestAuthority,
     load_keyring,
     required_scope,
 )
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import governed_actions as action_router
-from colony_sidecar.governed_actions import (
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import governed_actions as action_router
+from apsimo.governed_actions import (
     ACTION_TOOL_NAMES,
     ColonySubsystemActionExecutor,
     GovernedActionLedger,
@@ -35,7 +35,7 @@ from colony_sidecar.governed_actions import (
     canonical_json,
     sha256_json,
 )
-import colony_sidecar.governed_actions as governed_actions_module
+import apsimo.governed_actions as governed_actions_module
 
 
 NOW = 1_900_000_000.0
@@ -869,7 +869,7 @@ async def test_generic_subsystem_adapter_maps_every_action_without_context_forwa
 async def test_record_insight_matches_live_colony_graph_contract(monkeypatch):
     import inspect
 
-    from colony_sidecar.intelligence.graph.client import ColonyGraph
+    from apsimo.intelligence.graph.client import ColonyGraph
 
     writes = []
 

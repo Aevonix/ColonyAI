@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from colony_sidecar.router.tiers import ModelTier, TierConfig
-from colony_sidecar.task_queue.handlers.inference import InferenceHandler
+from apsimo.router.tiers import ModelTier, TierConfig
+from apsimo.task_queue.handlers.inference import InferenceHandler
 
 
 class _FakeRouter:

@@ -5,12 +5,12 @@ public entities, are never flagged.
 
 import pytest
 
-from colony_sidecar.gate.context_provenance import (
+from apsimo.gate.context_provenance import (
     ContextProvenanceStore,
     ProvenanceCrossContextGuard,
 )
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
-from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.intelligence.relationships.trust_tiers import TrustTier
 
 CONV_A = "rcs:conv-A"
 CONV_B = "rcs:conv-B"

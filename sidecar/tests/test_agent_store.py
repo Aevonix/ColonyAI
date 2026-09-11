@@ -6,8 +6,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import pytest
 
-from colony_sidecar.agents.store import AgentStore, InviteStore
-from colony_sidecar.agents.models import Agent, AgentStatus, AgentMetadata
+from apsimo.agents.store import AgentStore, InviteStore
+from apsimo.agents.models import Agent, AgentStatus, AgentMetadata
 
 
 class TestAgentStore:

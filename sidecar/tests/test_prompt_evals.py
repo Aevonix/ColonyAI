@@ -20,7 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.cognition.charter import (
+from apsimo.cognition.charter import (
     PROMPT_VERSION, ROLE_BLOCKS, SECTION_BUDGETS, build_system_prompt,
 )
 
@@ -49,7 +49,7 @@ def test_every_role_carries_charter_doctrine_and_output_contract():
         p = build_system_prompt(role, **fmt)
         assert p.startswith("<charter>")
         assert "Agency doctrine" in p
-        assert "stated confidence is data" in p.lower() or \
+        assert "stated confidence is data" in p.lower() or\
                "Your stated confidence is data" in p
         assert "<role>" in p and "<output>" in p
 
@@ -92,7 +92,7 @@ def test_judgment_bearing_contracts_demand_confidence():
 
 
 def test_prompt_version_recorded_in_journal():
-    from colony_sidecar.self_model import ActionJournal
+    from apsimo.self_model import ActionJournal
     j = ActionJournal()
     j.record("research", "did a thing", decision="acted")
     assert j.recent()[0]["prompt_version"] == PROMPT_VERSION
@@ -105,7 +105,7 @@ def test_prompt_version_recorded_in_journal():
 # ---- thinker goldens ------------------------------------------------------
 
 def _thinker(content):
-    from colony_sidecar.intelligence.components.self_directed_thinker import (
+    from apsimo.intelligence.components.self_directed_thinker import (
         SelfDirectedThinker,
     )
     return SelfDirectedThinker(FakeRouter(content), interval_secs=0)
@@ -178,7 +178,7 @@ def _plan_items(*items):
 
 @pytest.mark.asyncio
 async def test_golden_planner_valid_plan_with_confidence():
-    from colony_sidecar.projects.planner import plan_project
+    from apsimo.projects.planner import plan_project
     content = _plan_items(
         {"ordinal": 1, "description": "Collect the existing notes",
          "action_kind": "analyze", "depends_on": [], "confidence": 0.9},
@@ -192,7 +192,7 @@ async def test_golden_planner_valid_plan_with_confidence():
 
 @pytest.mark.asyncio
 async def test_golden_planner_rejects_invented_action_kind():
-    from colony_sidecar.projects.planner import plan_project
+    from apsimo.projects.planner import plan_project
     content = _plan_items(
         {"ordinal": 1, "description": "ok", "action_kind": "analyze"},
         {"ordinal": 2, "description": "escape the sandbox",
@@ -204,7 +204,7 @@ async def test_golden_planner_rejects_invented_action_kind():
 
 @pytest.mark.asyncio
 async def test_golden_planner_prompt_composed_via_charter():
-    from colony_sidecar.projects.planner import plan_project
+    from apsimo.projects.planner import plan_project
     router = FakeRouter("[]")
     await plan_project(router, "objective",
                        boundaries="MUST NOT: touch prod",
@@ -218,7 +218,7 @@ async def test_golden_planner_prompt_composed_via_charter():
 # ---- trust gate goldens ---------------------------------------------------
 
 def _trust(wins=0, losses=0, stage=None, domain="research"):
-    from colony_sidecar.self_model import ActionJournal, CompetenceStore, TrustEngine
+    from apsimo.self_model import ActionJournal, CompetenceStore, TrustEngine
     store = CompetenceStore()
     for _ in range(wins):
         store.record(domain, "success")
@@ -254,7 +254,7 @@ def test_golden_trust_floor_asks_regardless():
 # ---- calibration golden ---------------------------------------------------
 
 def test_golden_stated_vs_realized_calibration():
-    from colony_sidecar.self_model import CompetenceStore
+    from apsimo.self_model import CompetenceStore
     s = CompetenceStore()
     s.record("research", "success", stated_confidence=0.8)   # err 0.2
     s.record("research", "failure", stated_confidence=0.6)   # err 0.6

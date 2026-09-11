@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.beliefs.source_claims import admission_metadata, extract_claims, validated_claims
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.beliefs.source_claims import admission_metadata, extract_claims, validated_claims
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns import TurnIdempotencyLedger
 from test_source_claim_projection import Model, claim
 from test_source_episode_memory import REPORT, episode
 from test_source_episode_revisions import CORRECTION, claims, context, record

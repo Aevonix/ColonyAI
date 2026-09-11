@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
+from apsimo.api.routers import host as host_mod
 
 
 class _FakeRegistry:
@@ -19,7 +19,7 @@ class _FakeRegistry:
         self._by_id = {}
 
     def add_draft(self, skill_id: str, name: str = "", description: str = ""):
-        from colony_sidecar.skills.models import SkillStatus
+        from apsimo.skills.models import SkillStatus
         self._by_id[skill_id] = SimpleNamespace(
             skill_id=skill_id,
             name=name,
@@ -37,12 +37,12 @@ class _FakeRegistry:
         return self._by_id.get(skill_id)
 
     async def activate(self, skill_id: str):
-        from colony_sidecar.skills.models import SkillStatus
+        from apsimo.skills.models import SkillStatus
         if skill_id in self._by_id:
             self._by_id[skill_id].status = SkillStatus.ACTIVE
 
     async def archive(self, skill_id: str):
-        from colony_sidecar.skills.models import SkillStatus
+        from apsimo.skills.models import SkillStatus
         if skill_id in self._by_id:
             self._by_id[skill_id].status = SkillStatus.ARCHIVED
 

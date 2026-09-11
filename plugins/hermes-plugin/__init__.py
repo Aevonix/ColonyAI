@@ -45,7 +45,7 @@ from . import source_read
 from . import input_provenance
 from .task_controller import configured_tasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
 
-from .colony_hostworker.catalog import (
+from .apsimo_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS as _CATALOG_ACTION_MODEL_TOOL_SCHEMAS,
     ACTION_TOOL_NAMES as _CATALOG_ACTION_TOOL_NAMES,
     identifier_model_schema as _identifier_model_schema,
@@ -2259,7 +2259,7 @@ def _require_coexistence_latches() -> None:
         _active_hermes_home = provider._active_hermes_home
         general_plugin_memory_ownership = provider.general_plugin_memory_ownership
     else:
-        from colony_memory.provider import _active_hermes_home, general_plugin_memory_ownership
+        from apsimo_memory.provider import _active_hermes_home, general_plugin_memory_ownership
 
     ownership = general_plugin_memory_ownership(_active_hermes_home())
     if ownership is True:

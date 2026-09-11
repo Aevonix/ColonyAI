@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from colony_sidecar.self_model.event_concerns import EventConcernReducer
-from colony_sidecar.self_model.workspace import ConcernStore
-from colony_sidecar.api.authority import required_scope
+from apsimo.self_model.event_concerns import EventConcernReducer
+from apsimo.self_model.workspace import ConcernStore
+from apsimo.api.authority import required_scope
 
 
 class FakeJournal:

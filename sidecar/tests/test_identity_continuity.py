@@ -6,9 +6,9 @@ import pytest
 
 from test_native_request_erasure import runtime
 from test_identity_corrections import store
-from colony_sidecar.identity.participants import ParticipantResolver
-from colony_sidecar.turns.source_attribution import correct, history
-from colony_sidecar.turns.idempotency import canonical_turn_digest
+from apsimo.identity.participants import ParticipantResolver
+from apsimo.turns.source_attribution import correct, history
+from apsimo.turns.idempotency import canonical_turn_digest
 from test_turn_source_evidence import source_app
 
 
@@ -17,8 +17,8 @@ def test_current_cached_recall_is_withheld_when_its_source_changes_person(runtim
     import importlib
     import time
     from fastapi.testclient import TestClient
-    import colony_sidecar.turns
-    from colony_sidecar.api.middleware import ApiKeyMiddleware
+    import apsimo.turns
+    from apsimo.api.middleware import ApiKeyMiddleware
     rt = runtime
     # This test verifies attribution changes through the real source API, not
     # disk latency on a shared CI worker. Keep its local freshness clock fixed;
@@ -26,7 +26,7 @@ def test_current_cached_recall_is_withheld_when_its_source_changes_person(runtim
     clock = SimpleNamespace(monotonic=lambda: 1000.0, time=time.time, sleep=time.sleep)
     monkeypatch.setattr(rt.module, 'time', clock)
     monkeypatch.setattr(importlib.import_module(type(rt.outbox).__module__), 'time', clock)
-    monkeypatch.setattr(colony_sidecar.turns, 'get_turn_idempotency_ledger', lambda *args: rt.ledger)
+    monkeypatch.setattr(apsimo.turns, 'get_turn_idempotency_ledger', lambda *args: rt.ledger)
     source_app.add_middleware(ApiKeyMiddleware, api_key='identity-continuity-fixture')
     api = TestClient(source_app)
     calls = []
@@ -90,11 +90,11 @@ def test_current_cached_recall_is_withheld_when_its_source_changes_person(runtim
 
 @pytest.mark.asyncio
 async def test_freshness_feed_preserves_scoped_authority_and_source_session(runtime, source_app, monkeypatch, tmp_path):
-    import colony_sidecar.turns
+    import apsimo.turns
     from httpx import ASGITransport, AsyncClient
     from test_scoped_api_authority import _principal, _write_keyring, _app, _headers
     rt = runtime
-    monkeypatch.setattr(colony_sidecar.turns, 'get_turn_idempotency_ledger', lambda *args: rt.ledger)
+    monkeypatch.setattr(apsimo.turns, 'get_turn_idempotency_ledger', lambda *args: rt.ledger)
     keyring = tmp_path / 'scoped-fixture.json'
     _write_keyring(keyring, [_principal(viewer='owner', scopes=['turns:write']),
         _principal(principal='memory-only', secret='memory-fixture', viewer='owner', scopes=['memory:read'])])
@@ -146,8 +146,8 @@ async def test_exact_corrected_phone_handle_does_not_become_an_unknown_third_per
 @pytest.mark.asyncio
 async def test_inflight_extractor_cannot_commit_old_person_interpretation_after_correction(tmp_path):
     import asyncio
-    from colony_sidecar.turns import TurnIdempotencyLedger
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from apsimo.turns import TurnIdempotencyLedger
+    from apsimo.beliefs.source_projection import SourceClaimProjection
     from test_source_claim_projection import Model, claim
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     text = 'My office is in River.'

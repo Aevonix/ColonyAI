@@ -13,23 +13,23 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
 
-from colony_sidecar.directives import (
+from apsimo.directives import (
     Directive,
     DirectiveGuard,
     DirectiveStore,
     Polarity,
     Verdict,
 )
-from colony_sidecar.self_model import (
+from apsimo.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
-from colony_sidecar.task_queue.governor import WorkerGovernor
-from colony_sidecar.task_queue.models import (
+from apsimo.task_queue.governor import WorkerGovernor
+from apsimo.task_queue.models import (
     Job, JobCapabilityRequirement, JobStatus, JobType, WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
-from colony_sidecar.workers import colony_worker as cw
-from colony_sidecar.work_orders import WorkOrderV1
+from apsimo.task_queue.queue_manager import TaskQueueManager
+from apsimo.workers import colony_worker as cw
+from apsimo.work_orders import WorkOrderV1
 
 
 def _self_model(*, earned: bool = True):
@@ -368,8 +368,8 @@ def test_off_mode_reports_unchecked_not_pass(monkeypatch):
 async def test_live_claim_route_holds_job_when_governor_unavailable(
     tmp_path, monkeypatch, governor,
 ):
-    from colony_sidecar.api.routers import host as host_router
-    from colony_sidecar.api.routers import task_queue as queue_router
+    from apsimo.api.routers import host as host_router
+    from apsimo.api.routers import task_queue as queue_router
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
@@ -414,8 +414,8 @@ async def test_live_claim_route_holds_job_when_governor_unavailable(
 async def test_shadow_claim_route_reports_governor_failure_without_blocking(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.api.routers import host as host_router
-    from colony_sidecar.api.routers import task_queue as queue_router
+    from apsimo.api.routers import host as host_router
+    from apsimo.api.routers import task_queue as queue_router
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
     TaskQueueManager._instance = None
@@ -543,7 +543,7 @@ async def test_shadow_and_off_central_claims_preserve_usability(
 async def test_embedded_worker_cannot_bypass_missing_live_authority(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.task_queue.worker import JobHandler, WorkerNode
+    from apsimo.task_queue.worker import JobHandler, WorkerNode
 
     class Handler(JobHandler):
         def __init__(self):
@@ -760,7 +760,7 @@ def test_job_action_includes_type_specific_command_path_and_endpoint(monkeypatch
 
 
 def test_global_act_pause_refuses_worker_claim(tmp_path, monkeypatch):
-    from colony_sidecar.directives import DirectiveManager, DirectiveStore
+    from apsimo.directives import DirectiveManager, DirectiveStore
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
     manager = DirectiveManager(DirectiveStore(
@@ -805,7 +805,7 @@ def test_malformed_directive_verdict_fails_closed(monkeypatch):
 def test_worker_governor_setter_syncs_and_clears_singleton_queue(
     tmp_path,
 ):
-    from colony_sidecar.api.routers import host as host_router
+    from apsimo.api.routers import host as host_router
 
     class Queue:
         def __init__(self):
@@ -831,7 +831,7 @@ def test_worker_governor_setter_syncs_and_clears_singleton_queue(
 
 def test_server_orders_and_clears_governor_around_embedded_worker():
     import inspect
-    from colony_sidecar import server
+    from apsimo import server
 
     source = inspect.getsource(server.lifespan)
     clear_at_entry = source.index("set_worker_governor(None)")
@@ -848,7 +848,7 @@ def test_server_orders_and_clears_governor_around_embedded_worker():
 
 def test_embedded_worker_enablement_is_explicit_and_default_compatible(
         monkeypatch):
-    from colony_sidecar import server
+    from apsimo import server
 
     monkeypatch.delenv("COLONY_EMBEDDED_WORKER_ENABLED", raising=False)
     assert server._embedded_worker_enabled() is True
@@ -870,7 +870,7 @@ def test_embedded_worker_helper_matches_release_attestation_shape():
     import inspect
     import textwrap
 
-    from colony_sidecar import server
+    from apsimo import server
 
     helper = ast.parse(textwrap.dedent(
         inspect.getsource(server._embedded_worker_enabled)
@@ -900,7 +900,7 @@ def test_embedded_worker_helper_has_one_lifecycle_guard_call_site():
     import ast
     import inspect
 
-    from colony_sidecar import server
+    from apsimo import server
 
     tree = ast.parse(inspect.getsource(server))
     calls = [
@@ -925,7 +925,7 @@ def test_embedded_worker_helper_has_one_lifecycle_guard_call_site():
 
 
 def test_invalid_worker_governor_mode_fails_closed(monkeypatch):
-    from colony_sidecar.task_queue.governor import workers_mode
+    from apsimo.task_queue.governor import workers_mode
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "typo-live")
     with pytest.raises(RuntimeError, match="must be off, shadow, or live"):
@@ -934,7 +934,7 @@ def test_invalid_worker_governor_mode_fails_closed(monkeypatch):
 
 def test_queue_scheduler_is_independent_from_embedded_worker_source_gate():
     import inspect
-    from colony_sidecar import server
+    from apsimo import server
 
     source = inspect.getsource(server.lifespan)
     scheduler_start = source.index("queue_scheduler = Scheduler(")
@@ -950,7 +950,7 @@ def test_queue_scheduler_is_independent_from_embedded_worker_source_gate():
 async def test_embedded_completion_always_uses_central_auditor(
     tmp_path, monkeypatch,
 ):
-    from colony_sidecar.task_queue.worker import JobHandler, WorkerNode
+    from apsimo.task_queue.worker import JobHandler, WorkerNode
 
     class TrackingGovernor(WorkerGovernor):
         def __init__(self):
@@ -1221,7 +1221,7 @@ async def test_stable_worker_event_id_deduplicates_competence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_duplicate_success_replay_does_not_redistill_skill(monkeypatch):
-    from colony_sidecar.skills_memory import SkillStore
+    from apsimo.skills_memory import SkillStore
 
     class _LLM:
         def __init__(self):
@@ -1518,8 +1518,8 @@ async def test_explicit_failure_remains_negative_trust_evidence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_complete_endpoint_tags_skipped_as_neutral(tmp_path, monkeypatch):
-    from colony_sidecar.api.routers import host as host_router
-    from colony_sidecar.api.routers import task_queue as queue_router
+    from apsimo.api.routers import host as host_router
+    from apsimo.api.routers import task_queue as queue_router
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
@@ -1565,8 +1565,8 @@ async def test_complete_endpoint_tags_skipped_as_neutral(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_work_order_queue_completion_is_transport_not_success(tmp_path, monkeypatch):
-    from colony_sidecar.api.routers import host as host_router
-    from colony_sidecar.api.routers import task_queue as queue_router
+    from apsimo.api.routers import host as host_router
+    from apsimo.api.routers import task_queue as queue_router
 
     monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
     TaskQueueManager._instance = None

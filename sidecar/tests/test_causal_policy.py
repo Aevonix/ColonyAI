@@ -6,10 +6,10 @@ causal subset; causal_edges_actionable() is OFF unless COLONY_CAUSAL_ACT=1
 causal subset.
 """
 
-from colony_sidecar.world_model.causal_policy import (
+from apsimo.world_model.causal_policy import (
     causal_edges_actionable, is_causal,
 )
-from colony_sidecar.world_model.constants import (
+from apsimo.world_model.constants import (
     CAUSAL_RELATIONSHIP_TYPES, RELATIONSHIP_TYPES,
 )
 

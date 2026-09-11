@@ -8,11 +8,11 @@ import pytest
 
 from datetime import datetime, timedelta, timezone
 
-from colony_sidecar.task_queue.models import (
+from apsimo.task_queue.models import (
     Job, JobType, WorkerCapabilities,
 )
-from colony_sidecar.task_queue.queue_manager import TaskQueueManager
-from colony_sidecar.task_queue.worker import JobHandler, WorkerNode
+from apsimo.task_queue.queue_manager import TaskQueueManager
+from apsimo.task_queue.worker import JobHandler, WorkerNode
 
 
 class _EchoHandler(JobHandler):

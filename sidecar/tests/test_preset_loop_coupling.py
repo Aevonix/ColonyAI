@@ -15,8 +15,8 @@ import dataclasses
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
-from colony_sidecar.util import autonomy_preset as ap
+from apsimo.autonomy.config import AutonomyConfig, AutonomyMode
+from apsimo.util import autonomy_preset as ap
 
 _ENV = [
     "COLONY_AUTONOMY_PRESET", "COLONY_AUTONOMY_MODE",
@@ -125,7 +125,7 @@ class TestCouplingOffRegressionLock:
         baseline = AutonomyConfig.from_env()
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "autonomous")
         monkeypatch.setenv("COLONY_PRESET_LOOP_COUPLING", "off")
-        assert dataclasses.asdict(AutonomyConfig.from_env()) == \
+        assert dataclasses.asdict(AutonomyConfig.from_env()) ==\
             dataclasses.asdict(baseline)
 
     def test_coupling_off_legacy_tick_migration_survives(self, monkeypatch):

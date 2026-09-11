@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from colony_sidecar.api.routers import executions
-from colony_sidecar.turns.executions import ExecutionRegistry, request_work_context, format_view
-from colony_sidecar.turns.idempotency import source_message_hash
+from apsimo.api.routers import executions
+from apsimo.turns.executions import ExecutionRegistry, request_work_context, format_view
+from apsimo.turns.idempotency import source_message_hash
 from test_execution_registry import observation, store
 from test_hermes_general_governance import _Context
 from test_host_input_provenance import handoff
@@ -124,7 +124,7 @@ def test_source_change_between_work_fetch_and_existing_request_check_withholds_q
 
 
 def test_annotation_after_candidate_snapshot_is_not_published_as_unqualified_input(store, monkeypatch):
-    from colony_sidecar.turns import source_read
+    from apsimo.turns import source_read
     refs = admitted(store)
     bind(store, refs)
     original = source_read.current_candidates

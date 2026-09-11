@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from colony_sidecar.directed import DirectedActionService, ScopedTaskStore
-from colony_sidecar.directed.service import report_token_for
-from colony_sidecar.self_model import (
+from apsimo.directed import DirectedActionService, ScopedTaskStore
+from apsimo.directed.service import report_token_for
+from apsimo.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
 

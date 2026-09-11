@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.util import temporal as T
+from apsimo.util import temporal as T
 
 
 @pytest.fixture(autouse=True)

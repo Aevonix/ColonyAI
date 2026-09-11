@@ -5,11 +5,11 @@ import json
 
 import pytest
 
-from colony_sidecar.world_model.config import WorldModelConfig
-from colony_sidecar.world_model.entities import BaseEntity
-from colony_sidecar.world_model.store import WorldModelStore
-from colony_sidecar.world_model.observations import compact_situation
-from colony_sidecar.self_model.situation import SituationFactV1, SituationSnapshotV1
+from apsimo.world_model.config import WorldModelConfig
+from apsimo.world_model.entities import BaseEntity
+from apsimo.world_model.store import WorldModelStore
+from apsimo.world_model.observations import compact_situation
+from apsimo.self_model.situation import SituationFactV1, SituationSnapshotV1
 
 SCOPE = dict(subject_person_id='cid-owner', viewer_scope='owner', shareability='owner_private')
 BASE = dict(entity_id='we-service', property_key='model', kind='observed', producer='service:router', **SCOPE)
@@ -98,7 +98,7 @@ async def test_exact_scope_and_erasure_preserve_invalidated_head_and_raw_history
 
 
 async def test_a_long_telemetry_history_still_produces_one_current_fact(store):
-    from colony_sidecar.world_model.observations import observation, canonical, SOURCE_PREFIX
+    from apsimo.world_model.observations import observation, canonical, SOURCE_PREFIX
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     rows = []
     for index in range(2100):
@@ -127,9 +127,9 @@ def test_compact_situation_never_presents_stale_hardware_as_current():
 
 
 async def test_existing_batch_job_writes_only_quoted_canonical_reports_and_rechecks_identity(store, tmp_path, monkeypatch):
-    from colony_sidecar.turns.idempotency import TurnIdempotencyLedger
-    from colony_sidecar.turns.source_attribution import correct
-    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    from apsimo.turns.idempotency import TurnIdempotencyLedger
+    from apsimo.turns.source_attribution import correct
+    from apsimo.world_model.llm_extract import WorldLLMExtractor
     monkeypatch.setenv('COLONY_WORLD_LLM_EXTRACT', 'live')
     monkeypatch.setenv('COLONY_CAUSAL_EXTRACT', 'off')
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
@@ -170,7 +170,7 @@ async def test_existing_batch_job_writes_only_quoted_canonical_reports_and_reche
 
 
 async def test_legacy_text_batch_has_no_typed_attribution_and_optional_backends_are_explicit(store, monkeypatch):
-    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    from apsimo.world_model.llm_extract import WorldLLMExtractor
     monkeypatch.setenv('COLONY_WORLD_LLM_EXTRACT', 'live')
     async def extract(texts):
         return {'entities': [{'name': 'Nimbus Router', 'type': 'product', 'confidence': .8}],
@@ -196,8 +196,8 @@ async def test_legacy_text_batch_has_no_typed_attribution_and_optional_backends_
     'Nimbus Router is offline until 2026-09-15.',
 ])
 async def test_dated_report_cannot_become_current_from_receipt_time(store, tmp_path, monkeypatch, text):
-    from colony_sidecar.turns.idempotency import TurnIdempotencyLedger
-    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    from apsimo.turns.idempotency import TurnIdempotencyLedger
+    from apsimo.world_model.llm_extract import WorldLLMExtractor
     monkeypatch.setenv('COLONY_WORLD_LLM_EXTRACT', 'live')
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     ledger.record_source('dated', contact_id='cid-owner', session_id='text',
@@ -218,7 +218,7 @@ async def test_dated_report_cannot_become_current_from_receipt_time(store, tmp_p
 @pytest.mark.asyncio
 async def test_world_batch_uses_current_named_extraction_role():
     from types import SimpleNamespace
-    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    from apsimo.world_model.llm_extract import WorldLLMExtractor
     calls=[]
     class Processor:
         supports_function_routing=True

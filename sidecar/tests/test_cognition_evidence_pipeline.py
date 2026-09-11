@@ -8,20 +8,20 @@ import time
 
 import pytest
 
-from colony_sidecar.cognition.evidence_pipeline import (
+from apsimo.cognition.evidence_pipeline import (
     CognitionEvidenceReducer,
     CognitionEvidenceStore,
     project_evidence_event,
 )
-from colony_sidecar.events.journal import append_event_record, _checksum
-from colony_sidecar.execution_results import ExecutionResultV1, bounded_refs
-from colony_sidecar.projects.event_outbox import ProjectEventProjector
-from colony_sidecar.projects.engine import ProjectEngine
-from colony_sidecar.projects.models import Project, Step
-from colony_sidecar.projects.store import ProjectStore
-from colony_sidecar.self_model.expectations import ExpectationEngine, ExpectationStore
-from colony_sidecar.self_model.store import CompetenceStore, SelfModel
-from colony_sidecar.work_orders import WorkOrderV1
+from apsimo.events.journal import append_event_record, _checksum
+from apsimo.execution_results import ExecutionResultV1, bounded_refs
+from apsimo.projects.event_outbox import ProjectEventProjector
+from apsimo.projects.engine import ProjectEngine
+from apsimo.projects.models import Project, Step
+from apsimo.projects.store import ProjectStore
+from apsimo.self_model.expectations import ExpectationEngine, ExpectationStore
+from apsimo.self_model.store import CompetenceStore, SelfModel
+from apsimo.work_orders import WorkOrderV1
 
 
 def _isolate(monkeypatch, tmp_path, *, mode="live"):
@@ -743,7 +743,7 @@ def test_existing_bounded_ids_run_ids_and_url_receipts_project_cleanly(
     assert len(competence.events("project")) == 1
     trace = evidence.trace(project_id=project.id, viewer_scope="owner")
     assert receipt in trace[0]["projection"]["evidence_refs"]
-    assert trace[0]["projection"]["local_evidence"]["run_id"] == \
+    assert trace[0]["projection"]["local_evidence"]["run_id"] ==\
         "provider run id with spaces"
 
 

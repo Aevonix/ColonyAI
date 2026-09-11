@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.beliefs.source_time import interpret_time_query
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_vectors import SourceVectors
+from apsimo.beliefs.source_time import interpret_time_query
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_vectors import SourceVectors
 from test_turn_source_evidence import source_app
 
 

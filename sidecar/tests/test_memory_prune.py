@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
-from colony_sidecar.vector.collections import Collection
+from apsimo.intelligence.graph import client as client_mod
+from apsimo.vector.collections import Collection
 
 
 # --- fakes -------------------------------------------------------------------
@@ -117,7 +117,7 @@ async def test_vector_failure_does_not_abort_pass():
 # --- phase gate (COLONY_MEMORY_PRUNE_MODE) -----------------------------------
 
 def _loop_with_graph(graph):
-    from colony_sidecar.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.loop import AutonomyLoop
 
     class _Reg:
         pass
@@ -127,7 +127,7 @@ def _loop_with_graph(graph):
     loop = AutonomyLoop.__new__(AutonomyLoop)
     loop._registry = reg
     loop._periodic_last = {}
-    from colony_sidecar.autonomy.loop import LoopStats
+    from apsimo.autonomy.loop import LoopStats
     loop.stats = LoopStats()
     return loop
 

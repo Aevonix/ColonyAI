@@ -10,7 +10,7 @@ import pytest
 # skip the whole file cleanly where it isn't installed.
 pytest.importorskip("litellm")
 
-from colony_sidecar.router.tiers import (
+from apsimo.router.tiers import (
     ModelTier,
     TierConfig,
     _PROVIDER_PRESETS,

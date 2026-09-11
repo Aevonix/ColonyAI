@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from colony_sidecar.turns.source_read import read
+from apsimo.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 
 

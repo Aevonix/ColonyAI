@@ -6,14 +6,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.tom.arcs import ArcEventV1, ArcStore
-from colony_sidecar.tom.recipient_simulator import (
+from apsimo.tom.arcs import ArcEventV1, ArcStore
+from apsimo.tom.recipient_simulator import (
     FAIL_BEHAVIOR_BY_RISK,
     RecipientSimulationRequestV1,
     RecipientSimulator,
     recipient_simulator_mode,
 )
-from colony_sidecar.tom.visibility import (
+from apsimo.tom.visibility import (
     FactCandidateV1,
     FactVisibilityV1,
     ViewerContextV1,

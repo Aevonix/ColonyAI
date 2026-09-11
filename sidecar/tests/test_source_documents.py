@@ -13,10 +13,10 @@ import pytest
 from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.documents import MAX_DOCUMENT_BYTES, MAX_PAGE_STREAM_BYTES, extract_document
-from colony_sidecar.turns.idempotency import SourceErased, source_message_hash
-from colony_sidecar.turns.media import SourceMedia
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.documents import MAX_DOCUMENT_BYTES, MAX_PAGE_STREAM_BYTES, extract_document
+from apsimo.turns.idempotency import SourceErased, source_message_hash
+from apsimo.turns.media import SourceMedia
 from test_turn_source_evidence import source_app, envelope
 from test_hermes_turn_outbox import _load_client
 
@@ -160,7 +160,7 @@ def test_no_document_paths_urls_or_oversized_bytes_are_retained(tmp_path, varian
 
 @pytest.mark.asyncio
 async def test_pdf_backup_restore_shared_ownership_and_parse_erasure_race(tmp_path):
-    from colony_sidecar import backup
+    from apsimo import backup
     data = pdf_bytes(); asset = hashlib.sha256(data).hexdigest()
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     for person in ('a', 'b'):
@@ -189,8 +189,8 @@ async def test_pdf_backup_restore_shared_ownership_and_parse_erasure_race(tmp_pa
 @pytest.mark.asyncio
 async def test_document_protocol_and_client_never_fall_back_to_predecessor(source_app, tmp_path):
     from fastapi import HTTPException, Response
-    from colony_sidecar.api.routers.host import turns_sync_v2
-    from colony_sidecar.api.schemas.host import TurnSyncRequest
+    from apsimo.api.routers.host import turns_sync_v2
+    from apsimo.api.schemas.host import TurnSyncRequest
     body = TurnSyncRequest.model_validate({'identity': {'host_id': 'fixture'},
         'context': {'contact_id': 'a', 'session_id': 's', 'turn_id': 'pdf'}, 'user_message': message()})
     with pytest.raises(HTTPException) as error:
@@ -216,7 +216,7 @@ async def test_document_protocol_and_client_never_fall_back_to_predecessor(sourc
 
 @pytest.mark.asyncio
 async def test_pdf_source_memory_recovery_preserves_actual_pages_without_runtime_authority(tmp_path):
-    from colony_sidecar import backup
+    from apsimo import backup
     data = pdf_bytes(); asset = hashlib.sha256(data).hexdigest()
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     ledger.record_source('pdf', contact_id='a', session_id='s', messages=[message(data)], derive_claims=False)
@@ -237,7 +237,7 @@ async def test_pdf_source_memory_recovery_preserves_actual_pages_without_runtime
 @pytest.mark.asyncio
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_parser_child_is_reaped_after_timeout_or_worker_cancellation(monkeypatch, cancel):
-    from colony_sidecar.turns import documents
+    from apsimo.turns import documents
     spawn = asyncio.create_subprocess_exec
     started = asyncio.Event(); children = []
     async def delayed_child(*args, **kwargs):

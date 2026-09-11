@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from colony_sidecar.feedback import TypeFeedbackStore
+from apsimo.feedback import TypeFeedbackStore
 
 
 def test_actioned_boosts_dismissed_decays():

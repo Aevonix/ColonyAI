@@ -13,19 +13,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.gate.rejection import (
+from apsimo.autonomy.config import AutonomyConfig
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.gate.rejection import (
     FeedbackLoopResult, GateRejectionEvent, RejectionFeedbackLoop,
     RejectionStore,
 )
-from colony_sidecar.gate.response_guard import (
+from apsimo.gate.response_guard import (
     GuardFinding,
     GuardMode,
     GuardResult,
     response_text_digest,
 )
-from colony_sidecar.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
 
 def _blocked(reason="secret_leak", excerpt="sk-123", response_text=""):
@@ -192,7 +192,7 @@ def _loop(llm=None):
 
 
 def _wire_guard(monkeypatch, tmp_path, guard):
-    import colony_sidecar.api.routers.host as host
+    import apsimo.api.routers.host as host
     monkeypatch.setattr(host, "_response_guard", guard)
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
@@ -496,7 +496,7 @@ def test_delivery_enforce_rejects_verdict_with_missing_bindings(
 
 
 def test_delivery_enforce_blocks_when_guard_is_unavailable(monkeypatch, tmp_path):
-    import colony_sidecar.api.routers.host as host
+    import apsimo.api.routers.host as host
 
     _wire_guard(monkeypatch, tmp_path, None)
     monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
@@ -510,7 +510,7 @@ def test_delivery_enforce_blocks_when_guard_is_unavailable(monkeypatch, tmp_path
 
 
 def test_delivery_enforce_blocks_when_guard_raises(monkeypatch, tmp_path):
-    from colony_sidecar.gate.response_guard import GuardMode
+    from apsimo.gate.response_guard import GuardMode
 
     class BrokenGuard:
         configured_mode = GuardMode.ENFORCE
@@ -531,7 +531,7 @@ def test_delivery_enforce_blocks_when_guard_raises(monkeypatch, tmp_path):
 def test_environment_enforce_cannot_be_weakened_by_stale_shadow_guard(
     monkeypatch, tmp_path,
 ):
-    from colony_sidecar.gate.response_guard import GuardMode
+    from apsimo.gate.response_guard import GuardMode
 
     class StaleShadowGuard:
         configured_mode = GuardMode.SHADOW

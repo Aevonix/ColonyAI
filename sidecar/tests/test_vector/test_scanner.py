@@ -1,7 +1,7 @@
 """Tests for colony_sidecar.vector.scanner — hardware detection."""
 import pytest
 from unittest.mock import patch, MagicMock
-from colony_sidecar.vector.scanner import scan, HardwareProfile, _ram_gb
+from apsimo.vector.scanner import scan, HardwareProfile, _ram_gb
 
 
 class TestHardwareProfile:
@@ -59,7 +59,7 @@ class TestScan:
 class TestCudaInfo:
     def test_na_vram_fallback(self):
         """Test that [N/A] VRAM in nvidia-smi output triggers RAM fallback."""
-        from colony_sidecar.vector.scanner import _cuda_info
+        from apsimo.vector.scanner import _cuda_info
         import subprocess
 
         mock_result = MagicMock()

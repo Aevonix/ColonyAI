@@ -8,8 +8,8 @@ import tempfile
 
 import pytest
 
-from colony_sidecar.repos import RepoMirrorManager, parse_mirror_config
-from colony_sidecar.directives import DirectiveManager, DirectiveStore
+from apsimo.repos import RepoMirrorManager, parse_mirror_config
+from apsimo.directives import DirectiveManager, DirectiveStore
 
 
 def _make_source_repo(base: str) -> str:

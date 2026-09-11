@@ -7,9 +7,9 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from colony_sidecar.tom.asymmetry import AsymmetryEngine, tom2_mode
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.tom.tom2 import Tom2Store
+from apsimo.tom.asymmetry import AsymmetryEngine, tom2_mode
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.tom.tom2 import Tom2Store
 
 _FACT_A = "Alice prefers morning meetings SECRETALPHA"
 _FACT_B = "Bob is moving to Lisbon SECRETBETA"

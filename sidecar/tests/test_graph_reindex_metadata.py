@@ -4,12 +4,12 @@ import json
 
 import pytest
 
-from colony_sidecar.intelligence.graph.client import ColonyGraph
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.vector.collections import Collection
-from colony_sidecar.vector.indexes import EmbeddingIdentity, IndexCatalog
-from colony_sidecar.vector.migrate import migrate_tier
-from colony_sidecar.vector.store import VectorStore
+from apsimo.intelligence.graph.client import ColonyGraph
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.vector.collections import Collection
+from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog
+from apsimo.vector.migrate import migrate_tier
+from apsimo.vector.store import VectorStore
 
 
 class Result:

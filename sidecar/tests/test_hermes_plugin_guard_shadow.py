@@ -133,7 +133,7 @@ def _transform(context, text="hi there", platform="sms"):
 
 
 def test_plugin_policy_identity_matches_sidecar_contract():
-    from colony_sidecar.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+    from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
     module = _load_plugin()
     assert module._GUARD_POLICY_ID == POLICY_ID

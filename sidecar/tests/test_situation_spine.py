@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.cognition.external_events import ExternalCognitionEventV1
-from colony_sidecar.self_model.situation import (
+from apsimo.cognition.external_events import ExternalCognitionEventV1
+from apsimo.self_model.situation import (
     AppropriatenessGate,
     JournalSituationAdapter,
     SituationObservationV1,

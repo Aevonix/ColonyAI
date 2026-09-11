@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 
-from colony_sidecar.directed import (
+from apsimo.directed import (
     ScopedTask, ScopedTaskStore, ScopeLimits, scope_from_directive,
     audit_via_report, audit_completion, DirectedActionService,
 )
-from colony_sidecar.directives import DirectiveManager, DirectiveStore
+from apsimo.directives import DirectiveManager, DirectiveStore
 
 
 _KNOWN = [{"kind": "repo", "name": "widget-api", "aliases": "the widget repo"},

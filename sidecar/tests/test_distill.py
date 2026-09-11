@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
-from colony_sidecar.intelligence.graph.distiller import MemoryDistiller
+from apsimo.intelligence.graph import client as client_mod
+from apsimo.intelligence.graph.distiller import MemoryDistiller
 
 
 # --- MemoryDistiller threshold knobs -------------------------------------------
@@ -142,7 +142,7 @@ def test_agent_label_blocks_contact_claim_extraction():
     Unlabeled, the same sentence extracts a (Jordan, works_at, Initech)
     claim — the leak that let the agent's own prose enter belief
     maintenance as if a contact had asserted it."""
-    from colony_sidecar.beliefs.contradictions import claims_from_text
+    from apsimo.beliefs.contradictions import claims_from_text
 
     distilled = client_mod.distill_turn_summary("Agent: Jordan works at Initech")
     assert distilled == "Agent: Jordan works at Initech"
@@ -212,7 +212,7 @@ async def test_flag_on_does_not_push_preview(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_distill_preview_endpoint(monkeypatch):
-    from colony_sidecar.api.routers import host as host_mod
+    from apsimo.api.routers import host as host_mod
 
     monkeypatch.delenv("COLONY_DISTILL_TURNS", raising=False)
     fx = _RecordTurnFixture()

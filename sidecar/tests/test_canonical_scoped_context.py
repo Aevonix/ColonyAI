@@ -4,12 +4,12 @@ from datetime import datetime, timedelta, timezone
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.media import SourceMedia
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.commitments.store import CommitmentStore
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.media import SourceMedia
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_claim_projection import Model, claim
 from test_source_media import message as image_message

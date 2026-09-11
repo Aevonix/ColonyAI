@@ -10,16 +10,16 @@ import sqlite3
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.contacts.comms import CommsLog
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.intelligence.relationships.profiler import RelationshipProfiler
-from colony_sidecar.tom.affect import AffectStore
-from colony_sidecar.tom.engagement import EngagementStore, build_guidance
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import SourceErased
+from apsimo.api.routers import host
+from apsimo.contacts.comms import CommsLog
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.intelligence.relationships.profiler import RelationshipProfiler
+from apsimo.tom.affect import AffectStore
+from apsimo.tom.engagement import EngagementStore, build_guidance
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import SourceErased
 from test_tom_source_lineage import runtime, ingest, forget
 from test_turn_source_evidence import source_app
 from test_turn_source_evidence import envelope, recalled
@@ -58,8 +58,8 @@ async def engagement_brief(client):
 
 @pytest.fixture
 async def approach(relations, monkeypatch, tmp_path):
-    from colony_sidecar.contacts import store as contact_module
-    from colony_sidecar import identity
+    from apsimo.contacts import store as contact_module
+    from apsimo import identity
     monkeypatch.setattr(contact_module, '_gen_id', lambda prefix: 'contact-a')
     monkeypatch.setattr(identity, 'get_owner_contact_id', lambda: 'owner')
     contacts = SQLiteContactStore(config=ContactsConfig(sqlite_path=str(tmp_path / 'contacts.db')))

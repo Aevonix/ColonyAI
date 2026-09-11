@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from colony_sidecar.turns.executions import request_work_context
+from apsimo.turns.executions import request_work_context
 
 
 def execution(number, *, parent=None, age=1, session=None):
@@ -177,7 +177,7 @@ def test_terminal_task_outcome_precedes_unrelated_expired_execution(same_session
 
 
 def test_expired_phase_is_historical_in_both_contexts_without_inventing_completion():
-    from colony_sidecar.turns.executions import format_view
+    from apsimo.turns.executions import format_view
 
     stale = execution(2, age=500)
     view = {'items': [stale], 'total': 1, 'truncated': False}

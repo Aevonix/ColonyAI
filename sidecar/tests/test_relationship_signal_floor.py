@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.intelligence.relationships import signal_floor as sf
+from apsimo.intelligence.relationships import signal_floor as sf
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def test_enrich_pulls_interaction_count_from_contact_store():
 # ---------------------------------------------------------------------------
 
 def test_ungrounded_thought_does_not_ship():
-    from colony_sidecar.proposals.engine import build_from_thinker
+    from apsimo.proposals.engine import build_from_thinker
     for rationale in ("", "I think this work is worth doing now.",
                       "moves a piece of your work forward"):
         init = SimpleNamespace(description="Do a thing", rationale=rationale,
@@ -94,7 +94,7 @@ def test_ungrounded_thought_does_not_ship():
 
 
 def test_grounded_thought_ships_with_evidence_based_why():
-    from colony_sidecar.proposals.engine import build_from_thinker
+    from apsimo.proposals.engine import build_from_thinker
     init = SimpleNamespace(
         description="Draft migration plan",
         rationale="The auth service still uses the deprecated v1 token format, "
@@ -108,13 +108,13 @@ def test_grounded_thought_ships_with_evidence_based_why():
 
 
 def test_research_without_goal_or_finding_does_not_ship():
-    from colony_sidecar.proposals.engine import build_from_research
+    from apsimo.proposals.engine import build_from_research
     assert build_from_research("", "some finding", []) is None
     assert build_from_research("a goal", "", []) is None
 
 
 def test_research_with_evidence_ships_grounded():
-    from colony_sidecar.proposals.engine import build_from_research
+    from apsimo.proposals.engine import build_from_research
     prop = build_from_research("best vector DB for us", "Qdrant fits.",
                                [{"title": "bench", "url": "http://x"}])
     assert prop is not None
@@ -126,8 +126,8 @@ def test_research_with_evidence_ships_grounded():
 # ---------------------------------------------------------------------------
 
 def _make_loop():
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
     cfg = AutonomyConfig()
     cfg.proactive_delivery_enabled = True
     cfg.delivery_shadow_mode = False
@@ -159,7 +159,7 @@ def test_non_owner_delivery_blocked_without_approval(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
     monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner")
-    from colony_sidecar.identity.resolver import reset_identity_resolver
+    from apsimo.identity.resolver import reset_identity_resolver
     reset_identity_resolver()
 
     loop = _make_loop()
@@ -180,7 +180,7 @@ def test_owner_directed_proposal_not_blocked(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
     monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner")
-    from colony_sidecar.identity.resolver import reset_identity_resolver
+    from apsimo.identity.resolver import reset_identity_resolver
     reset_identity_resolver()
 
     loop = _make_loop()
@@ -201,9 +201,9 @@ def test_non_owner_delivery_allowed_with_standing_approval(monkeypatch, tmp_path
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
     monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner")
-    from colony_sidecar.identity.resolver import reset_identity_resolver
+    from apsimo.identity.resolver import reset_identity_resolver
     reset_identity_resolver()
-    from colony_sidecar.initiatives import standing_approvals
+    from apsimo.initiatives import standing_approvals
     standing_approvals.grant("outbound_third_party_delivery")
 
     loop = _make_loop()

@@ -5,7 +5,7 @@ import importlib
 
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.turns import TurnIdempotencyLedger
 from test_hermes_turn_outbox import _Client, _Context, _load_plugin
 
 

@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from colony_sidecar.migrations import (
+from apsimo.migrations import (
     applied_versions_sync,
     run_migrations_sync,
     _discover,

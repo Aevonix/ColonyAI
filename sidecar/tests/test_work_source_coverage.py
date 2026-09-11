@@ -8,10 +8,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.executions import ExecutionRegistry, request_work_context
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions, host
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.executions import ExecutionRegistry, request_work_context
 
 
 def records(source, count=1):
@@ -77,7 +77,7 @@ def test_join_identities_survive_projection_without_claim_tokens_or_task_text():
 
 @pytest.mark.asyncio
 async def test_reader_failure_isolated_and_unattached_queue_stays_unknown(tmp_path, monkeypatch):
-    from colony_sidecar.turns import hermes_work, hermes_kanban, local_work, reported_workers
+    from apsimo.turns import hermes_work, hermes_kanban, local_work, reported_workers
     monkeypatch.setattr(local_work, 'local_work_view', lambda **_: records('draft', 8))
     monkeypatch.setattr(hermes_work, 'cron_view', lambda **_: records('cron'))
     def broken(**_):
@@ -129,7 +129,7 @@ async def test_reader_failure_isolated_and_unattached_queue_stays_unknown(tmp_pa
 
 @pytest.mark.asyncio
 async def test_slow_queue_does_not_hold_other_source_observations(monkeypatch):
-    from colony_sidecar.turns import hermes_work, hermes_kanban, local_work, reported_workers
+    from apsimo.turns import hermes_work, hermes_kanban, local_work, reported_workers
     for module, function in ((hermes_work, 'cron_view'), (hermes_kanban, 'kanban_view'),
                              (local_work, 'local_work_view'), (reported_workers, 'reported_worker_view')):
         monkeypatch.setattr(module, function, lambda **_: records('independent'))

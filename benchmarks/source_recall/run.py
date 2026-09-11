@@ -22,23 +22,23 @@ import time
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parents[1] / 'sidecar'))
 from assessment import assess
-from colony_sidecar.router.router import LLMRouter
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.source_vectors import SourceVectors, merge_source_hits
-from colony_sidecar.turns.media import SourceMedia
-from colony_sidecar.vector.config import EmbeddingConfig
-from colony_sidecar.vector.embedder import EmbeddingPipeline
-from colony_sidecar.vector.openai_provider import OpenAIAPIEmbeddingProvider
-from colony_sidecar.vector.reranker import OpenAIAPIRerankerProvider
-from colony_sidecar.vector.indexes import IndexCatalog
-from colony_sidecar.vector.store import VectorStore
-from colony_sidecar.vector.collections import Collection
-from colony_sidecar.vector.query import VectorItem
-from colony_sidecar.intelligence.graph.client import ColonyGraph
-from colony_sidecar.intelligence.graph.selection import RecallSelector
-from colony_sidecar.intelligence.graph.recall import calibration_fingerprint
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.beliefs.source_time import interpret_time_query
+from apsimo.router.router import LLMRouter
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.source_vectors import SourceVectors, merge_source_hits
+from apsimo.turns.media import SourceMedia
+from apsimo.vector.config import EmbeddingConfig
+from apsimo.vector.embedder import EmbeddingPipeline
+from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
+from apsimo.vector.reranker import OpenAIAPIRerankerProvider
+from apsimo.vector.indexes import IndexCatalog
+from apsimo.vector.store import VectorStore
+from apsimo.vector.collections import Collection
+from apsimo.vector.query import VectorItem
+from apsimo.intelligence.graph.client import ColonyGraph
+from apsimo.intelligence.graph.selection import RecallSelector
+from apsimo.intelligence.graph.recall import calibration_fingerprint
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.beliefs.source_time import interpret_time_query
 
 class Result:
     def __init__(self, rows): self.rows = iter(rows)

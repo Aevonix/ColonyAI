@@ -6,10 +6,10 @@ import json
 import aiohttp
 import pytest
 
-from colony_sidecar.briefings.delivery import WhatsAppBriefingGateway
-from colony_sidecar.briefings.models import Briefing
-from colony_sidecar.delivery.bridge import ProactiveDeliveryBridge, _GatewayOutcomeStore
-from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
+from apsimo.briefings.delivery import WhatsAppBriefingGateway
+from apsimo.briefings.models import Briefing
+from apsimo.delivery.bridge import ProactiveDeliveryBridge, _GatewayOutcomeStore
+from apsimo.delivery.rate_limiter import DeliveryRateLimiter
 
 
 class _Response:

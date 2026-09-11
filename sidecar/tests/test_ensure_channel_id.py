@@ -8,8 +8,8 @@ cross-context leak detection always work.
 import pytest
 from types import SimpleNamespace
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.schemas.host import HostIdentity, HostTurnContext
+from apsimo.api.routers import host as host_mod
+from apsimo.api.schemas.host import HostIdentity, HostTurnContext
 
 
 @pytest.fixture(autouse=True)

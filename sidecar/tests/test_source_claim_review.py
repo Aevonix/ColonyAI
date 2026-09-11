@@ -8,12 +8,12 @@ from types import SimpleNamespace
 from jsonschema import Draft202012Validator, ValidationError
 import pytest
 
-from colony_sidecar.beliefs.source_claims import (
+from apsimo.beliefs.source_claims import (
     EXTRACTION_VERSION, extract_claims, projection_timeout_seconds,
     review_response_schema, validated_review, SourceClaimOutputError,
 )
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns import TurnIdempotencyLedger
 from test_function_routing import endpoint, router, config
 from test_source_claim_projection import claim, Model, prepared as prepared_context
 
@@ -135,7 +135,7 @@ async def test_late_review_cannot_commit_after_source_erasure_or_lease_reclaim(t
 
 @pytest.mark.asyncio
 async def test_total_bound_cancels_review_and_keeps_job_pending(tmp_path, monkeypatch):
-    from colony_sidecar.beliefs import source_projection as module
+    from apsimo.beliefs import source_projection as module
     ledger, projection = prepared(tmp_path)
     stopped = asyncio.Event()
     async def blocked():

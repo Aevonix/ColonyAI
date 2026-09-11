@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from colony_sidecar.services.initiative_executor import (
+from apsimo.services.initiative_executor import (
     InitiativeExecutorService,
     create_from_env,
     _build_initiative_prompt,
@@ -380,7 +380,7 @@ async def test_execute_one_retries_on_timeout(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_one_refuses_boundary_violation():
     """A boundary the owner set must stop the executor before it acts."""
-    from colony_sidecar.directives import DirectiveManager, DirectiveStore
+    from apsimo.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))
     dm.capture_from_message("From now on, Don't touch the colony-web repo")
     store = FakeStore([FakeInitiative()])
@@ -432,7 +432,7 @@ async def test_execute_one_fails_closed_when_boundary_check_raises(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execute_one_allows_when_no_boundary_matches():
-    from colony_sidecar.directives import DirectiveManager, DirectiveStore
+    from apsimo.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))
     dm.capture_from_message("From now on, Don't touch the colony-web repo")
     store = FakeStore([FakeInitiative()])

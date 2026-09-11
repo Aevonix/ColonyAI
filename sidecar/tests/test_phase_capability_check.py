@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 
-from colony_sidecar.autonomy.loop import AutonomyLoop, LoopStats
+from apsimo.autonomy.loop import AutonomyLoop, LoopStats
 
 
 class _Reg:

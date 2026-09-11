@@ -12,13 +12,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.self_model.params import (
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.self_model.params import (
     AdaptiveParamStore,
     register_core_params,
 )
-from colony_sidecar.server import (
+from apsimo.server import (
     _initialize_controlled_learning,
     _wire_controlled_learning_pipeline,
 )
@@ -147,9 +147,9 @@ def test_startup_uses_one_feedback_store_shared_authority_and_pipeline(
     assert host._experiments is wiring["experiments"]
     assert wiring["benchmark"]._deps["corrections"] is wiring["corrections"]
     assert wiring["experiments"]._benchmark is wiring["benchmark"]
-    assert wiring["experiments"]._approval_authority is \
+    assert wiring["experiments"]._approval_authority is\
         wiring["approval_authority"]
-    assert wiring["approval_authority"].path == \
+    assert wiring["approval_authority"].path ==\
         state_dir / "approval_authority.db"
     assert wiring["experiments"]._pregrants == {
         "recall.min_relevance": (0.0, 0.25)}
@@ -273,7 +273,7 @@ async def test_scoped_shadow_routes_derive_principal_and_replay_after_restart(
             json=_proposal(),
         )
         assert denied.status_code == 403
-        assert denied.json()["detail"]["required_scope"] == \
+        assert denied.json()["detail"]["required_scope"] ==\
             "cognition:experiment-manage"
 
         sampled = await client.post(
@@ -362,7 +362,7 @@ async def test_scoped_shadow_routes_derive_principal_and_replay_after_restart(
     assert sample_retry.json()["accepted"] == 1
     assert len(restarted["benchmark"].store.evidence_samples_in(
         0, float("inf"))) == 1
-    assert exposure_retry.json()["exposure"]["exposure_id"] == \
+    assert exposure_retry.json()["exposure"]["exposure_id"] ==\
         exposure["exposure_id"]
     assert outcome_retry.json()["outcome"]["outcome_id"] == first_outcome_id
     assert evidence.status_code == 200

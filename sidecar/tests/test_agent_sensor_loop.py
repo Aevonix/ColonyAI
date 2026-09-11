@@ -15,18 +15,18 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from colony_sidecar.initiatives.action_registry import (
+from apsimo.initiatives.action_registry import (
     OBSERVATION_SYNC_ACTIONS,
     RiskTier,
     get_action,
 )
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.intelligence.components.initiative_engine import (
     InitiativeConfig,
     InitiativeEngine,
     InitiativeType,
 )
-from colony_sidecar.observations.store import (
+from apsimo.observations.store import (
     OBSERVATION_DOMAINS,
     OBSERVATION_SYNC_INTERVALS,
     ObservationStore,
@@ -103,7 +103,7 @@ class TestObservationAPI:
     def client(self, obs_store):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        from colony_sidecar.api.routers import observations as obs_router
+        from apsimo.api.routers import observations as obs_router
 
         app = FastAPI()
         app.include_router(obs_router.router)
@@ -246,7 +246,7 @@ class TestObservationRebuild:
 
     @pytest.mark.asyncio
     async def test_refresh_endpoint_auto_closes(self, engine, obs_store, tmp_path):
-        from colony_sidecar.api.routers import host as host_mod
+        from apsimo.api.routers import host as host_mod
 
         init_store = InitiativeStore(state_dir=tmp_path / "init")
         created = init_store.create(
@@ -283,9 +283,9 @@ class TestObservationRebuild:
 
 class TestObservationSyncPhase:
     def _loop(self, obs_store):
-        from colony_sidecar.api.routers import observations as obs_router
-        from colony_sidecar.autonomy.config import AutonomyConfig
-        from colony_sidecar.autonomy.loop import AutonomyLoop
+        from apsimo.api.routers import observations as obs_router
+        from apsimo.autonomy.config import AutonomyConfig
+        from apsimo.autonomy.loop import AutonomyLoop
 
         obs_router.set_observation_store(obs_store)
         registry = MagicMock()
@@ -295,7 +295,7 @@ class TestObservationSyncPhase:
 
     @pytest.mark.asyncio
     async def test_never_observed_domains_get_sync_jobs(self, obs_store):
-        from colony_sidecar.api.routers import observations as obs_router
+        from apsimo.api.routers import observations as obs_router
 
         loop, registry = self._loop(obs_store)
         try:
@@ -310,7 +310,7 @@ class TestObservationSyncPhase:
 
     @pytest.mark.asyncio
     async def test_fresh_domain_not_synced_and_no_respam(self, obs_store):
-        from colony_sidecar.api.routers import observations as obs_router
+        from apsimo.api.routers import observations as obs_router
 
         for domain in OBSERVATION_DOMAINS:
             obs_store.record(domain, "e1", {"status": "healthy"})
@@ -335,7 +335,7 @@ class TestObservationSyncPhase:
 
     @pytest.mark.asyncio
     async def test_sync_domains_env_filter(self, obs_store, monkeypatch):
-        from colony_sidecar.api.routers import observations as obs_router
+        from apsimo.api.routers import observations as obs_router
 
         monkeypatch.setenv("COLONY_SYNC_DOMAINS", "system")
         loop, registry = self._loop(obs_store)

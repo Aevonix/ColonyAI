@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from colony_sidecar.api.routers import task_queue as queue_router
-from colony_sidecar.task_queue.models import Job, WorkerCapabilities
-from colony_sidecar.task_queue.queue_manager import QueueManager, TaskQueueManager
-from colony_sidecar.task_queue.scheduler import Scheduler
+from apsimo.api.routers import task_queue as queue_router
+from apsimo.task_queue.models import Job, WorkerCapabilities
+from apsimo.task_queue.queue_manager import QueueManager, TaskQueueManager
+from apsimo.task_queue.scheduler import Scheduler
 
 
 class _Clock:

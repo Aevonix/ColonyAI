@@ -6,7 +6,7 @@ The sandbox never goes live from a preset.
 
 import pytest
 
-from colony_sidecar.util import autonomy_preset as ap
+from apsimo.util import autonomy_preset as ap
 
 _MANAGED = [
     "COLONY_AUTONOMY_PRESET",
@@ -89,55 +89,55 @@ class TestSubsystemReadersHonorPreset:
     the preset (this is what makes the knob real, not decorative)."""
 
     def test_projects(self, monkeypatch):
-        from colony_sidecar.projects.models import projects_mode
+        from apsimo.projects.models import projects_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "autonomous")
         assert projects_mode() == "live"
         monkeypatch.setenv("COLONY_PROJECTS_MODE", "shadow")
         assert projects_mode() == "shadow"
 
     def test_beliefs(self, monkeypatch):
-        from colony_sidecar.beliefs.models import beliefs_mode
+        from apsimo.beliefs.models import beliefs_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "passive")
         assert beliefs_mode() == "off"
 
     def test_workers(self, monkeypatch):
-        from colony_sidecar.task_queue.governor import workers_mode
+        from apsimo.task_queue.governor import workers_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "autonomous")
         assert workers_mode() == "live"
 
     def test_connectors(self, monkeypatch):
-        from colony_sidecar.connectors.manager import connectors_mode
+        from apsimo.connectors.manager import connectors_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "calibration")
         assert connectors_mode() == "shadow"
 
     def test_directed(self, monkeypatch):
-        from colony_sidecar.directed.service import directed_mode
+        from apsimo.directed.service import directed_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "calibration")
         assert directed_mode() == "dry_run"
 
     def test_sandbox(self, monkeypatch):
-        from colony_sidecar.sandbox.manager import sandbox_mode
+        from apsimo.sandbox.manager import sandbox_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "autonomous")
         assert sandbox_mode() == "dry_run"
 
     def test_mining(self, monkeypatch):
-        from colony_sidecar.mining.models import mining_mode
+        from apsimo.mining.models import mining_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "passive")
         assert mining_mode() == "off"
 
     def test_skills_distill(self, monkeypatch):
-        from colony_sidecar.skills_memory.store import skills_distill_mode
+        from apsimo.skills_memory.store import skills_distill_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "autonomous")
         assert skills_distill_mode() == "live"
 
     def test_world_populate(self, monkeypatch):
-        from colony_sidecar.world_model.populator import populate_mode
+        from apsimo.world_model.populator import populate_mode
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "passive")
         assert populate_mode() == "off"
 
     def test_introspection_and_cognition(self, monkeypatch):
-        from colony_sidecar.cognition.introspection import introspect_enabled
-        from colony_sidecar.cognition.trigger import _cognition_enabled
+        from apsimo.cognition.introspection import introspect_enabled
+        from apsimo.cognition.trigger import _cognition_enabled
         monkeypatch.setenv("COLONY_AUTONOMY_PRESET", "calibration")
         assert introspect_enabled() is True
         assert _cognition_enabled() is True
@@ -152,10 +152,10 @@ class TestExpectationsWorkspacePreset:
     """
 
     def _readers(self):
-        from colony_sidecar.self_model.expectations import (
+        from apsimo.self_model.expectations import (
             expectations_enabled, expectations_mode,
         )
-        from colony_sidecar.self_model.workspace import (
+        from apsimo.self_model.workspace import (
             workspace_enabled, workspace_mode,
         )
         return (expectations_enabled, expectations_mode,

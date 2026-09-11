@@ -11,10 +11,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from colony_sidecar.delivery.classification import is_reachout, reachout_types
-from colony_sidecar.delivery.bridge import GatewayPushResult, ProactiveDeliveryBridge
-from colony_sidecar.delivery.channels import Channel
-from colony_sidecar.delivery.rate_limiter import DeliveryRateLimiter
+from apsimo.delivery.classification import is_reachout, reachout_types
+from apsimo.delivery.bridge import GatewayPushResult, ProactiveDeliveryBridge
+from apsimo.delivery.channels import Channel
+from apsimo.delivery.rate_limiter import DeliveryRateLimiter
 
 
 class StubRegistry:
@@ -133,9 +133,9 @@ def test_governed_preview_resolves_new_contact_from_real_async_store(
 ):
     """A V3-authorized contact does not need a channels.json side write."""
     import asyncio
-    from colony_sidecar.contacts.config import ContactsConfig
-    from colony_sidecar.contacts.store import SQLiteContactStore
-    from colony_sidecar.delivery.channels import ChannelRegistry
+    from apsimo.contacts.config import ContactsConfig
+    from apsimo.contacts.store import SQLiteContactStore
+    from apsimo.delivery.channels import ChannelRegistry
 
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner")
     monkeypatch.setenv("WHATSAPP_HOME_CHANNEL", "owner-group@g.us")
@@ -235,7 +235,7 @@ def test_governed_non_owner_missing_verified_dm_never_falls_back_home(
 # ---------------------------------------------------------------------------
 
 def test_executor_defaults_exclude_reachout():
-    from colony_sidecar.services.initiative_executor import (
+    from apsimo.services.initiative_executor import (
         _DEFAULT_TYPES, _EXECUTABLE_TYPES,
     )
     for t in ("follow_up", "relationship", "introduction",
@@ -256,8 +256,8 @@ def test_gateway_transport_uses_push_to_gateway(monkeypatch):
     """COLONY_DELIVERY_TRANSPORT=gateway routes the sanitised text through
     push_to_gateway (flat contract) instead of the structured webhook."""
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
 
     monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
@@ -308,8 +308,8 @@ def test_gateway_transport_uses_push_to_gateway(monkeypatch):
 
 def test_default_transport_still_uses_webhook(monkeypatch):
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
 
     monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
     cfg = AutonomyConfig()
@@ -348,9 +348,9 @@ def test_default_transport_still_uses_webhook(monkeypatch):
 
 def test_gateway_default_keeps_legacy_non_owner_standing_gate(monkeypatch):
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.initiatives import standing_approvals
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.initiatives import standing_approvals
 
     monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
     monkeypatch.setattr(standing_approvals, "is_approved", lambda _name: False)
@@ -397,9 +397,9 @@ def test_governed_whatsapp_route_never_exempts_rcs_or_sms_non_owner(
     monkeypatch,
 ):
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.initiatives import standing_approvals
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.initiatives import standing_approvals
 
     monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
     monkeypatch.setattr(standing_approvals, "is_approved", lambda _name: False)
@@ -461,10 +461,10 @@ def test_governed_gateway_admission_bypasses_only_legacy_boolean_and_is_not_deli
     monkeypatch,
 ):
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.initiatives import standing_approvals
-    from colony_sidecar.api.routers import host
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.initiatives import standing_approvals
+    from apsimo.api.routers import host
 
     monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
     monkeypatch.delenv("COLONY_GUARD_MODE", raising=False)
@@ -572,9 +572,9 @@ def test_governed_gateway_admission_bypasses_only_legacy_boolean_and_is_not_deli
 
 def test_governed_reconciler_runs_in_reactive_mode_until_stopped(monkeypatch):
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
-    from colony_sidecar.identity import resolver as identity_resolver
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig, AutonomyMode
+    from apsimo.identity import resolver as identity_resolver
 
     class Resolver:
         async def owner_identities(self):
@@ -618,10 +618,10 @@ def test_reactive_restart_rebuilds_only_durable_admitted_initiative(monkeypatch)
     import asyncio
     import hashlib
     from datetime import datetime, timezone
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig, AutonomyMode
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.identity import resolver as identity_resolver
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig, AutonomyMode
+    from apsimo.api.routers import host
+    from apsimo.identity import resolver as identity_resolver
 
     monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
     monkeypatch.delenv("COLONY_GUARD_MODE", raising=False)
@@ -741,10 +741,10 @@ def test_reactive_restart_rebuilds_only_durable_admitted_initiative(monkeypatch)
 
 def test_governed_gateway_terminal_failure_is_accounted_once(monkeypatch):
     import asyncio
-    from colony_sidecar.autonomy.loop import AutonomyLoop
-    from colony_sidecar.autonomy.config import AutonomyConfig
-    from colony_sidecar.initiatives import standing_approvals
-    from colony_sidecar.api.routers import host
+    from apsimo.autonomy.loop import AutonomyLoop
+    from apsimo.autonomy.config import AutonomyConfig
+    from apsimo.initiatives import standing_approvals
+    from apsimo.api.routers import host
 
     monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
     monkeypatch.delenv("COLONY_GUARD_MODE", raising=False)

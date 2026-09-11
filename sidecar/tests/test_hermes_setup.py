@@ -9,7 +9,7 @@ import subprocess
 import pytest
 import yaml
 
-from colony_sidecar import setup
+from apsimo import setup
 
 
 URL = "http://127.0.0.1:7777"
@@ -281,7 +281,7 @@ def test_yaml_alias_does_not_mutate_unrelated_configuration(tmp_path):
 
 
 def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch):
-    from colony_sidecar import setup_hermes
+    from apsimo import setup_hermes
     seen = []
     def fail(root_dir, args):
         seen.append((root_dir, args.hermes_home))
@@ -293,7 +293,7 @@ def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch
 
 
 def test_cli_threads_home_and_preserves_failure_exit(monkeypatch, tmp_path):
-    from colony_sidecar import cli
+    from apsimo import cli
     selected = str(tmp_path / "chosen")
     def fail_init(root_dir, args):
         assert args.hermes_home == selected

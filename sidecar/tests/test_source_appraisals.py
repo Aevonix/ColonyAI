@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.self_model import appraisals as module
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.self_model import appraisals as module
+from apsimo.turns import TurnIdempotencyLedger
 
 
 @pytest.fixture
@@ -73,8 +73,8 @@ def view(store, **kwargs):
 
 def admitted_preference(store, name, *, value='concise explanations', prior=None, operation='assert'):
     """Controlled canonical admission, through the real validator and commit."""
-    from colony_sidecar.beliefs.source_claims import validated_claims
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_claims import validated_claims
+    from apsimo.beliefs.source_projection import SourceClaimProjection
     with store.ledger._connect() as conn:
         row = dict(conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (name,)).fetchone())
     message = json.loads(row['messages_json'])[0]
@@ -153,7 +153,7 @@ async def test_drawing_query_recalls_two_source_hypothesis_without_exposing_priv
 @pytest.mark.parametrize('contact', ['person', 'owner'])
 @pytest.mark.asyncio
 async def test_context_renders_identical_hints_once_preserving_each_source_and_record(state, monkeypatch, contact):
-    from colony_sidecar.api.routers import social_state
+    from apsimo.api.routers import social_state
     for name, hint in [('first', 'try_different_approach'),
                        ('second', 'try_different_approach'),
                        ('third', 'verify_before_relying')]:
@@ -307,9 +307,9 @@ async def test_durable_view_retains_pending_contrary_evidence_until_interval(sta
 @pytest.mark.asyncio
 async def test_canonical_preference_changes_cached_profiler_and_erasure_removes_it(state, tmp_path, monkeypatch):
     from unittest.mock import AsyncMock
-    from colony_sidecar import identity
-    from colony_sidecar.tom.engagement import EngagementStore
-    from colony_sidecar.intelligence.relationships.profiler import RelationshipProfiler
+    from apsimo import identity
+    from apsimo.tom.engagement import EngagementStore
+    from apsimo.intelligence.relationships.profiler import RelationshipProfiler
     monkeypatch.setattr(identity, 'get_owner_contact_id', lambda: 'owner')
     engagement = EngagementStore(tmp_path/'engagement.db', source_ledger=state.ledger)
     contacts = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(
@@ -333,7 +333,7 @@ async def test_canonical_preference_changes_cached_profiler_and_erasure_removes_
 @pytest.mark.asyncio
 async def test_retired_numeric_engagement_does_not_call_another_model():
     from unittest.mock import AsyncMock
-    from colony_sidecar.tom.extractor import TomExtractor
+    from apsimo.tom.extractor import TomExtractor
     router = AsyncMock()
     assert await TomExtractor(router).extract_engagement('I prefer concise explanations.', 'person') is None
     assert router.mock_calls == []

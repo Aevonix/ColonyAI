@@ -8,7 +8,7 @@ never upgrades past what stage + flag earn.
 
 import pytest
 
-from colony_sidecar.self_model.supervised import (
+from apsimo.self_model.supervised import (
     REVERSIBLE_CONTRACT, effective_mode, reversible, supervised_domains,
     supervised_enabled,
 )
@@ -108,7 +108,7 @@ def test_stage_ladder(monkeypatch):
 def test_trust_snapshot_shows_rung(monkeypatch):
     """TrustEngine.snapshot() (surfaced via GET /v1/host/self) carries the
     rung: supervised_enabled + effective_rung per domain."""
-    from colony_sidecar.self_model import (
+    from apsimo.self_model import (
         ActionJournal, CompetenceStore, TrustEngine,
     )
     trust = TrustEngine(CompetenceStore(), journal=ActionJournal())

@@ -11,8 +11,8 @@ import httpx
 import pytest
 import yaml
 
-from colony_sidecar import setup, setup_hermes
-from colony_sidecar.util.instance import load_environment
+from apsimo import setup, setup_hermes
+from apsimo.util.instance import load_environment
 
 
 @pytest.mark.parametrize('version, supported', [
@@ -235,7 +235,7 @@ def test_invalid_time_preferences_do_not_partially_attach(args, field, value):
 
 
 def test_native_goals_opt_in_and_existing_instance_reentry_preserve_state(args, monkeypatch, capsys):
-    from colony_sidecar import setup_local_work
+    from apsimo import setup_local_work
     monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
     args.native_goals = True
     assert setup.run_init(None, args) == 0
@@ -259,7 +259,7 @@ def test_native_goals_opt_in_and_existing_instance_reentry_preserve_state(args, 
 
 @pytest.mark.parametrize('conflict', ['yaml', 'home_env', 'process_env'])
 def test_native_goals_dispatch_conflict_precedes_attachment(args, monkeypatch, conflict):
-    from colony_sidecar import setup_local_work
+    from apsimo import setup_local_work
     monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
     args.native_goals = True
     home = Path(args.hermes_home); home.mkdir(mode=0o700)
@@ -298,7 +298,7 @@ def test_native_goals_native_path_overrides_match_observation_before_writes(args
 
 
 def test_native_goals_single_database_override_cannot_claim_multiple_boards(tmp_path):
-    from colony_sidecar.setup_native_goals import prepare
+    from apsimo.setup_native_goals import prepare
     home = tmp_path/'home'
     with pytest.raises(ValueError, match='HERMES_KANBAN_DB conflicts'):
         prepare({}, home, native_env={'HERMES_KANBAN_DB':str(home/'kanban.db')},
@@ -310,7 +310,7 @@ def test_native_goals_single_database_override_cannot_claim_multiple_boards(tmp_
 
 
 def test_native_goals_preserve_explicit_tools_judge_and_board_selection(args, monkeypatch):
-    from colony_sidecar.setup_native_goals import enable
+    from apsimo.setup_native_goals import enable
     assert setup.run_init(None, args) == 0
     home = Path(args.hermes_home); state = home/'colony'
     config = yaml.safe_load((home/'config.yaml').read_text())
@@ -332,8 +332,8 @@ def test_native_goals_preserve_explicit_tools_judge_and_board_selection(args, mo
 
 
 def test_native_goals_select_current_and_exact_draft_board_without_creating_boards(tmp_path):
-    from colony_sidecar.setup_native_goals import prepare
-    from colony_sidecar.setup_local_work import board_name
+    from apsimo.setup_native_goals import prepare
+    from apsimo.setup_local_work import board_name
     home = tmp_path/'root/profiles/orion'
     current = tmp_path/'root/kanban/current'; current.parent.mkdir(parents=True)
     current.write_text('OPERATIONS\n')
@@ -350,7 +350,7 @@ def test_native_goals_select_current_and_exact_draft_board_without_creating_boar
 
 
 def test_native_goals_environment_write_failure_restores_config(args, monkeypatch):
-    from colony_sidecar.setup_native_goals import enable
+    from apsimo.setup_native_goals import enable
     assert setup.run_init(None, args) == 0
     home = Path(args.hermes_home); state = home/'colony'
     before = (home/'config.yaml').read_bytes(), (state/'.env').read_bytes()
@@ -366,7 +366,7 @@ def test_native_goals_environment_write_failure_restores_config(args, monkeypatc
 
 
 def test_native_goals_detach_yaml_aliases_before_changing_selected_branches(tmp_path):
-    from colony_sidecar.setup_native_goals import prepare
+    from apsimo.setup_native_goals import prepare
     config = yaml.safe_load('''
 model: {provider: openai, default: selected-main}
 toolsets: &tools [file]
@@ -458,7 +458,7 @@ def test_explicit_refresh_aligns_old_spill_allowance_without_changing_adapter(ar
 
 
 def test_worker_profile_creation_and_role_refresh_align_memory_spill(tmp_path, monkeypatch):
-    from colony_sidecar import setup_local_work as local
+    from apsimo import setup_local_work as local
     state=tmp_path/'colony';state.mkdir();home=tmp_path/'hermes'
     worker=home/'profiles/colony-drafts';worker.mkdir(parents=True)
     config=local.worker_configuration({}, {}, {'instance_dir':str(state)}, {})
@@ -477,7 +477,7 @@ def test_worker_profile_creation_and_role_refresh_align_memory_spill(tmp_path, m
 
 
 def test_review_setup_is_opt_in_and_upgrade_preserves_selection(args, monkeypatch):
-    from colony_sidecar import setup_native_reviews, setup_local_work
+    from apsimo import setup_native_reviews, setup_local_work
     calls = []
     monkeypatch.setattr(setup_native_reviews, 'configure', lambda state, **kw: calls.append((state, kw)))
     monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
@@ -553,7 +553,7 @@ def test_refresh_rejects_changed_loading_topology_without_writing(args, monkeypa
 
 @pytest.mark.parametrize('address', ['127.0.0.1', '203.0.113.10'])
 def test_selected_hostname_is_bound_for_runtime_routing(args, monkeypatch, address):
-    from colony_sidecar.router.router import LLMRouter
+    from apsimo.router.router import LLMRouter
     args.model_url = 'http://model.lan:8123/v1'
     monkeypatch.setattr(socket, 'getaddrinfo', lambda *a, **k: [
         (socket.AF_INET, socket.SOCK_STREAM, 6, '', (address, 8123))])
@@ -648,7 +648,7 @@ def test_instance_never_uses_another_homes_environment(tmp_path, monkeypatch):
 @pytest.mark.parametrize('command', [['start', '--detach'], ['stop']])
 @pytest.mark.parametrize('skip_dotenv', ['', '1'])
 def test_missing_explicit_instance_never_enters_legacy_process_control(tmp_path, monkeypatch, command, skip_dotenv):
-    from colony_sidecar import cli
+    from apsimo import cli
     monkeypatch.setattr(os, 'environ', dict(os.environ))
     monkeypatch.setenv('COLONY_SKIP_DOTENV', skip_dotenv)
     monkeypatch.setattr(cli.sys, 'argv', ['colony', '--instance', str(tmp_path/'typo'), *command])
@@ -660,7 +660,7 @@ def test_missing_explicit_instance_never_enters_legacy_process_control(tmp_path,
 
 
 def test_local_stop_refuses_reused_pid_and_other_instance_port(tmp_path, monkeypatch, capsys):
-    from colony_sidecar import cli
+    from apsimo import cli
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
     monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
     (tmp_path/'sidecar.pid').write_text('1234')
@@ -678,7 +678,7 @@ def test_local_stop_refuses_reused_pid_and_other_instance_port(tmp_path, monkeyp
 
 @pytest.mark.parametrize('interrupted', [False, True])
 def test_local_start_records_process_after_python_launcher_exec(tmp_path, monkeypatch, interrupted):
-    from colony_sidecar import cli
+    from apsimo import cli
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
     monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
     monkeypatch.setattr(setup, '_check_port', lambda port: False)
@@ -714,7 +714,7 @@ def test_local_start_records_process_after_python_launcher_exec(tmp_path, monkey
 
 
 def test_local_status_only_uses_scoped_memory_status(tmp_path, monkeypatch, capsys):
-    from colony_sidecar import cli
+    from apsimo import cli
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
     monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
     monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'existing-owner')

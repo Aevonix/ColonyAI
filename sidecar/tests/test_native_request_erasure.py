@@ -9,7 +9,7 @@ import pytest
 
 from test_hermes_turn_outbox import _load_plugin
 from test_turn_source_evidence import source_app
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.turns import TurnIdempotencyLedger
 
 
 def packet(contact, watermark, text):
@@ -489,7 +489,7 @@ def test_observed_retelling_keeps_new_input_but_not_its_stale_packet_or_history(
 
 @pytest.mark.asyncio
 async def test_context_stamps_before_a_concurrent_forget(source_app, tmp_path, monkeypatch):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     ledger.record_source('stamp-source', contact_id='contact-a', session_id='original',
                          messages=[{'role': 'user', 'content': 'Neutral source'}], derive_claims=False)

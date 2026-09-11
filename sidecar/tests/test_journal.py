@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from colony_sidecar.events.journal import (
+from apsimo.events.journal import (
     acknowledge_event_record,
     append_event,
     append_event_record,
@@ -124,7 +124,7 @@ class TestAppendEvent:
     def test_steady_state_append_uses_cursor_not_directory_scan(
         self, journal_dir, monkeypatch
     ):
-        from colony_sidecar.events import journal
+        from apsimo.events import journal
 
         assert append_event("test.event", {"i": 1}) == 1
 

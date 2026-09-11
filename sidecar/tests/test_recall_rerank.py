@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
+from apsimo.intelligence.graph import client as client_mod
 from test_recall_ranking import RecallFixture, _Hit, _node
 
 

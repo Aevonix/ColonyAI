@@ -13,8 +13,8 @@ def _iso(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_timeline_endpoint_filters_and_digest(tmp_path):
-    from colony_sidecar.events.journal import append_event
-    from colony_sidecar.api.routers import host
+    from apsimo.events.journal import append_event
+    from apsimo.api.routers import host
 
     append_event("conversation.turn", {"contact_id": "cid-a", "summary": "talked about the roadmap"})
     append_event("outreach.sent", {"contact_id": "cid-b", "reason": "checked in"})

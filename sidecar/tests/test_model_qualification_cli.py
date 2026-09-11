@@ -5,10 +5,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.qualification.cli import run
-from colony_sidecar.qualification.cases import STANDARD
-from colony_sidecar.qualification.records import read
-from colony_sidecar.qualification.runner import evaluate, inspect_binding, router_for
+from apsimo.qualification.cli import run
+from apsimo.qualification.cases import STANDARD
+from apsimo.qualification.records import read
+from apsimo.qualification.runner import evaluate, inspect_binding, router_for
 from test_function_routing import endpoint, config
 
 
@@ -37,7 +37,7 @@ def test_ephemeral_case_binding_keeps_support_role_and_original_config():
 
 @pytest.mark.asyncio
 async def test_task_routed_memory_uses_candidate_and_preserves_judging(tmp_path):
-    from colony_sidecar.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS
+    from apsimo.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS
     from test_source_claim_projection import claim
 
     def extract(payload):
@@ -99,7 +99,7 @@ def test_cli_evaluate_and_resume_with_controlled_existing_http_router(tmp_path,c
 
 
 def test_main_installs_model_commands_without_loading_runtime(monkeypatch,capsys):
-    from colony_sidecar import cli
+    from apsimo import cli
     monkeypatch.setattr('sys.argv',['colony','models','--help'])
     with pytest.raises(SystemExit) as stop: cli.main()
     assert stop.value.code == 0

@@ -24,7 +24,7 @@ def set_env(monkeypatch):
 
 @pytest.fixture
 def server():
-    from colony_sidecar.mcp.server import create_server
+    from apsimo.mcp.server import create_server
     return create_server()
 
 
@@ -101,42 +101,42 @@ class TestServerCreation:
 
 class TestContactIdResolution:
     def test_explicit_contact_id(self):
-        from colony_sidecar.mcp.server import _contact_id
+        from apsimo.mcp.server import _contact_id
         os.environ.pop("COLONY_MCP_CONTACT_ID", None)
         assert _contact_id("explicit") == "explicit"
 
     def test_env_contact_id(self):
-        from colony_sidecar.mcp.server import _contact_id
+        from apsimo.mcp.server import _contact_id
         os.environ["COLONY_MCP_CONTACT_ID"] = "envuser"
         assert _contact_id() == "envuser"
 
     def test_no_contact_id(self):
-        from colony_sidecar.mcp.server import _contact_id
+        from apsimo.mcp.server import _contact_id
         os.environ.pop("COLONY_MCP_CONTACT_ID", None)
         assert _contact_id() is None
 
     def test_explicit_overrides_env(self):
-        from colony_sidecar.mcp.server import _contact_id
+        from apsimo.mcp.server import _contact_id
         os.environ["COLONY_MCP_CONTACT_ID"] = "envuser"
         assert _contact_id("override") == "override"
 
 
 class TestRequireContact:
     def test_with_explicit(self):
-        from colony_sidecar.mcp.server import _require_contact
+        from apsimo.mcp.server import _require_contact
         cid, err = _require_contact("owner")
         assert cid == "owner"
         assert err == {}
 
     def test_with_env(self):
-        from colony_sidecar.mcp.server import _require_contact
+        from apsimo.mcp.server import _require_contact
         os.environ["COLONY_MCP_CONTACT_ID"] = "envuser"
         cid, err = _require_contact()
         assert cid == "envuser"
         assert err == {}
 
     def test_missing(self):
-        from colony_sidecar.mcp.server import _require_contact
+        from apsimo.mcp.server import _require_contact
         os.environ.pop("COLONY_MCP_CONTACT_ID", None)
         cid, err = _require_contact()
         assert cid == ""
@@ -149,12 +149,12 @@ class TestRequireContact:
 
 class TestSourceTracking:
     def test_source_from_env(self):
-        from colony_sidecar.mcp.server import _source
+        from apsimo.mcp.server import _source
         os.environ["COLONY_MCP_SOURCE"] = "claude-code"
         assert _source() == "claude-code"
 
     def test_source_none(self):
-        from colony_sidecar.mcp.server import _source
+        from apsimo.mcp.server import _source
         os.environ.pop("COLONY_MCP_SOURCE", None)
         assert _source() is None
 
@@ -166,7 +166,7 @@ class TestSourceTracking:
 class TestHTTPHelpers:
     @pytest.mark.asyncio
     async def test_get_success(self):
-        from colony_sidecar.mcp.server import _get
+        from apsimo.mcp.server import _get
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_response.json.return_value = {"status": "ok"}
@@ -183,7 +183,7 @@ class TestHTTPHelpers:
 
     @pytest.mark.asyncio
     async def test_get_connection_error(self):
-        from colony_sidecar.mcp.server import _get
+        from apsimo.mcp.server import _get
         import httpx
 
         with patch("httpx.AsyncClient") as MockClient:
@@ -198,7 +198,7 @@ class TestHTTPHelpers:
 
     @pytest.mark.asyncio
     async def test_post_injects_source(self):
-        from colony_sidecar.mcp.server import _post
+        from apsimo.mcp.server import _post
         os.environ["COLONY_MCP_SOURCE"] = "codex"
 
         mock_response = MagicMock()
@@ -226,7 +226,7 @@ class TestHTTPHelpers:
 
     @pytest.mark.asyncio
     async def test_post_preserves_existing_metadata(self):
-        from colony_sidecar.mcp.server import _post
+        from apsimo.mcp.server import _post
         os.environ["COLONY_MCP_SOURCE"] = "codex"
 
         mock_response = MagicMock()
@@ -253,7 +253,7 @@ class TestHTTPHelpers:
 
     @pytest.mark.asyncio
     async def test_post_connection_error(self):
-        from colony_sidecar.mcp.server import _post
+        from apsimo.mcp.server import _post
         import httpx
 
         with patch("httpx.AsyncClient") as MockClient:
@@ -269,7 +269,7 @@ class TestHTTPHelpers:
 
     @pytest.mark.asyncio
     async def test_get_non_200(self):
-        from colony_sidecar.mcp.server import _get
+        from apsimo.mcp.server import _get
 
         mock_response = MagicMock()
         mock_response.status_code = 404
@@ -287,7 +287,7 @@ class TestHTTPHelpers:
 
     @pytest.mark.asyncio
     async def test_delete_success(self):
-        from colony_sidecar.mcp.server import _delete
+        from apsimo.mcp.server import _delete
 
         mock_response = MagicMock()
         mock_response.status_code = 204
@@ -319,29 +319,29 @@ class TestToolBehavior:
 
     @pytest.mark.asyncio
     async def test_create_commitment_requires_contact(self):
-        from colony_sidecar.mcp.server import _require_contact
+        from apsimo.mcp.server import _require_contact
         os.environ.pop("COLONY_MCP_CONTACT_ID", None)
         cid, err = _require_contact(None)
         assert err.get("error") == "contact_id_required"
 
     def test_headers_include_api_key(self):
-        from colony_sidecar.mcp.server import _headers
+        from apsimo.mcp.server import _headers
         os.environ["COLONY_API_KEY"] = "test-key"
         headers = _headers()
         assert headers["Authorization"] == "Bearer test-key"
 
     def test_headers_empty_without_key(self):
-        from colony_sidecar.mcp.server import _headers
+        from apsimo.mcp.server import _headers
         os.environ.pop("COLONY_API_KEY", None)
         headers = _headers()
         assert headers == {}
 
     def test_base_url_from_env(self):
-        from colony_sidecar.mcp.server import _base_url
+        from apsimo.mcp.server import _base_url
         os.environ["COLONY_URL"] = "http://custom:9999"
         assert _base_url() == "http://custom:9999"
 
     def test_base_url_default(self):
-        from colony_sidecar.mcp.server import _base_url
+        from apsimo.mcp.server import _base_url
         os.environ.pop("COLONY_URL", None)
         assert _base_url() == "http://127.0.0.1:7777"

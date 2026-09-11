@@ -6,18 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.router.tiers import ModelTier
-from colony_sidecar.task_queue.handlers.inference import InferenceHandler
-from colony_sidecar.task_queue.handlers.monitoring import _validate_endpoint
-from colony_sidecar.task_queue.handlers.system_maintenance import (
+from apsimo.router.tiers import ModelTier
+from apsimo.task_queue.handlers.inference import InferenceHandler
+from apsimo.task_queue.handlers.monitoring import _validate_endpoint
+from apsimo.task_queue.handlers.system_maintenance import (
     SystemMaintenanceHandler,
 )
-from colony_sidecar.task_queue.models import Job, JobType
-from colony_sidecar.task_queue.worker import _prepare_embedded_report
+from apsimo.task_queue.models import Job, JobType
+from apsimo.task_queue.worker import _prepare_embedded_report
 
 
 def test_registry_has_real_handlers_and_preserves_historical_job_types():
-    from colony_sidecar.task_queue.handlers.registry import build_default_handlers
+    from apsimo.task_queue.handlers.registry import build_default_handlers
     assert set(build_default_handlers()) == {
         JobType.MONITORING, JobType.SYSTEM_MAINTENANCE, JobType.CUSTOM}
     for legacy in ("desktop", "browser"):
@@ -27,7 +27,7 @@ def test_registry_has_real_handlers_and_preserves_historical_job_types():
 @pytest.mark.parametrize("parameter", ["desktop_config", "browser_config"])
 @pytest.mark.parametrize("enabled", [True, False])
 def test_registry_rejects_unsupported_legacy_worker_configuration(parameter, enabled):
-    from colony_sidecar.task_queue.handlers.registry import build_default_handlers
+    from apsimo.task_queue.handlers.registry import build_default_handlers
     with pytest.raises(ValueError, match="native runtime"):
         build_default_handlers(**{parameter: SimpleNamespace(enabled=enabled)})
 

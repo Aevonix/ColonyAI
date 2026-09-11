@@ -79,8 +79,8 @@ def test_native_sessions_share_one_undertaking(artifacts, tmp_path, monkeypatch)
     # Only the test HTTP server imports the source store. The isolated native
     # process receives the wheel alone and has no sidecar on its import path.
     monkeypatch.syspath_prepend(str(ROOT / 'sidecar'))
-    from colony_sidecar.commitments.store import CommitmentStore
-    from colony_sidecar.commitments.work import CommitmentWork
+    from apsimo.commitments.store import CommitmentStore
+    from apsimo.commitments.work import CommitmentWork
     store = CommitmentStore(tmp_path / 'commitments.db')
     obligation = store.create('owner', 'Inspect one failing fixture')
     now = [1000.0]

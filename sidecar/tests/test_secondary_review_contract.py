@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.gate.config import GateConfig
-from colony_sidecar.gate.layers.l6_review import SecondaryReviewer
-from colony_sidecar.gate.models import GatePayload
-from colony_sidecar.gate.pipeline import ResponseGate
-from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
+from apsimo.gate.config import GateConfig
+from apsimo.gate.layers.l6_review import SecondaryReviewer
+from apsimo.gate.models import GatePayload
+from apsimo.gate.pipeline import ResponseGate
+from apsimo.intelligence.relationships.trust_tiers import TrustTier
 
 
 def payload():

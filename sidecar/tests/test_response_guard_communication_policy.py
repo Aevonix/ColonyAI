@@ -7,23 +7,23 @@ import json
 import pytest
 from pydantic import ValidationError
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.api.schemas.host import ResponseGuardCheckRequest
-from colony_sidecar.gate.communication_policy import (
+from apsimo.api.routers import host as host_mod
+from apsimo.api.schemas.host import ResponseGuardCheckRequest
+from apsimo.gate.communication_policy import (
     COMMUNICATION_DISCLOSURE_CLASSES,
     CommunicationPolicyContextV1,
     MAX_COMMUNICATION_DISCLOSURE_STATEMENT_CHARS,
     MAX_COMMUNICATION_PURPOSE_CHARS,
 )
-from colony_sidecar.gate.context_provenance import (
+from apsimo.gate.context_provenance import (
     ContextProvenanceStore,
     ProvenanceCrossContextGuard,
 )
-from colony_sidecar.gate.guard_audit import GuardAuditStore
-from colony_sidecar.gate.layers.l6_review import SecondaryReviewer
-from colony_sidecar.gate.models import GatePayload
-from colony_sidecar.gate.response_guard import GuardMode, ResponseGuard
-from colony_sidecar.intelligence.relationships.trust_tiers import TrustTier
+from apsimo.gate.guard_audit import GuardAuditStore
+from apsimo.gate.layers.l6_review import SecondaryReviewer
+from apsimo.gate.models import GatePayload
+from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from apsimo.intelligence.relationships.trust_tiers import TrustTier
 
 
 def _policy_dict(**changes):

@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.contacts.scoring import compute_relationship_score
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.contacts.scoring import compute_relationship_score
 
 
 @pytest.mark.asyncio

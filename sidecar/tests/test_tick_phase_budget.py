@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from colony_sidecar.autonomy.loop import AutonomyLoop, LoopStats
-from colony_sidecar.autonomy.config import AutonomyConfig
-from colony_sidecar.intelligence.graph import client as client_mod
+from apsimo.autonomy.loop import AutonomyLoop, LoopStats
+from apsimo.autonomy.config import AutonomyConfig
+from apsimo.intelligence.graph import client as client_mod
 
 
 # --- one write per batch --------------------------------------------------------

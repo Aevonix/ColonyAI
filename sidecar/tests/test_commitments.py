@@ -4,7 +4,7 @@ import pytest
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-from colony_sidecar.commitments.store import CommitmentStore
+from apsimo.commitments.store import CommitmentStore
 
 
 @pytest.fixture

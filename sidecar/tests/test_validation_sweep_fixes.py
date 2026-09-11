@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host
+from apsimo.api.routers import host
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +110,10 @@ async def test_turns_sync_does_not_greenlight_failed_ingestion(app, dead_graph):
 
 @pytest.mark.asyncio
 async def test_builtin_skills_actually_execute():
-    from colony_sidecar.skills.executor import SkillExecutor
-    from colony_sidecar.skills.registry import SkillRegistry
-    from colony_sidecar.skills.security.guards import CapabilityGuard
-    from colony_sidecar.skills.security.scanner import ASTScanner
+    from apsimo.skills.executor import SkillExecutor
+    from apsimo.skills.registry import SkillRegistry
+    from apsimo.skills.security.guards import CapabilityGuard
+    from apsimo.skills.security.scanner import ASTScanner
 
     registry = SkillRegistry()
     assert "subsystem_health" in registry.list_skills()
@@ -134,7 +134,7 @@ async def test_builtin_skills_actually_execute():
 
 @pytest.mark.asyncio
 async def test_briefings_returned_and_failures_surface(app, monkeypatch):
-    from colony_sidecar.briefings.models import (
+    from apsimo.briefings.models import (
         Briefing, BriefingSection, BriefingType,
     )
 
@@ -249,7 +249,7 @@ async def test_health_does_not_claim_dead_memory_backend(app, dead_graph):
 
 @pytest.mark.asyncio
 async def test_invalid_job_type_is_400_not_500(monkeypatch):
-    from colony_sidecar.api.routers import task_queue
+    from apsimo.api.routers import task_queue
 
     monkeypatch.setattr(task_queue, "_get_queue", lambda: object())
     app = FastAPI()
@@ -295,7 +295,7 @@ async def test_world_extract_plain_text_is_clear_400(app, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_doctor_flags_unreachable_graph_backend(monkeypatch):
-    from colony_sidecar import doctor
+    from apsimo import doctor
 
     assert "server-memory-graph" in doctor.SERVER_CHECK_NAMES
 

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host
-from colony_sidecar.briefings.models import Briefing, BriefingSection
+from apsimo.api.routers import host
+from apsimo.briefings.models import Briefing, BriefingSection
 from test_contact_fact_recall import contact_context
 from test_turn_source_evidence import source_app
 

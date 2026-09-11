@@ -11,10 +11,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar import doctor
-from colony_sidecar.channels.presence import ConversationPresenceStore
-from colony_sidecar.tom import levels
-from colony_sidecar.tom.levels import (
+from apsimo import doctor
+from apsimo.channels.presence import ConversationPresenceStore
+from apsimo.tom import levels
+from apsimo.tom.levels import (
     DEFAULT_RISK_CAPS, clear_level_cache, configured_level,
     configured_max_level, parse_risk_caps, resolve_effective_level,
     set_evidence_probe)

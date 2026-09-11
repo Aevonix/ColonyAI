@@ -11,9 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.channels.presence import ConversationPresenceStore
-from colony_sidecar.gate.env_risk import (
+from apsimo.api.routers import host as host_mod
+from apsimo.channels.presence import ConversationPresenceStore
+from apsimo.gate.env_risk import (
     R0, R1, R2, R3, classify, env_risk_window_hours, gateway_class)
 
 OWNER = "cid-owner"

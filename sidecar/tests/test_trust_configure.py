@@ -10,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
+from apsimo.api.routers import host as host_mod
 
 
 @asynccontextmanager
@@ -110,8 +110,8 @@ async def test_configure_host_preserves_router_and_executor_references(tmp_path,
     """A host update reaches retained consumers without replacing tool state."""
     pytest.importorskip("litellm")
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    from colony_sidecar.router.router import LLMRouter
-    from colony_sidecar.reasoning import ReasoningLoop, ToolExecutor
+    from apsimo.router.router import LLMRouter
+    from apsimo.reasoning import ReasoningLoop, ToolExecutor
     previous = LLMRouter(tiers={})
     previous.configure({'provider': 'vllm', 'baseUrl': 'http://127.0.0.1:8080/v1',
                         'models': {'small': 'old-neutral'}})

@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from colony_sidecar.intelligence.graph import client as client_mod
-from colony_sidecar.research.gatherer import GraphGatherer
+from apsimo.intelligence.graph import client as client_mod
+from apsimo.research.gatherer import GraphGatherer
 
 
 # --- fakes (mirrors test_recall_ranking.py, plus ABOUT support) --------------

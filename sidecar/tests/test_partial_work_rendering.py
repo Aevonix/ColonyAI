@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.turns import hermes_kanban, hermes_work, local_work, reported_workers
-from colony_sidecar.turns.executions import format_view, request_work_context
+from apsimo.api.routers import executions, host
+from apsimo.turns import hermes_kanban, hermes_work, local_work, reported_workers
+from apsimo.turns.executions import format_view, request_work_context
 
 
 def base_view():

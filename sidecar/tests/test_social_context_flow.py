@@ -5,9 +5,9 @@ import importlib
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import social_state
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import social_state
+from apsimo.turns import TurnIdempotencyLedger
 from test_canonical_scoped_context import context, headers
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_appraisals import admitted_preference

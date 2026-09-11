@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.qualification.memory_cases import CASES, source_memory, memory_outcomes
-from colony_sidecar.qualification.runner import RunContext
+from apsimo.qualification.memory_cases import CASES, source_memory, memory_outcomes
+from apsimo.qualification.runner import RunContext
 from test_source_claim_projection import claim
 
 

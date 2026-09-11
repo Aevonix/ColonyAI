@@ -8,8 +8,8 @@ import threading
 
 import pytest
 
-from colony_sidecar.events.journal import replay_events
-from colony_sidecar.events.stream import EventSubscriberBuffer
+from apsimo.events.journal import replay_events
+from apsimo.events.stream import EventSubscriberBuffer
 
 
 def test_subscriber_buffer_reports_overflow_and_resume_cursor():
@@ -56,7 +56,7 @@ async def test_cross_thread_publication_preserves_sequence_order():
 
 
 def test_host_persists_before_publishing_live_frame(tmp_path, monkeypatch):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
     observed = []
@@ -91,8 +91,8 @@ def test_host_persists_before_publishing_live_frame(tmp_path, monkeypatch):
 
 
 def test_host_suppresses_live_frame_when_journal_fails(monkeypatch):
-    from colony_sidecar.api.routers import host
-    from colony_sidecar.events import journal
+    from apsimo.api.routers import host
+    from apsimo.events import journal
 
     published = []
 
@@ -117,7 +117,7 @@ def test_host_suppresses_live_frame_when_journal_fails(monkeypatch):
 def test_websocket_reconnect_replays_from_exact_sequence(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     monkeypatch.setenv("COLONY_API_KEY", "test-event-key")
     monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
@@ -168,7 +168,7 @@ def test_websocket_accepts_scoped_event_principal_without_legacy_key(
         tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     keyring = tmp_path / "api-principals.json"
     keyring.write_text(json.dumps({
@@ -209,7 +209,7 @@ def test_websocket_accepts_scoped_event_principal_without_legacy_key(
 def test_websocket_cursor_ahead_of_journal_replays_new_epoch(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
 
     monkeypatch.setenv("COLONY_API_KEY", "test-event-key")
     monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))

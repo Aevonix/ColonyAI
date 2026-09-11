@@ -10,11 +10,11 @@ import wave
 import httpx
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.audio import decode_audio, source_text
-from colony_sidecar.turns.idempotency import SourceErased, source_message_hash
-from colony_sidecar.turns.media import SourceMedia
-from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.audio import decode_audio, source_text
+from apsimo.turns.idempotency import SourceErased, source_message_hash
+from apsimo.turns.media import SourceMedia
+from apsimo.beliefs.source_projection import SourceClaimProjection
 from test_turn_source_evidence import source_app, recalled, envelope
 from test_hermes_turn_outbox import _load_client
 
@@ -43,8 +43,8 @@ def retained(ledger, turn='audio'):
 
 @pytest.mark.asyncio
 async def test_audio_http_recall_and_full_source_preserve_derived_clock_lineage(source_app, tmp_path, monkeypatch):
-    from colony_sidecar.turns.source_read import read
-    from colony_sidecar.turns.source_vectors import chunks, hydrate
+    from apsimo.turns.source_read import read
+    from apsimo.turns.source_vectors import chunks, hydrate
     from contextlib import closing
     data = wav_bytes(); original = message(data); asset = hashlib.sha256(data).hexdigest()
     body = {'identity': {'host_id': 'fixture'}, 'context': {'contact_id': 'contact-a', 'session_id': 'call', 'turn_id': 'audio'},
@@ -120,7 +120,7 @@ def test_unsupported_audio_and_invalid_transcripts_are_not_silently_claimed_reta
 
 
 def test_audio_original_backup_and_shared_owner_erasure(tmp_path):
-    from colony_sidecar import backup
+    from apsimo import backup
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     for person in ('a', 'b'):
         ledger.record_source(person, contact_id=person, session_id='call', messages=[message()], derive_claims=False)
@@ -138,7 +138,7 @@ def test_audio_original_backup_and_shared_owner_erasure(tmp_path):
 
 
 def test_audio_memory_salvage_recovers_only_current_owned_original(tmp_path):
-    from colony_sidecar import backup
+    from apsimo import backup
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     ledger.record_source('audio', contact_id='person', session_id='call', messages=[message()], derive_claims=False)
     (state/'colony-id').write_text('fixture-audio-colony')
@@ -157,8 +157,8 @@ def test_audio_memory_salvage_recovers_only_current_owned_original(tmp_path):
 @pytest.mark.asyncio
 async def test_audio_protocol_rejects_predecessor_before_raw_byte_storage_and_keeps_literal_ids(source_app):
     from fastapi import HTTPException, Response
-    from colony_sidecar.api.routers.host import turns_sync_v2
-    from colony_sidecar.api.schemas.host import TurnSyncRequest
+    from apsimo.api.routers.host import turns_sync_v2
+    from apsimo.api.schemas.host import TurnSyncRequest
     body = TurnSyncRequest.model_validate({'identity': {'host_id': 'fixture'},
         'context': {'contact_id': 'person', 'session_id': 'call', 'turn_id': 'clip'}, 'user_message': message()})
     with pytest.raises(HTTPException) as error:

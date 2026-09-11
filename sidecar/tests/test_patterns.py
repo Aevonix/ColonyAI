@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from colony_sidecar.patterns.store import PatternStore
+from apsimo.patterns.store import PatternStore
 
 
 @pytest.fixture

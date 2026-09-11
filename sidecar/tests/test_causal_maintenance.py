@@ -14,10 +14,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from colony_sidecar.beliefs.engine import BeliefEngine
-from colony_sidecar.beliefs.store import BeliefStore
-from colony_sidecar.world_model import causal_maintenance as cm
-from colony_sidecar.world_model.relationships import WorldRelationship
+from apsimo.beliefs.engine import BeliefEngine
+from apsimo.beliefs.store import BeliefStore
+from apsimo.world_model import causal_maintenance as cm
+from apsimo.world_model.relationships import WorldRelationship
 
 
 def _iso(days_ago: float) -> str:
@@ -230,7 +230,7 @@ async def test_stale_causal_decay_shadow_does_not_mutate(monkeypatch):
 @pytest.mark.asyncio
 async def test_extractor_stamps_last_support_at(monkeypatch):
     """Creation stamps support; repeated claims cannot reset its age."""
-    from colony_sidecar.world_model.llm_extract import WorldLLMExtractor
+    from apsimo.world_model.llm_extract import WorldLLMExtractor
     world = FakeCausalWorld([])
     x = WorldLLMExtractor(world)
     x._seen_rels = set()
@@ -246,5 +246,5 @@ async def test_extractor_stamps_last_support_at(monkeypatch):
     x._seen_rels = set()
     await x._upsert_causal("we-a", "WM_CAUSES", "we-b", "a caused b again",
                            0.9, "live", report)
-    assert created.properties["last_support_at"] == \
+    assert created.properties["last_support_at"] ==\
         "2000-01-01T00:00:00+00:00"

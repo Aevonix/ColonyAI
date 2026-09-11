@@ -15,7 +15,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from colony_sidecar.api.routers import host as host_mod
+from apsimo.api.routers import host as host_mod
 
 
 @asynccontextmanager
@@ -38,7 +38,7 @@ async def _client_with(patches: dict):
 
 
 def test_host_identity_accepts_colony_fields():
-    from colony_sidecar.api.schemas.host import HostIdentity
+    from apsimo.api.schemas.host import HostIdentity
     ident = HostIdentity(
         host_id="h",
         colony_id="c1",
@@ -52,7 +52,7 @@ def test_host_identity_accepts_colony_fields():
 
 
 def test_identity_status_response_has_new_fields():
-    from colony_sidecar.api.schemas.host import IdentityStatusResponse
+    from apsimo.api.schemas.host import IdentityStatusResponse
     resp = IdentityStatusResponse(
         colony_id="c1",
         trust_tier="REGULAR",

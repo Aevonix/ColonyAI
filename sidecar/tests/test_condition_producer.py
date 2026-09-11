@@ -6,12 +6,12 @@ import time
 
 import pytest
 
-import colony_sidecar.autonomy.condition_worker as cw
-from colony_sidecar.autonomy.loop import AutonomyLoop
-from colony_sidecar.goals.config import GoalEngineConfig
-from colony_sidecar.goals.engine import GoalEngine
-from colony_sidecar.goals.models import GoalStatus
-from colony_sidecar.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
+import apsimo.autonomy.condition_worker as cw
+from apsimo.autonomy.loop import AutonomyLoop
+from apsimo.goals.config import GoalEngineConfig
+from apsimo.goals.engine import GoalEngine
+from apsimo.goals.models import GoalStatus
+from apsimo.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
 
 
 def _blocked_goal(engine, condition_type=None, condition_params=None):

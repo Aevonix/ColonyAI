@@ -4,11 +4,11 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.server import _attach_p8_runtime
-from colony_sidecar.tom.facts import SharedFactsStore
-from colony_sidecar.turns import TurnIdempotencyLedger
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.server import _attach_p8_runtime
+from apsimo.tom.facts import SharedFactsStore
+from apsimo.turns import TurnIdempotencyLedger
 from test_recall_unified_context import Graph, Reranker, belief, calibrate
 from test_scoped_api_authority import _principal, _write_keyring
 from test_tom_p8_server_integration import _authority, _request

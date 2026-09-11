@@ -20,27 +20,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from colony_sidecar.identity.resolver import (
+from apsimo.identity.resolver import (
     IdentityResolver,
     OwnerIdentityError,
     get_identity_resolver,
     get_owner_contact_id,
     reset_identity_resolver,
 )
-from colony_sidecar.initiatives.action_registry import (
+from apsimo.initiatives.action_registry import (
     RiskTier,
     classify_agent_action,
     get_action,
     requires_owner_approval,
 )
-from colony_sidecar.initiatives.context_freshness import (
+from apsimo.initiatives.context_freshness import (
     durability_for,
     freshness_ttl_for,
     is_context_fresh,
 )
-from colony_sidecar.initiatives.models import StoredInitiative
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.intelligence.components.initiative_engine import (
+from apsimo.initiatives.models import StoredInitiative
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.intelligence.components.initiative_engine import (
     InitiativeConfig,
     InitiativeEngine,
     InitiativeType,
@@ -270,14 +270,14 @@ class TestInitiativeSerializer:
         return StoredInitiative(**base)
 
     def test_title_is_action_not_reason(self):
-        from colony_sidecar.api.routers.host import _initiative_to_response
+        from apsimo.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored())
         assert resp.title == "Check in with Jordan Example"
         assert resp.title != "No contact for 14 days"
 
     def test_entity_id_and_context_returned(self):
-        from colony_sidecar.api.routers.host import _initiative_to_response
+        from apsimo.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored())
         assert resp.entity_id == "uuid-jordan"
@@ -286,13 +286,13 @@ class TestInitiativeSerializer:
         assert resp.context_durability == "durable"
 
     def test_null_context_returns_empty_dict(self):
-        from colony_sidecar.api.routers.host import _initiative_to_response
+        from apsimo.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored(context=None))
         assert resp.context == {}
 
     def test_target_agent_id_populated(self):
-        from colony_sidecar.api.routers.host import _initiative_to_response
+        from apsimo.api.routers.host import _initiative_to_response
 
         assigned = self._stored(assigned_agent_id="test-agent", status="assigned")
         assert _initiative_to_response(assigned).target_agent_id == "test-agent"
@@ -306,7 +306,7 @@ class TestInitiativeSerializer:
     def test_assigned_status_serializes(self):
         # The status Literal was missing "assigned" — a store status the
         # loop sets when linking initiatives to queue jobs.
-        from colony_sidecar.api.routers.host import _initiative_to_response
+        from apsimo.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored(status="assigned"))
         assert resp.status == "assigned"
@@ -597,8 +597,8 @@ class TestQueueGating:
     """The dispatch path drops unregistered hints before the queue."""
 
     def _loop(self, task_queue):
-        from colony_sidecar.autonomy.config import AutonomyConfig
-        from colony_sidecar.autonomy.loop import AutonomyLoop
+        from apsimo.autonomy.config import AutonomyConfig
+        from apsimo.autonomy.loop import AutonomyLoop
 
         registry = MagicMock()
         registry.task_queue = task_queue

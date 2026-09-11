@@ -202,7 +202,7 @@ class _PassGuard:
 
 def _build_skill(tmp_path: Path, source: str, *, skill_id: str = "skill-test") -> "SkillManifest":
     """Write skill.py with a matching manifest and return the manifest."""
-    from colony_sidecar.skills.models import (
+    from apsimo.skills.models import (
         SkillManifest, SkillPermissions, SkillStatus,
     )
     from datetime import datetime, timezone
@@ -230,8 +230,8 @@ def _build_skill(tmp_path: Path, source: str, *, skill_id: str = "skill-test") -
 
 
 def _make_executor(manifest, sandbox_mode: str = "subprocess"):
-    from colony_sidecar.skills.executor import SkillExecutor
-    from colony_sidecar.skills.security.scanner import ASTScanner
+    from apsimo.skills.executor import SkillExecutor
+    from apsimo.skills.security.scanner import ASTScanner
 
     registry = _FakeRegistry(manifest)
     executor = SkillExecutor(
@@ -346,7 +346,7 @@ async def test_executor_populates_peak_memory_from_runner(tmp_path):
 
 def test_sandbox_mode_env_var_resolution(monkeypatch):
     """COLONY_SKILL_SANDBOX overrides the platform default."""
-    from colony_sidecar.skills.executor import _resolve_sandbox_mode
+    from apsimo.skills.executor import _resolve_sandbox_mode
 
     monkeypatch.setenv("COLONY_SKILL_SANDBOX", "inprocess")
     assert _resolve_sandbox_mode() == "inprocess"

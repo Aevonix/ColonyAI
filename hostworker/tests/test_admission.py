@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from colony_hostworker.admission import (
+from apsimo_hostworker.admission import (
     ADMISSION_MAX_LIFETIME_SECONDS,
     ADMISSION_SCHEMA,
     DispatchAdmission,
@@ -13,7 +13,7 @@ from colony_hostworker.admission import (
     FileDispatchAdmission,
     sqlite_database_identity,
 )
-from colony_hostworker.contract import canonical_json_utf8
+from apsimo_hostworker.contract import canonical_json_utf8
 
 ORIGIN = "http://127.0.0.1:8123"
 TOOLS = ("colony_create_commitment", "colony_research")

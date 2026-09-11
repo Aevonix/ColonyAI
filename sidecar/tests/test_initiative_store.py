@@ -5,8 +5,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import pytest
 
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.initiatives.models import InitiativeStatus, StoredInitiative
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.initiatives.models import InitiativeStatus, StoredInitiative
 
 
 class TestInitiativeStore:

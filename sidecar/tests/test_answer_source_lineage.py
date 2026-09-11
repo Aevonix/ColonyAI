@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.idempotency import canonical_turn_digest
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.idempotency import canonical_turn_digest
 from test_turn_source_evidence import source_app
 from test_hermes_turn_outbox import _load_client, _load_plugin, _Context, _Client, _Response
 
@@ -114,7 +114,7 @@ def test_pending_native_outbox_redacts_answer_and_preserves_attributed_user(tmp_
 
 @pytest.mark.asyncio
 async def test_source_survivor_is_person_scoped_without_ordinary_effects(source_app, tmp_path, monkeypatch):
-    from colony_sidecar.api.routers import host
+    from apsimo.api.routers import host
     presence = SimpleNamespace(record=lambda *a, **k: pytest.fail('ordinary presence effect ran'))
     monkeypatch.setattr(host, '_presence_store', presence)
     body = {'identity': {'host_id': 'test'}, 'context': {'contact_id': 'person', 'session_id': 'new',
@@ -135,7 +135,7 @@ async def test_source_survivor_is_person_scoped_without_ordinary_effects(source_
     with sqlite3.connect(ledger.db_path) as conn:
         assert conn.execute("SELECT count(*) FROM source_claim_jobs WHERE turn_id='survivor' AND status='pending'").fetchone()[0] == 1
     from test_source_claim_projection import Model, claim
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_projection import SourceClaimProjection
     text = body['user_message']['content']
     model = Model({text: claim(text, 'orange', subject='independent bicycle', predicate='color')})
     assert await SourceClaimProjection(ledger).process_one(model)
@@ -213,7 +213,7 @@ async def test_legacy_source_ids_with_route_prefix_remain_valid(source_app, pref
 @pytest.mark.asyncio
 async def test_conflict_selection_references_both_sources_and_capture_checks_revision(source_app, tmp_path, monkeypatch):
     from test_source_claim_projection import Model, claim, ingest
-    from colony_sidecar.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_projection import SourceClaimProjection
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     projection = SourceClaimProjection(ledger)
     monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')

@@ -9,9 +9,9 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from colony_sidecar.api.routers import host as host_mod
-from colony_sidecar.proposals import ProposalStore
-from colony_sidecar.tom.approvals import (
+from apsimo.api.routers import host as host_mod
+from apsimo.proposals import ProposalStore
+from apsimo.tom.approvals import (
     APPROVED, PENDING, REVOKED, Tom2ApprovalRegistry, approval_ttl_days)
 
 READER, SUBJECT = "cid-alice", "cid-bob"

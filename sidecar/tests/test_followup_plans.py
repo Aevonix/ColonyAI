@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host, followup_plans, transport
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.commitments.work import CommitmentWork
-from colony_sidecar.contacts.comms import CommsLog
-from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
-from colony_sidecar.turns import get_turn_idempotency_ledger, canonical_turn_digest
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host, followup_plans, transport
+from apsimo.commitments.store import CommitmentStore
+from apsimo.commitments.work import CommitmentWork
+from apsimo.contacts.comms import CommsLog
+from apsimo.initiatives.temporal_followup import TemporalFollowups
+from apsimo.turns import get_turn_idempotency_ledger, canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 
 

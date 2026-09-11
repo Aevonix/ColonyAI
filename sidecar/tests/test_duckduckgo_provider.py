@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from colony_sidecar.research.search.duckduckgo import DuckDuckGoProvider
+from apsimo.research.search.duckduckgo import DuckDuckGoProvider
 
 
 _SAMPLE_HTML = """\

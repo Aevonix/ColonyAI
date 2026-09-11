@@ -7,25 +7,25 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from colony_sidecar.intelligence.synthesis.connection_discoverer import (
+from apsimo.intelligence.synthesis.connection_discoverer import (
     Connection,
     ConnectionDiscoverer,
     ConnectionType,
 )
-from colony_sidecar.intelligence.synthesis.novelty_scorer import (
+from apsimo.intelligence.synthesis.novelty_scorer import (
     DOMAIN_DISTANCES,
     NoveltyScore,
     NoveltyScorer,
 )
-from colony_sidecar.intelligence.synthesis.cross_domain_analyzer import (
+from apsimo.intelligence.synthesis.cross_domain_analyzer import (
     CrossDomainAnalyzer,
     DomainInsight,
 )
-from colony_sidecar.intelligence.synthesis.insight_validator import (
+from apsimo.intelligence.synthesis.insight_validator import (
     InsightValidator,
     ValidationResult,
 )
-from colony_sidecar.intelligence.synthesis.insight_deliverer import (
+from apsimo.intelligence.synthesis.insight_deliverer import (
     DeliveryChannel,
     DeliveryDecision,
     InsightDeliverer,
@@ -604,7 +604,7 @@ class TestInsightDeliverer:
 
 class TestPackageExports:
     def test_all_exports_importable(self):
-        from colony_sidecar.intelligence.synthesis import (
+        from apsimo.intelligence.synthesis import (
             Connection,
             ConnectionDiscoverer,
             ConnectionType,

@@ -2,7 +2,7 @@
 import json
 import pytest
 
-from colony_sidecar.initiatives.native_work import contract
+from apsimo.initiatives.native_work import contract
 from test_hermes_general_governance import runtime, _Context, _pre, _tool
 from test_accepted_local_work import local_api
 
@@ -64,7 +64,7 @@ def test_review_tool_uses_real_owner_system_turn_and_rejects_guest_and_extra_arg
 
 
 def test_existing_scoped_credentials_reach_only_owner_review_routes(local_api):
-    from colony_sidecar.api.routers import initiative_work
+    from apsimo.api.routers import initiative_work
     api, _, initiatives, _, _ = local_api
     api.app.include_router(initiative_work.router)
     item = initiatives.create(type='operational',source_type='operational',created_by='autonomy_loop',
