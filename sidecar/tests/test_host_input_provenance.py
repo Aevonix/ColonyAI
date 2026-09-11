@@ -46,7 +46,7 @@ def handoff(source_app, tmp_path, monkeypatch):
                 kwargs.pop('_deadline_monotonic', None)
                 kwargs.pop('timeout', None)
                 return api.put(path, **kwargs)
-        monkeypatch.setattr(module, 'ApsimoClient', Client)
+        monkeypatch.setattr(module, 'ColonyClient', Client)
         for key, value in {'COLONY_GENERAL_PLUGIN_ACTIVE':'1', 'COLONY_MEMORY_WORKER_TOOLS':'0',
             'COLONY_MEMORY_TURN_WRITER':'disabled', 'COLONY_GUARD_CHAT_MODE':'off'}.items():
             monkeypatch.setenv(key, value)
