@@ -625,6 +625,64 @@ def test_temporal_block_attested_internal_lane_uses_provider_contact(
     assert temporal[0]["params"]["contact_id"] == "cid-base"
 
 
+@pytest.mark.parametrize("clock_body", ["Contact clock.", ""])
+def test_reused_provider_refreshes_turn_gap_without_refetching_contact_clock(
+        provider_mod, monkeypatch, clock_body):
+    fake = _FakeHttpx(routes={_TEMPORAL: {"title": "Current Time", "body": clock_body}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(provider_mod, "_ttime", types.SimpleNamespace(
+        time=lambda: now[0], monotonic=lambda: now[0]))
+    p.initialize("conversation-one")
+    p.on_turn_start(1, "First request.")
+    now[0] += 3600
+    p.on_turn_start(2, "Follow up on the request.")
+    first = p._with_fresh_temporal_sync(
+        "## Relevant Memories [priority 80]\nRemember the archive location.", contact_id="cid-base")
+    assert "Previous message in this conversation: 1h 00m ago." in first
+    now[0] += 7
+    p.on_turn_start(3, "A quick clarification.")
+    second = p._with_fresh_temporal_sync(first, contact_id="cid-base")
+    assert "Previous message in this conversation: 7s ago." in second
+    assert "1h 00m" not in second
+    assert second.count("Previous message in this conversation:") == 1
+    assert (clock_body or "host clock") in second and "Remember the archive location." in second
+    assert len([r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]) == 1
+
+
+@pytest.mark.parametrize("new_session,kwargs,preserves_gap", [
+    ("compressed", {"parent_session_id": "conversation-one", "reason": "compression"}, True),
+    ("conversation-one", {"parent_session_id": "conversation-one", "reason": "compression"}, True),
+    ("resumed", {"parent_session_id": "conversation-one", "reason": "resume"}, False),
+    ("branch", {"parent_session_id": "conversation-one", "reason": "branch"}, False),
+    ("new", {"reset": True, "reason": "new_session"}, False),
+    ("conversation-one", {"rewound": True}, False),
+    ("unknown", {}, False),
+    ("mismatched", {"parent_session_id": "another", "reason": "compression"}, False),
+])
+def test_conversation_gap_follows_native_session_boundary(
+        provider_mod, monkeypatch, new_session, kwargs, preserves_gap):
+    fake = _FakeHttpx(routes={_TEMPORAL: {"title": "Current Time", "body": "Contact clock."}})
+    p = _make_provider(provider_mod, fake, monkeypatch)
+    now = [100.0]
+    monkeypatch.setattr(provider_mod, "_ttime", types.SimpleNamespace(
+        time=lambda: now[0], monotonic=lambda: now[0]))
+    p.initialize("conversation-one")
+    p.on_turn_start(1, "First request.")
+    now[0] += 3600
+    p.on_turn_start(2, "Continue the request.")
+    assert "1h 00m" in p._fresh_temporal_block_sync(contact_id="cid-base")
+    p.on_session_switch(new_session, **kwargs)
+    now[0] += 7
+    p.on_turn_start(3, "Review the selected conversation.")
+    block = p._fresh_temporal_block_sync(contact_id="cid-base")
+    assert ("Previous message in this conversation: 7s ago." in block) is preserves_gap
+    if not preserves_gap:
+        assert "Previous message in this conversation:" not in block
+    assert "1h 00m" not in block
+    assert len([r for r in fake.requests if r["url"].endswith(_TEMPORAL[1])]) == 1
+
+
 def test_resolve_handle_ttl_cache(provider_mod, monkeypatch):
     """_resolve_handle results are TTL-cached so per-turn resolution does not
     hammer /contacts/resolve on every prefetch."""
