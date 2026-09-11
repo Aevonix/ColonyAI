@@ -5,6 +5,7 @@ work, conversation history, commitments or source evidence.
 """
 from __future__ import annotations
 
+import json
 import math
 import re
 import time
@@ -84,7 +85,10 @@ class RequestWork:
                             and scope.resolution_status == 'attested_system'))
                 or scope.platform in ('cron', 'background_review')):
             return replace_context(request, api_mode=api_mode), None
-        text = _UNAVAILABLE
+        session = json.dumps(scope.session_id, ensure_ascii=True).replace(
+            _CLOSE, r'\u005b/colony-work-request-v1\u005d')
+        identity = f'Current request session: {session}.\n'
+        text = identity + _UNAVAILABLE
         provenance = None
         deadline = time.monotonic() + .25
         try:
@@ -101,7 +105,7 @@ class RequestWork:
                     or type(observed) not in (int, float) or not math.isfinite(observed)
                     or time.monotonic() > deadline):
                 raise ValueError('Invalid or late operational view')
-            text = f"Observed at {observed:.3f}.\n" + value['text']
+            text = identity + f"Observed at {observed:.3f}.\n" + value['text']
             supplied = value.get('input_provenance')
             if supplied is not None:
                 refs = supplied.get('source_refs')
@@ -124,5 +128,5 @@ class RequestWork:
         except Exception:
             # A temporary work-service failure must not stall a conversation
             # or advertise the previous request's operational state as fresh.
-            text, provenance = _UNAVAILABLE, None
+            text, provenance = identity + _UNAVAILABLE, None
         return replace_context(request, text, api_mode=api_mode), provenance
