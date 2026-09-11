@@ -6,8 +6,11 @@ Hermes can build an extra final-summary request from retained history after a
 task reaches its iteration limit. This call bypasses ordinary request hooks.
 Colony now applies its existing source-validity and erasure filter through the
 native turn's scoped Relay execution contract, including streaming and retry
-calls. Ordinary requests avoid a duplicate check. Child scopes and completion
-cleanup preserve the original participant boundary.
+calls. When an exact erased source identifies a historical conversation turn,
+its derived tool arguments, results and reasoning are withheld together. The
+current observed input, including an intentional retelling, remains available.
+Ordinary requests avoid a duplicate check. Child scopes and completion cleanup
+preserve the original participant boundary.
 
 Qualified on Hermes 0.21.1 with NeMo Relay 0.8.3. The optional `native-memory`
 extra installs that dependency. This filters provider inputs on the covered

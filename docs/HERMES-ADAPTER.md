@@ -261,6 +261,15 @@ The boundary also covers native streaming calls through the same Relay scope.
 It neither rewrites stored transcripts nor creates new recollection. Joined
 children use their own participant state, and completion or native scope teardown
 removes the registrations. No process-global Relay configuration is activated.
+An exact erased user or assistant source also withdraws its historical
+user-to-next-user segment from provider input. Its intervening tool arguments,
+results and reasoning are withheld together, with a small forgotten-source
+placeholder. The current native-observed input stays available even when Hermes
+adds a synthetic summary nudge, including when the user intentionally retells a
+fact. Unaffected historical turns remain available. This uses retained source
+hashes and observed content aliases, not word matching or inferred dependencies
+across unrelated turns.
+
 This is provider-input coverage on those dispatch paths, not erasure of native
 transcript files, Relay exports, arbitrary paraphrases, or calls outside them.
 
