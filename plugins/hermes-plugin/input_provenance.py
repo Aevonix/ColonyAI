@@ -159,7 +159,7 @@ class SuppliedInput:
         texts = tuple(_request_texts(request))
         with self._lock:
             if (scope is None or not scope.valid_participant or scope.contact_id != self.contact_id
-                    or (scope.session_id, scope.task_id, scope.turn_id) not in self._bound):
+                    or tuple(getattr(scope, key, None) for key in ('session_id', 'task_id', 'turn_id')) not in self._bound):
                 return []
             return [entry for entry in self._updates.values() if entry['admitted']
                     or any(entry['carrier'] in text for text in texts)]
@@ -211,7 +211,7 @@ class SuppliedInput:
         callbacks = []
         with self._lock:
             if (self._closed or self._blocked or scope is None
-                    or (scope.session_id, scope.task_id, scope.turn_id) not in self._bound):
+                    or tuple(getattr(scope, key, None) for key in ('session_id', 'task_id', 'turn_id')) not in self._bound):
                 return not (self._closed or self._blocked)
             for entry in self._updates.values():
                 if not entry['admitted'] or not any(entry['carrier'] in text for text in texts):
@@ -219,27 +219,30 @@ class SuppliedInput:
                 key = (entry['update'].update_id, stage, scope.session_id, scope.task_id, scope.turn_id)
                 if key in self._update_observations:
                     continue
-                # Retain the first request per native boundary, not every tool
-                # iteration. Eviction can repeat an idempotent receipt but can
-                # never resend an instruction or omit a new dependency write.
-                if len(self._update_observations) >= 256:
-                    self._update_observations.pop(next(iter(self._update_observations)))
-                self._update_observations[key] = None
-                if entry['observe']:
-                    callbacks.append((entry['observe'], {'update_id': key[0], 'stage': stage,
-                        'session_id': scope.session_id, 'task_id': scope.task_id, 'turn_id': scope.turn_id,
-                        'request_sha256': digest, 'boundary': ('relay_before_next_call'
-                            if stage == 'native_request_visible' else 'hermes_request_middleware')}))
-        for callback, value in callbacks:
+                callbacks.append((key, entry['observe'], {'update_id': key[0], 'stage': stage,
+                    'session_id': scope.session_id, 'task_id': scope.task_id, 'turn_id': scope.turn_id,
+                    'request_sha256': digest, 'boundary': ('relay_before_next_call'
+                        if stage == 'native_request_visible' else 'hermes_request_middleware')}))
+        for key, callback, value in callbacks:
             try:
-                if callback(value) is True:
+                if callback is None or callback(value) is True:
+                    with self._lock:
+                        if self._closed or self._blocked:
+                            return False
+                        # Only a completed receipt can let another request skip
+                        # persistence. Concurrent calls may repeat the host's
+                        # idempotent receipt, never pass an unfinished write.
+                        if len(self._update_observations) >= 256:
+                            self._update_observations.pop(next(iter(self._update_observations)))
+                        self._update_observations[key] = True
                     continue
             except BaseException:
                 pass
             with self._lock:
                 self._block('source_update_receipt_unavailable')
             return False
-        return True
+        with self._lock:
+            return not (self._closed or self._blocked)
 
     def _block(self, reason):
         # Called under the scope lock. A later permanent failure supersedes a

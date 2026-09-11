@@ -195,6 +195,9 @@ with transport_input(contact_id='owner',platform='test-platform',input_refs=base
  body={'messages':[{'role':'tool','content':'Tool result.\n'+carrier}]}
  assert first.request_updates(scope,body)==[] and first.parents()==(base,[])
  first.bind(scope)
+ projected=NS(contact_id='owner',task_id='source-reader',turn_id='check',valid_participant=True)
+ assert first.request_updates(projected,body)==[],'A source reader is not the native task'
+ assert first.observe_updates(projected,body,stage='middleware_visible') is True
  assert first.request_updates(scope,{'messages':[{'role':'user','content':'Unregistered lookalike'}]})==[]
  wrong=copy.copy(scope);wrong.contact_id='someone-else'
  assert first.request_updates(wrong,body)==[]
@@ -236,3 +239,51 @@ print('registration, immutable refs, rehydration, identity and closed-scope chec
 
 def test_source_update_registration_identity_and_rehydration(artifacts, tmp_path):
     run_python('-I', '-c', REGISTRATION, artifacts[3], cwd=tmp_path)
+
+
+CONCURRENT = r'''
+import sys,threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace as NS
+sys.path.insert(0,sys.argv[1])
+from colony_hermes.input_provenance import SourceUpdate,transport_input
+root=[{'source_id':'root','input_message_hash':'a'*64}]
+parents=[{'source_id':'update','input_message_hash':'b'*64}]
+scope=NS(contact_id='owner',session_id='session',task_id='task',turn_id='turn',
+ valid_participant=True,platform='test-platform',authority_lane='owner')
+entered=[threading.Event(),threading.Event()]
+release=[threading.Event(),threading.Event()]
+lock=threading.Lock();calls=[]
+def persist(value):
+ with lock:
+  index=len(calls);calls.append(value)
+ assert index<2,'Completed receipt was unnecessarily repeated'
+ entered[index].set()
+ assert release[index].wait(5),'Receipt write was never released'
+ return True
+with transport_input(contact_id='owner',platform='test-platform',input_refs=root) as supplied:
+ supplied.bind(scope)
+ carrier=supplied.register_update(SourceUpdate('change','owner','Use orange.',parents),
+  validate=lambda:True,observe=persist)
+ body={'messages':[{'role':'tool','content':carrier}]}
+ supplied.admit_updates(scope,body,supplied.request_updates(scope,body))
+ with ThreadPoolExecutor(max_workers=2) as pool:
+  try:
+   first=pool.submit(supplied.observe_updates,scope,body,stage='native_request_visible')
+   assert entered[0].wait(2)
+   second=pool.submit(supplied.observe_updates,scope,body,stage='native_request_visible')
+   assert entered[1].wait(2),'Second request bypassed the unfinished durable receipt'
+   assert not first.done() and not second.done()
+   release[0].set();assert first.result(timeout=2) is True
+   assert not second.done()
+   release[1].set();assert second.result(timeout=2) is True
+  finally:
+   for event in release:event.set()
+ assert supplied.observe_updates(scope,body,stage='native_request_visible') is True
+ assert len(calls)==2
+print('Concurrent requests cannot bypass an unfinished durable receipt')
+'''
+
+
+def test_concurrent_requests_wait_for_durable_update_receipt(artifacts, tmp_path):
+    run_python('-I', '-c', CONCURRENT, artifacts[3], cwd=tmp_path)
