@@ -120,6 +120,15 @@ This can exclude relevant evidence below the submission bound. Evaluate source
 retention alongside latency on the deployment's corpus; a smaller batch does
 not establish a relevance cutoff or solve unrelated-memory injection.
 
+Plain attributed quotations that exactly repeat the current request are
+supplementary: selection places them after independent evidence before bounded
+reranking and final packing. Original bytes and source records are retained;
+qualified assertion histories, annotations and uncertain attribution are exempt.
+This reduces displacement by repeated questions, including while a correction
+awaits claim processing. It does not guarantee primary-source coverage when
+many distinct assistant retellings compete, or recover sources missed during
+candidate retrieval. The five-record limit and character budget are unchanged.
+
 The default combined rendered budget is 6,000 characters, adjustable through
 `COLONY_RECALL_CONTEXT_MAX_CHARS` up to 24,000; zero suppresses this packet.
 This is a character limit, not an asserted token count. Shortened excerpts carry

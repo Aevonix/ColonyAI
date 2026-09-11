@@ -70,6 +70,21 @@ class RecallSelector:
                 seen.add(key)
             unique.append(row)
         quotations = unique
+        def repeats_request(row):
+            # An exact repeat contributes no independent answer evidence. Keep
+            # it available as supplementary context, without classifying other
+            # questions, promoting speakers or changing its source bytes.
+            return bool(isinstance(query, str) and query.strip()
+                and row.get("kind") == "source_quote"
+                and row.get("epistemic_state") == "quotation"
+                and row.get("scope") == "person" and row.get("contact_id")
+                and row.get("role") in {"user", "assistant"}
+                and isinstance(row.get("content"), str)
+                and row["content"].strip() == query.strip()
+                and not any(row.get(key) for key in (
+                    "atomic_evidence", "validity_status", "procedure_context",
+                    "source_context", "_annotation_ids")))
+
         # Media is an independent candidate producer. Appending its first hit
         # after every text hit can exclude it from the bounded reranker before
         # relevance is assessed. Fuse its rank independently; it still shares
@@ -82,10 +97,17 @@ class RecallSelector:
         candidates = fuse_candidates(
             beliefs, text, limit=len(beliefs) + len(quotations),
             confidence_weighting=False, additional=(media,))
+        # Do this before bounded reranking, so repeated requests do not crowd
+        # out answer-bearing candidates before their relevance can be judged.
+        candidates.sort(key=repeats_request)
         ranked = await self.rerank(
             query, candidates, limit, confidence_weighting=False,
             candidate_limit=max(1, 4 * limit))
         ranked.sort(key=lambda row: row.get("relevance", 0), reverse=True)
+        # A semantic reranker can score the identical question highest. Preserve
+        # its abstention decisions and substantive order, then place only exact
+        # unqualified request repeats after the remaining evidence.
+        ranked.sort(key=repeats_request)
         return pack_memory_context(ranked, limit=limit, max_chars=max_chars)
 
     async def rerank(
