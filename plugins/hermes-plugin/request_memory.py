@@ -173,7 +173,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             texts = [part['text'] for part in original if isinstance(part, dict)
                      and part.get('type') in ('text', 'input_text', 'output_text')
                      and isinstance(part.get('text'), str)]
-            if len(texts) == 1:
+            if len(original) == len(texts) == 1:
                 candidates.extend((texts[0], _PACKET.sub('', _MEMORY.sub('', texts[0]))))
         return any(source_message_hash(session, {'role': role, 'content': value}) in hashes
                    for value in candidates for session, hashes in origins.items())

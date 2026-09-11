@@ -196,6 +196,28 @@ def test_native_joined_input_repair_survives_removing_earlier_tool_rows(runtime)
     assert result['messages'][-1]['content'] == 'Earlier independent request\n\n' + current['api_content']
 
 
+def test_plain_source_hash_does_not_erase_a_different_historical_image_turn(runtime):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    image = {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,distinct-neutral-asset'}}
+    request = {'messages': [
+        {'role': 'user', 'content': [{'type': 'text', 'text': rt.fact}, image]},
+        {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'distinct-image-tool',
+            'function': {'name': 'inspect_image', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'distinct-image-tool', 'content': 'Distinct image result'},
+        {'role': 'assistant', 'content': 'A different image interpretation'},
+        {'role': 'user', 'content': 'Current image question'}]}
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True,
+        current_content='Current image question', current_input='Current image question')
+    assert image in filtered['messages'][0]['content']
+    assert filtered['messages'][1:] == request['messages'][1:]
+    # Existing exact-text filtering may withhold the old caption. That does
+    # not establish an erased full multimodal origin or erase a new asset.
+    assert filtered['messages'][0]['content'][0]['text'] == rt.module._ERASED
+
+
 @pytest.mark.parametrize('fresh', [True, False])
 @pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
 def test_instruction_markup_is_not_recalled_evidence(runtime, fresh, shape):
