@@ -36,7 +36,7 @@ contacts=SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db'))
 async def create_owner():
     await contacts.connect()
     contact=await contacts.create(display_name='Neutral fixture owner',trust_tier='inner_circle')
-    await contacts.add_handle(contact.contact_id,gateway='sms',address='+15550007160')
+    await contacts.add_handle(contact.contact_id,gateway='sms',address='+15550007160',verified=True)
     return contact.contact_id
 owner=asyncio.run(create_owner()); host._contacts_store=contacts
 os.environ['COLONY_OWNER_CONTACT_ID']=owner
@@ -58,7 +58,8 @@ app=FastAPI(); wire=[]; unavailable=threading.Event()
 @app.middleware('http')
 async def authority(request, next_call):
     request.state.colony_authority=RequestAuthority(principal_id='neutral-native', credential_id='fixture',
-        scopes=frozenset({'turns:write','context:read'}), viewer_person_id=owner,
+        scopes=frozenset({'turns:write','turns:resolve-sender','context:read'}), viewer_person_id=owner,
+        turn_ingress_platforms=frozenset({'sms'}),
         person_ids=frozenset({owner}), audiences=frozenset({'viewer'}), authenticated=True)
     if request.url.path=='/v1/host/executions' and request.query_params.get('projection')=='request' and unavailable.is_set():
         wire.append((request.method, request.url.path, dict(request.query_params), 503))

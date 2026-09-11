@@ -33,10 +33,10 @@ async def setup():
     await contacts.connect()
     person=await contacts.create(display_name='Neutral owner',trust_tier='inner_circle')
     guest=await contacts.create(display_name='Neutral guest')
-    await contacts.add_handle(person.contact_id,gateway='sms',address='+15550007160')
+    await contacts.add_handle(person.contact_id,gateway='sms',address='+15550007160',verified=True)
     if second_person!='unavailable':
         await contacts.add_handle(person.contact_id if second_person=='owner' else guest.contact_id,
-                                  gateway='sms',address='+15550007161')
+                                  gateway='sms',address='+15550007161',verified=True)
     return person.contact_id,guest.contact_id
 owner,guest=asyncio.run(setup()); host._contacts_store=contacts; host._task_queue=None
 os.environ['COLONY_OWNER_CONTACT_ID']=owner
@@ -55,7 +55,8 @@ async def authority(request,next_call):
             and request.query_params.get('address')=='+15550007161'):
         return Response('Controlled identity resolver outage',status_code=503)
     request.state.colony_authority=RequestAuthority(principal_id='native-fixture',credential_id='fixture',
-        scopes=frozenset({'turns:write','context:read'}),viewer_person_id=owner,
+        scopes=frozenset({'turns:write','turns:resolve-sender','context:read'}),viewer_person_id=owner,
+        turn_ingress_platforms=frozenset({'sms'}),
         person_ids=frozenset({owner,guest}),audiences=frozenset({'viewer'}),authenticated=True)
     response=await next_call(request)
     wire.append((request.method,request.url.path,dict(request.query_params),response.status_code))
