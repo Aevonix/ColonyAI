@@ -70,7 +70,7 @@ def test_subsystem_import(module, cls):
 def test_create_app():
     from apsimo.server import create_app
     app = create_app()
-    assert app.title == "Colony Intelligence Sidecar"
+    assert app.title == "Apsimo"
 
 
 def test_openapi_spec_export():

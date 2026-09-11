@@ -140,7 +140,7 @@ async def test_endpoint_errors(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_registry_feeds_eligibility_pipeline(monkeypatch):
-    from tests.test_tom2_eligibility import World
+    from test_tom2_eligibility import World
 
     monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
     monkeypatch.delenv("COLONY_TOM2_L2_APPROVAL", raising=False)
