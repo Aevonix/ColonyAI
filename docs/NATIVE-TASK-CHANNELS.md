@@ -35,7 +35,12 @@ source-binding and finalization hooks. Qualification must cover the exact
 Hermes interface used by the deployment. Merely enabling this configuration
 does not establish concurrency or production readiness.
 
-The execution adapter uses the configured canonical owner as its native sender.
+The execution adapter uses the configured canonical owner as its native sender
+and the native trusted-upstream authorization contract. It has no external
+ingress, and its controller and correlated handler verify the retained actual
+owner before native admission or recovery. This avoids copying canonical owner
+IDs into each channel's unrelated environment allowlist. Transport subclasses
+keep the base adapter's ordinary authorization policy.
 It does not create a `colony_task` contact handle. Its public transport scope
 comes from the retained original channel and current owner binding, and keeps
 that original handle for ordinary per-tool authority checks. Explicitly

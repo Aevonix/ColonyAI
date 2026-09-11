@@ -2797,13 +2797,12 @@ def register(ctx: Any) -> None:
     ctx.register_hook('on_kanban_dispatch_tick', native_reviews.reconcile)
     ctx.register_hook('on_kanban_dispatch_tick', native_followups.reconcile)
     if native_tasks is not None:
-        from .native_task_platform import bind_native_turn, finish_native_turn
         ctx.register_platform(name='colony_task', label='Colony background tasks',
             adapter_factory=native_tasks.create_adapter, check_fn=lambda: True,
             is_connected=lambda selected: bool(getattr(selected, 'enabled', False)),
             max_message_length=1000000)
-        ctx.register_hook('pre_llm_call', bind_native_turn)
-        ctx.register_hook('on_session_end', finish_native_turn)
+        ctx.register_hook('pre_llm_call', native_tasks.bind_native_turn)
+        ctx.register_hook('on_session_end', native_tasks.finish_native_turn)
         ctx.register_hook('on_kanban_dispatch_tick', native_tasks.reconcile_pending)
 
     ctx.register_hook("pre_llm_call", pre_llm_call)

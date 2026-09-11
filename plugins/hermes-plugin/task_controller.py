@@ -70,12 +70,17 @@ class NativeTasks:
     def create_adapter(self, config):
         from .native_task_platform import NativeTaskAdapter
         controller = self
-        # The execution channel uses the canonical owner ID, while each source
-        # retains and rechecks its real external handle. Use Hermes' existing
-        # per-adapter allowlist projection, without adding an environment key.
-        config.extra.setdefault('allow_from', [self.owner])
-
         class ConnectedTaskAdapter(NativeTaskAdapter):
+            @property
+            def authorization_is_upstream(adapter):
+                # This adapter has no external ingress. The source controller
+                # and correlated handler authenticate the retained real owner
+                # before native dispatch, including recovery. Hermes' existing
+                # trusted-upstream contract avoids treating a canonical task
+                # owner as an unrelated external-channel allowlist entry.
+                # Transport subclasses retain the base default policy.
+                return True
+
             async def connect(adapter, *, is_reconnect=False):
                 connected = await super().connect(is_reconnect=is_reconnect)
                 controller.adapter = adapter
@@ -88,6 +93,18 @@ class NativeTasks:
                 await super().disconnect()
 
         return ConnectedTaskAdapter(config, handoffs=self.handoffs)
+
+    def bind_native_turn(self, **kwargs):
+        from .native_task_platform import ACTIVE, bind_native_turn
+        active = ACTIVE.get()
+        if active is not None and active['adapter'] is self.adapter:
+            return bind_native_turn(**kwargs)
+
+    def finish_native_turn(self, **kwargs):
+        from .native_task_platform import ACTIVE, finish_native_turn
+        active = ACTIVE.get()
+        if active is not None and active['adapter'] is self.adapter:
+            return finish_native_turn(**kwargs)
 
     def native_scope_fields(self, **kwargs):
         """Project the retained real sender into this exact native task turn.
