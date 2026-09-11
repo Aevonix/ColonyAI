@@ -349,7 +349,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
 
 
 def _restore_current_suffix(request, tail, current):
-    """Recover only a native-observed suffix lost by plain-user repair.
+    """Recover only a native-observed suffix merged by plain-user repair.
 
     Split the exact observed clean tail temporarily so ordinary filtering still
     checks each historical row for erasure. The wire is recombined afterwards.
@@ -361,14 +361,18 @@ def _restore_current_suffix(request, tail, current):
     if (not isinstance(clean, str) or not isinstance(enriched, str)
             or clean != tail[-1] or not enriched.startswith(clean) or enriched == clean):
         return request, None
+    # Native versions may merge the clean row or retain its api_content. Both
+    # exact observed forms need splitting so erasure checks see historical
+    # rows separately from the current, attributed input.
     joined = '\n\n'.join(value for value in tail if value)
+    joined_enriched = '\n\n'.join(value for value in [*tail[:-1], enriched] if value)
     for key in ('messages', 'input'):
         rows = request.get(key)
         if not isinstance(rows, list):
             continue
         index = max((i for i, row in enumerate(rows) if isinstance(row, dict)
                      and row.get('role') == 'user'), default=-1)
-        if index < 0 or rows[index].get('content') != joined:
+        if index < 0 or rows[index].get('content') not in (joined, joined_enriched):
             continue
         split = [{'role': 'user', 'content': value} for value in tail[:-1]]
         split.append({'role': 'user', 'content': enriched})
