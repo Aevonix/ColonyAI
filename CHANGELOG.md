@@ -1,5 +1,25 @@
 # Changelog
 
+## v1.3.2 - conversation provenance and repeated-request recall
+
+Native turn ingestion now preserves the actual conversation platform independently
+of the sender's authority channel. A CLI conversation no longer acquires a
+contact's primary messaging channel. Explicit channel identifiers survive the
+client and durable outbox. Existing rows retain their recorded provenance.
+Automatic context describes recorded outgoing messages without asserting
+proactive outreach or delivery.
+
+Recall places plain quotations that exactly repeat the current request after
+independent evidence. A reconstructed pending-correction case now includes the
+original human correction within the unchanged five-item and 6,000-character
+budgets. Distinct assistant retellings can still crowd out a pending correction;
+this change does not establish general source retention or model portability.
+
+Validation includes five frozen native integration cases for channel attribution,
+replay and truthful context, native CLI ingestion, and source ingestion through
+FTS, claim projection and recall packing. These checks exercise real code paths
+with controlled inputs; live model usefulness is evaluated separately.
+
 ## v1.3.1 - enrolled owner accounts and scoped turn clocks
 
 Fresh guided setup can enroll exact owner messaging accounts with repeatable

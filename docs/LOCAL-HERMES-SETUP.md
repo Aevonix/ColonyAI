@@ -274,11 +274,11 @@ Update both Apsimo distributions in the environment that runs Apsimo, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "apsimo[hermes]==1.3.1" "apsimo-hermes[native-memory]==1.3.1"
+python -m pip install --upgrade "apsimo[hermes]==1.3.2" "apsimo-hermes[native-memory]==1.3.2"
 apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
-Replace `1.1.11` with the release you are selecting. A Hermes interpreter with
+Replace the example versions with the release you are selecting. A Hermes interpreter with
 native installed Apsimo entry points also needs that adapter package updated explicitly in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
