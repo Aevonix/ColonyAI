@@ -8,6 +8,7 @@ import pytest
 
 PROBE = r'''
 import hashlib,importlib.util,json,os,socket,sys,types
+from datetime import datetime
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2])
 package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[3]];sys.modules['colony_hermes']=package
@@ -87,6 +88,9 @@ try:
  # The supported reader actually observes a useful current failure sample.
  result=invoke('colony_read_work_source',{'source':1})
  observed=json.loads(result);assert 'repeated tool timeout' in observed['text'],observed
+ assert abs(datetime.fromisoformat(observed['modified_at_utc']).timestamp()-observed['modified_at'])<0.000001
+ assert datetime.fromisoformat(observed['observed_at_utc']).utcoffset().total_seconds()==0
+ assert 'does not establish whether its service is running' in observed['coverage']
  assert observed['filesystem']['available_bytes']>0 and observed['retention_configuration']['available'] is False
  assert len(observed['text'].encode())<=16384
  assert 'sk-canary-not-for-the-review' not in result,result

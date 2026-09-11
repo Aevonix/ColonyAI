@@ -621,8 +621,14 @@ sources 1 through 5 select that observation's `largest_files` list, restricted
 to the configured log directory. Each read measures current file size,
 modification time and filesystem capacity and returns at most 16 KiB of
 redacted text. Writer and retention configuration are explicitly marked
-unavailable. Neither a sample nor file age proves historical coverage or
-recovery readiness. The instance may set `operational_log_directory`; its
+unavailable. Observation and modification timestamps are also rendered in UTC;
+timestamps inside log text may use another timezone. Neither a sample nor file
+age proves service liveness, historical volume causality or recovery readiness.
+New task contracts require one evidenced next step and verification while
+preserving logs. A useful report can identify unavailable configuration as the
+next bounded inspection. Existing bound contracts retain their exact body and
+digest; only new bindings use the bounded report-tool wording.
+The instance may set `operational_log_directory`; its
 default matches the existing producer's `~/.colony/logs`. A mismatched
 registered directory is unavailable, never substituted with another log.
 
