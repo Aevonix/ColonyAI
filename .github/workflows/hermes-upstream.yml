@@ -60,7 +60,7 @@ jobs:
           PY
       - name: Install adapter and selected native runtime
         run: |
-          python -m pip install -e '.[test]'
+          python -m pip install -e '.[test,native-memory]'
           python -m pip install -e ./.qualification/hermes
           python -m pip install ./sidecar
       - name: Qualify built artifacts against latest stable Hermes

@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.1.13 - forgotten history excluded from native summaries
+
+Hermes can build an extra final-summary request from retained history after a
+task reaches its iteration limit. This call bypasses ordinary request hooks.
+Colony now applies its existing source-validity and erasure filter through the
+native turn's scoped Relay execution contract, including streaming and retry
+calls. When an exact erased source identifies a historical conversation turn,
+its derived tool arguments, results and reasoning are withheld together. The
+current observed input, including an intentional retelling, remains available.
+Ordinary requests avoid a duplicate check. Child scopes and completion cleanup
+preserve the original participant boundary.
+
+Qualified on Hermes 0.21.1 with NeMo Relay 0.8.3. The optional `native-memory`
+extra installs that dependency. This filters provider inputs on the covered
+paths; it does not erase stored native transcripts, exports, backups or arbitrary
+paraphrases. No Hermes core patch or process-wide Relay policy is introduced.
+
+## v1.1.12 - current timing and shared-session context
+
+Cached contact timing is rendered against the current turn, preserving the gap
+before that turn through native compression and clearing it on unrelated history
+changes. Shared-work context includes the authenticated current session identity,
+including when the work lookup is unavailable.
+
 ## v1.1.11 - source-aware native task continuation
 
 Registered transports can supply already retained input references while Hermes

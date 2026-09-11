@@ -211,8 +211,8 @@ existing cursor sequence. Predecessor readers still filter those message copies
 without treating surviving user sources as wholly deleted. Downgrading preserves
 completed erasures, but predecessor writers do not record new answer dependencies.
 
-This is scoped source erasure, not a claim of global forgetting. Native Hermes
-transcripts/API context, backups, prior graph records without source lineage,
+This is scoped source erasure, not a claim of global forgetting. Persisted native
+Hermes transcripts and `api_content` bytes, backups, prior graph records without source lineage,
 legacy shared facts, ToM, commitments, and other old derivative stores need their
 own erasure adapters. Offline hosts retain bytes until reconnecting; filesystem
 snapshots and physical-media remnants are outside this logical-delete contract.
@@ -242,6 +242,36 @@ allows Python 3.11 through 3.13; those other interpreters are not yet qualified.
 Other Hermes
 releases are unqualified until the native-loader checks pass against them.
 Hermes is installed separately; this package does not select or upgrade it.
+
+The additional native provider-call memory boundary is qualified on Hermes
+0.21.1 with NeMo Relay 0.8.3. Install it with
+`python -m pip install 'colony-hermes[native-memory]'`; the supported Hermes
+release also declares this Relay dependency. CI installs that extra explicitly.
+Older Hermes attachment support does not imply this additional erasure coverage.
+Missing scope-local Relay capabilities leave the ordinary adapter active and
+emit a warning when the native boundary cannot be registered.
+
+Hermes's maximum-iteration summary rebuilds historical `api_content` and bypasses
+`llm_request` and ordinary API observers. Colony binds its existing authenticated
+source-validity and erasure filter to that native turn's scoped Relay execution
+contract. The SDK receives filtered history for the summary, including its
+empty-answer retry. A one-use digest avoids repeating the ordinary request
+filter; another physical attempt without a new ordinary check is revalidated.
+The boundary also covers native streaming calls through the same Relay scope.
+It neither rewrites stored transcripts nor creates new recollection. Joined
+children use their own participant state, and completion or native scope teardown
+removes the registrations. No process-global Relay configuration is activated.
+An exact erased user or assistant source also withdraws its historical
+user-to-next-user segment from provider input. Its intervening tool arguments,
+results and reasoning are withheld together, with a small forgotten-source
+placeholder. The current native-observed input stays available even when Hermes
+adds a synthetic summary nudge, including when the user intentionally retells a
+fact. Unaffected historical turns remain available. This uses retained source
+hashes and observed content aliases, not word matching or inferred dependencies
+across unrelated turns.
+
+This is provider-input coverage on those dispatch paths, not erasure of native
+transcript files, Relay exports, arbitrary paraphrases, or calls outside them.
 
 Hermes 0.21.1 wraps provider recollection in a note calling it authoritative
 reference data. Colony's supported `llm_request` middleware replaces that outer

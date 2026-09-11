@@ -123,6 +123,101 @@ def test_unavailable_feed_returns_current_turn_and_tool_results_without_old_cont
     assert result['request']['messages'][-1]['tool_call_id'] == 'step'
 
 
+@pytest.mark.parametrize('shape', ['chat', 'responses', 'anthropic'])
+@pytest.mark.parametrize('anchor', ['user', 'assistant'])
+def test_exact_erased_origin_withholds_its_historical_tool_turn(runtime, shape, anchor):
+    rt = runtime
+    source = {'role': anchor, 'content': 'A source-linked neutral packing answer.'}
+    rt.ledger.record_source('packing', contact_id='owner', session_id='original',
+                           messages=[source], derive_claims=False)
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['packing'])
+    page = rt.ledger.erasure_feed('owner')
+    enriched = source['content'] + '\n\n' + packet('owner', 0, 'Old source projection')
+    user = enriched if anchor == 'user' else 'Prepare the neutral packing plan.'
+    answer = enriched if anchor == 'assistant' else 'Packing plan completed.'
+    def pair(identifier, value):
+        if shape == 'responses':
+            return [{'type': 'function_call', 'call_id': identifier, 'name': 'terminal', 'arguments': value},
+                    {'type': 'function_call_output', 'call_id': identifier, 'output': value}]
+        if shape == 'anthropic':
+            return [{'role': 'assistant', 'content': [{'type': 'tool_use', 'id': identifier,
+                        'name': 'terminal', 'input': {'command': value}}]},
+                    {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': identifier,
+                        'content': value}]}]
+        return [{'role': 'assistant', 'content': '', 'tool_calls': [{'id': identifier,
+                    'function': {'name': 'terminal', 'arguments': value}}]},
+                {'role': 'tool', 'tool_call_id': identifier, 'content': value}]
+    # Neither the canonical text nor its alias contains the derived token.
+    # Its removal must follow the exact turn origin, never value matching.
+    rows = [{'role': 'system', 'content': 'Stable identity'},
+            {'role': 'user', 'content': 'Unaffected earlier task'},
+            *pair('unaffected-pair', 'unaffected-derived-value'),
+            {'role': 'assistant', 'content': 'Unaffected answer'},
+            {'role': 'user', 'content': user},
+            *pair('forgotten-pair', 'derived-cutoff-1789751700'),
+            {'role': 'assistant', 'content': answer},
+            {'role': 'user', 'content': source['content']},
+            *pair('current-pair', 'current-tool-result'),
+            {'role': 'user', 'content': 'Native synthetic summary nudge'}]
+    key = 'input' if shape == 'responses' else 'messages'
+    request = {key: rows}
+    original = copy.deepcopy(request)
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True,
+        aliases={rt.module._content_key(enriched): source['content']},
+        current_content=source['content'], current_input=source['content'])
+    wire = json.dumps(filtered)
+    assert 'derived-cutoff-1789751700' not in wire and 'forgotten-pair' not in wire
+    assert all(value in wire for value in ('unaffected-derived-value', 'unaffected-pair',
+        'Unaffected answer', 'current-pair', 'current-tool-result', 'Native synthetic summary nudge'))
+    assert sum(row.get('content') == source['content'] for row in filtered[key]) == 1
+    assert request == original
+    assert filtered[key][0] == rows[0]
+
+
+def test_native_joined_input_repair_survives_removing_earlier_tool_rows(runtime):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    current = {'role': 'user', 'content': 'Current request',
+               'api_content': 'Current request\n\n' + packet('owner', page['head'], 'Current context')}
+    request = {'messages': [{'role': 'user', 'content': rt.fact},
+        {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'old', 'function': {'arguments': 'old derived'}}]},
+        {'role': 'tool', 'tool_call_id': 'old', 'content': 'old derived'},
+        {'role': 'assistant', 'content': 'Old final'},
+        {'role': 'user', 'content': 'Earlier independent request\n\nCurrent request'}]}
+    split, repair = rt.module._restore_current_suffix(request,
+        ['Earlier independent request', 'Current request'], current)
+    filtered = rt.module.filter_request(split, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True, current_content=current['api_content'], current_input=current['content'])
+    result = rt.module._recombine_current_suffix(filtered, repair)
+    assert len(result['messages']) == 2
+    assert 'old derived' not in json.dumps(result)
+    assert result['messages'][-1]['content'] == 'Earlier independent request\n\n' + current['api_content']
+
+
+def test_plain_source_hash_does_not_erase_a_different_historical_image_turn(runtime):
+    rt = runtime
+    rt.ledger.erase_sources(contact_id='owner', turn_ids=['fixture-source'])
+    page = rt.ledger.erasure_feed('owner')
+    image = {'type': 'image_url', 'image_url': {'url': 'data:image/png;base64,distinct-neutral-asset'}}
+    request = {'messages': [
+        {'role': 'user', 'content': [{'type': 'text', 'text': rt.fact}, image]},
+        {'role': 'assistant', 'content': '', 'tool_calls': [{'id': 'distinct-image-tool',
+            'function': {'name': 'inspect_image', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'distinct-image-tool', 'content': 'Distinct image result'},
+        {'role': 'assistant', 'content': 'A different image interpretation'},
+        {'role': 'user', 'content': 'Current image question'}]}
+    filtered = rt.module.filter_request(request, contact_id='owner', watermark=page['head'],
+        rules=page['events'], fresh=True,
+        current_content='Current image question', current_input='Current image question')
+    assert image in filtered['messages'][0]['content']
+    assert filtered['messages'][1:] == request['messages'][1:]
+    # Existing exact-text filtering may withhold the old caption. That does
+    # not establish an erased full multimodal origin or erase a new asset.
+    assert filtered['messages'][0]['content'][0]['text'] == rt.module._ERASED
+
+
 @pytest.mark.parametrize('fresh', [True, False])
 @pytest.mark.parametrize('shape', ['text', 'multimodal', 'responses'])
 def test_instruction_markup_is_not_recalled_evidence(runtime, fresh, shape):
