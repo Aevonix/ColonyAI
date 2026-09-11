@@ -14,6 +14,12 @@ correction or erasure withholds stale pixels. Existing source storage, search,
 backup and erasure are reused. Camera enrollment and continuous recording are
 outside this change.
 
+Recalled media now places the exact canonical source ID and version beside its
+description. Lexical media retrieval preserves the owning message hash so
+source corrections accompany that evidence. A reader call using a media ID
+still fails, but can show already-supplied matching source references to help
+the caller correct its arguments without guessing or widening access.
+
 CI installs the optional decoder for actual MP4-to-native-SDK integration
 checks. Controlled tests verify bytes, timing and source effects; they do not
 establish a model's visual accuracy or physical camera behavior.

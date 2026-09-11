@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
+import pytest_asyncio
 
 from colony_sidecar.intelligence.graph.recall import pack_memory_context, render_memory_context
 from colony_sidecar.turns import TurnIdempotencyLedger
@@ -19,7 +20,7 @@ from test_source_media import Vision, image_bytes, message
 from test_turn_source_evidence import source_app
 
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def media_source(source_app, tmp_path, monkeypatch):
     monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
