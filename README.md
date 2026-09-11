@@ -1,75 +1,71 @@
 # Apsimo PsuedoAGI
 
+**Autonomous Persistent Selfness, Intelligence & Memory Orchestration**
+
 [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![CI](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/Apsimo/actions/workflows/ci.yml)
+[![CI](https://github.com/Aevonix/ApsimoAGI/actions/workflows/ci.yml/badge.svg)](https://github.com/Aevonix/ApsimoAGI/actions/workflows/ci.yml)
 
-Apsimo adds persistent memory, shared work and evolving agent state to
-[Hermes](https://github.com/NousResearch/hermes-agent). It connects conversations
-and background tasks to the same private records, so an agent can carry knowledge
-and commitments between sessions while its models change.
+Apsimo gives a [Hermes](https://github.com/NousResearch/hermes-agent) agent
+persistent memory and a shared view of its ongoing work. Conversations and
+background tasks use the same private records, keeping knowledge, identity and
+commitments available across sessions and model changes.
 
-Hermes provides the conversations, tools and execution runtime. Apsimo supplies
-relevant memories, a view of work in progress, and the state used for preferences,
-relationships and initiative. Each deployment defines its own agent identity,
-model endpoints, channels and optional devices.
+Hermes handles conversations and tools. Apsimo adds recollection, task
+coordination, and the stored preferences and relationships that guide the agent.
+Each installation has its own identity, models, channels and optional devices.
 
 Formerly ColonyAI. Existing installations should follow the
 [migration guide](docs/APSIMO-MIGRATION.md); historical names and state paths remain valid.
 
 ## Mission: what we mean by pseudo-AGI
 
-Our goal is a persistent agent that learns from experience, carries work across
-conversations, develops evidence-based judgments, and acts within its owner's
-authority. The owner should be able to inspect what it knows, correct it, ask
-what it is doing, and see whether an attempted improvement actually helped.
+Build an agent that remembers what matters, keeps its commitments and improves
+through use. You should be able to inspect what it knows, correct it, ask what
+it is doing, and continue working with it across conversations and model changes.
 
-We use **pseudo-AGI** for that combination of observable behaviors:
+We use **pseudo-AGI** to describe these goals:
 
 - **Persistence:** knowledge, identity and unfinished work survive a session,
   process restart or model change.
 - **One mind:** conversations, workers and scheduled tasks share commitments
   and relevant context. The owner can keep talking while work continues.
-- **Evolving memory:** ordinary use produces useful retained evidence;
-  recollection brings relevant information into later decisions. Corrections,
-  contradictions and forgetting have explicit consequences.
-- **Selfhood and relationships:** identity, values, preferences and working
-  opinions are inspectable state that can influence behavior and be corrected.
+- **Evolving memory:** the agent learns useful information from ordinary use,
+  recalls it when needed, notices contradictions and respects corrections and
+  requests to forget.
+- **Selfhood and relationships:** identity, values, preferences and opinions
+  influence behavior. The owner can inspect and correct them.
 - **Autonomy:** the agent can notice something worth doing, judge whether it is
   authorized, act or propose work, and follow through without repeated prompting.
-- **Measured improvement:** a change earns adoption by improving a real task
-  without hiding regressions.
+- **Measured improvement:** changes improve real tasks, and the agent detects
+  and reverses regressions.
 
-The term describes our engineering target. Consciousness is outside these
-acceptance criteria. Model capability still limits reasoning and behavior;
-shared state cannot make every processor equally capable.
+Reasoning and behavior still depend on the models selected for each role.
 
 ## Where we are today
 
-**Phase 1 is in development and behavioral validation.** Installable packages,
-native Hermes integration and substantial parts of the system are available.
-The complete unified-agent goal remains unfinished.
+**Phase 1 is still in development and validation.** Packages and Hermes
+integration are available; the full set of behaviors above is unfinished.
 
 The supported core includes [source memory](docs/MEMORY-QUALITY.md), automatic
 recollection, [shared task controls](docs/NATIVE-TASK-CHANNELS.md),
 [contact identity and preferences](docs/SOCIAL-STATE.md), named model routing,
-and guided private setup. Readers retain links to original images, audio,
-documents and selected video. Native skill proposal, evaluation and rollback
-mechanisms are also available.
+and guided private setup. Memory can link back to original images, audio,
+documents and selected video. Skill proposal, evaluation and rollback are
+implemented.
 
-These mechanisms have stronger evidence than the complete autonomous behavior.
-Recollection and task continuity have passed bounded trials, while ordinary-use
-quality, responsiveness and unattended operation need further validation.
-Unsupported model claims remain a measured weakness. Complete forgetting across
-old transcripts, unlinked copies and backups remains open.
+Limited trials have demonstrated useful recollection and tasks continuing across
+sessions. Reliability in everyday use, response time and unattended recovery
+still need improvement and testing. Models still make unsupported claims.
+Complete forgetting across old transcripts, unlinked copies and backups remains
+unfinished.
 
-Automatic persistent opinions are experimental and disabled by default.
-Relationship state does not grant permissions. A selected skill evaluator does
-not establish general self-improvement.
+Automatic persistent opinions are experimental and disabled by default. Trust
+and relationship estimates are separate from permissions. Useful autonomous
+self-improvement still needs an end-to-end demonstration.
 
-The roadmap below identifies the remaining outcomes. The [changelog](CHANGELOG.md)
-records implementation changes, and [known gaps](docs/KNOWN-GAPS.md) covers partial
-and retired components. Availability depends on the selected profile, model and
-deployment adapters.
+The roadmap below lists the remaining outcomes. See the [changelog](CHANGELOG.md)
+for releases and [known gaps](docs/KNOWN-GAPS.md) for partial and retired
+components. Available features depend on the profile, models and adapters you use.
 
 ## How Apsimo connects to Hermes
 
@@ -83,79 +79,71 @@ flowchart LR
 ```
 
 Hermes owns channel transport, tool execution, native scheduling and workers.
-Apsimo connects through its plugin and memory-provider contracts, with an HTTP
-API for authenticated deployment adapters. It observes native work instead of
-adding a second task scheduler.
+Apsimo connects through plugins, the memory-provider contract and request hooks.
+Authenticated deployment adapters use its HTTP API. Shared task state follows
+work running in Hermes.
 
-**Ordinary turns recall context before generation.** The memory provider selects
-context for the current participant and question. During a longer tool loop, source freshness
-checks and the [current-work view](docs/REQUEST-WORK-CONTEXT.md) run at model-request
-boundaries. Full recollection remains once per turn. This keeps a continuing task
-aware of relevant changes without replaying all stored memories into every request.
+**Recall happens before an ordinary reply begins.** Apsimo selects memories for
+the current person and question. While the agent uses tools, each model request
+checks whether its sources are still valid and refreshes the
+[view of current work](docs/REQUEST-WORK-CONTEXT.md). Full recollection runs once
+per turn.
 
-**Canonical evidence is separate from search indexes.** SQLite supports the
-minimum deployment. Optional Lance indexes provide semantic retrieval; their
-embedding generations are replaceable. Existing extended deployments can retain
-legacy Neo4j records, which are not yet fully reconstructible from canonical
-sources. Adding a database does not resolve poor memory admission or retrieval.
+**Source records outlive search indexes.** SQLite supports the minimum
+installation. Optional Lance indexes support semantic search and can be replaced
+when embedding models change. Some existing deployments retain legacy Neo4j
+records that cannot yet be fully rebuilt from the original sources.
 
-**Models are replaceable processors.** [Named function roles](docs/FUNCTION-ROUTING.md)
-select configured endpoints and fallbacks. Later requests can use updated
-bindings while in-flight work retains its selection. Automatic fleet enrollment,
-capacity scheduling and empirical model selection remain roadmap work. Local
-inference is supported without a cloud-model dependency for normal operation.
+**Models are assigned by role.** [Named roles](docs/FUNCTION-ROUTING.md) select
+configured endpoints and fallbacks. Later requests can use new assignments while
+work already running keeps its selection. Normal operation supports local
+inference without a cloud-model dependency. Automatic fleet enrollment, capacity scheduling and model selection
+based on measured results remain planned work.
 
-**Each agent remains private.** Identity, credentials, relationship data, model
-addresses and device configuration belong outside the public repository. Voice,
-cameras, phones, panels and other hardware connect through deployment adapters.
-The public system does not assume a particular household or hardware fleet.
+**Each installation owns its private data.** Identity, credentials, relationships,
+model addresses and device settings stay outside the public repository. Private
+adapters connect voice systems, cameras, phones, panels and other hardware.
 
 The [architecture guide](docs/ARCHITECTURE.md) describes state ownership and
-extension boundaries. Reuse the host's facilities before adding a subsystem.
+the interfaces between Apsimo and Hermes.
 
 ## Progress roadmap
 
 ### Phase 1: demonstrate a useful unified agent
 
-This phase completes and validates the current system. Its milestones close on
-observed outcomes, rather than component counts or test totals.
+Each milestone requires a working outcome on a real deployment.
 
 | Milestone | Current position | Acceptance outcome |
 | --- | --- | --- |
-| Useful persistent memory | Implemented; quality validation continues | A correction given through one channel is applied in another after a model swap, with the right source and uncertainty. Low-value material does not crowd it out. |
-| Correction and forgetting | Source lifecycle implemented; complete erasure unfinished | Contradictions remain inspectable. Supported memory and history tools cannot resurface forgotten material. Derived copies are removed, and backup handling and unsupported copies are accounted for. |
-| Conversation during work | Implemented; cross-channel acceptance continues | The owner talks, inspects progress, changes direction or cancels from another enrolled channel while the same task retains its identity and constraints. |
-| Self, contacts and relationships | State and correction paths implemented; usefulness under evaluation | A supported change in preference or working opinion produces an explainable behavioral change. Uncertain identity matches stay unresolved until supported. |
-| Multimodal recollection | Supported readers implemented; coverage incomplete | Useful information from text, images, audio, documents and selected video is recalled with traceable originals and accurately stated limits. |
-| Initiative and follow-up | Execution and observation paths implemented; outcome quality incomplete | A relevant opportunity or overdue commitment produces one useful authorized action or proposal, with delivery and outcome observed. |
-| Model-role qualification | [Evaluation suite available](docs/MODEL-QUALIFICATION.md); coverage expanding | Compare candidate models on the actual consumers they will serve, including quality, latency, failure behavior and memory use. Preserve unsuccessful attempts. |
-| Useful self-improvement | Proposal/evaluation/rollback paths implemented; end-to-end benefit unproven | The agent diagnoses a recurring failure, authors a change, improves an independently evaluated task and detects a measured regression. Consequential activation uses owner authorization. |
-| Installation and unattended operation | Setup and recovery mechanisms implemented; wider acceptance incomplete | A new private installation completes the supported behaviors, survives representative service failures and upgrades, and retains current memory, tasks and permissions through recovery. |
+| Useful persistent memory | Implemented; reliability needs improvement | Apply a correction from one channel in another after a model swap, citing the right source. Keep low-value material from crowding it out. |
+| Correction and forgetting | Correction paths implemented; complete erasure unfinished | Show contradictions and their sources. Remove forgotten material from supported recall/history tools and derived stores, with an explicit policy for backups and other copies. |
+| Conversation during work | Implemented; real channel testing continues | Talk, inspect progress, change direction or cancel from another enrolled channel while the same task keeps its identity and permissions. |
+| Self, contacts and relationships | Stored state and corrections implemented; usefulness under evaluation | Explain how a preference or opinion changed a decision. Resolve uncertain identity matches before linking people across channels. |
+| Multimodal recollection | Readers implemented; coverage incomplete | Recall useful information from text, images, audio, documents and selected video, with links to the originals and accurate limits. |
+| Initiative and follow-up | Execution paths implemented; useful outcomes incomplete | Notice a relevant opportunity or overdue commitment, take one authorized action or make a proposal, and follow it through. |
+| Model-role qualification | [Evaluation suite available](docs/MODEL-QUALIFICATION.md); coverage expanding | Compare models in the functions they will serve, measuring quality, latency, failures and memory use. Retain failed attempts in the results. |
+| Useful self-improvement | Proposal, evaluation and rollback implemented; benefit unproven | Diagnose a recurring failure, author a change, improve an independently evaluated task and detect a regression. Use owner authorization for consequential changes. |
+| Installation and unattended operation | Setup and recovery implemented; wider testing incomplete | Install a private agent, demonstrate the supported behaviors, and recover from service failures and upgrades with memory, tasks and permissions intact. |
 
-Phase 1 is complete when these outcomes hold on the selected production runtime
-and configuration, including ordinary use and recovery. A controlled model
-response proves an integration contract; an observed real task establishes its
-value. Physical device coverage is recorded per deployment.
-
-When a behavior works and its meaningful failure cases are covered, move on.
-Prefer a small repair to another review service, approval layer or parallel
-implementation of something Hermes already provides.
+Phase 1 is complete when these outcomes hold in production, including ordinary
+use and recovery. Controlled tests verify integration; real tasks establish
+usefulness. Physical device coverage is recorded for each deployment.
 
 ### Phase 2: recursive improvement of the agent system
 
 Phase 2 begins after Phase 1 is validated. The next learning loop is:
 
-1. Detect a recurring failure or opportunity from retained outcomes.
-2. Form a hypothesis and propose a bounded change to a skill, playbook, prompt,
+1. Detect a recurring failure or opportunity from previous outcomes.
+2. Form a hypothesis and propose a specific change to a skill, playbook, prompt,
    retrieval strategy or non-core code.
 3. Compare it with the current behavior on independent task cases.
 4. Adopt an authorized improvement, observe its real effect and roll back a regression.
-5. Retain what the experiment established so the next attempt starts with better evidence.
+5. Record the result so the next attempt can build on it.
 
 The first target is learning through memory, strategies and evaluated system
-changes. Model fine-tuning is optional future work. Claims of recursive
-improvement require evidence that successive learning cycles themselves become
-more effective. A self-written patch or a successful self-review is insufficient.
+changes. Model fine-tuning is optional future work. Recursive improvement will
+require showing that the learning process itself becomes more effective over
+successive cycles.
 
 ## Start with Hermes
 
@@ -163,7 +151,7 @@ Use Python 3.12, an existing supported Hermes deployment and one local
 OpenAI-compatible chat endpoint. The lightweight profile needs no Docker,
 Neo4j, embedding model or external account.
 
-The current qualification target is Hermes 0.21.2; 0.21.0 and 0.21.1 attachment
+The currently tested Hermes version is 0.21.2; 0.21.0 and 0.21.1 attachment
 remain supported. Optional concurrent tasks and current detached-review
 integration use the [documented compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
 Setup does not patch Hermes core or restart an existing gateway. The daily
@@ -191,8 +179,8 @@ apsimo --instance /path/to/private/apsimo status
 ```
 
 Start a fresh Hermes session, provide a harmless fact and ask for it in another
-session. Confirm the source and answer. The minimum profile remembers and
-observes; background execution and external effects need deliberate configuration.
+session. Confirm the source and answer. The minimum profile provides memory and
+work observation; background execution and external actions need configuration.
 Consequential actions require owner authorization. Work and its results should
 survive a missed notification.
 
@@ -223,9 +211,9 @@ cd sidecar
 python -m pytest -q tests apsimo
 ```
 
-`tests/hermes_adapter` qualifies built packages against the pinned native Hermes
-runtime. Deployment acceptance additionally needs real inference, source
-receipts, cross-session behavior and recovery with the actual configuration.
+`tests/hermes_adapter` tests built packages against the pinned Hermes runtime.
+Deployment testing also needs real inference, traceable sources, tasks across
+sessions and recovery with the actual configuration.
 Keep personal data, endpoint addresses, secrets and deployment configuration out
 of public examples, commits and test artifacts.
 
