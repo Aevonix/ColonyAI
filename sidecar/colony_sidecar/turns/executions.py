@@ -254,11 +254,18 @@ def format_view(view: dict) -> str:
     if local:
         if not local['available']:
             lines.append('Accepted local work unavailable: '+local['reason']+'.')
-        # Full history remains in the API. Ordinary turns need the latest
-        # capability outcome, not repeated older briefing excerpts.
+        # Full history remains in the API. A completed artifact's prose is
+        # opened when needed; shared work context keeps its outcome and receipt.
         for item in local['items']+local['recent'][:1]:
             if isinstance(item.get('forecast'),dict):
                 item = {**item,'forecast':_forecast_observation(item['forecast'])}
+            result = item.get('result')
+            if isinstance(result, dict) and item.get('status') == 'completed':
+                path, digest = result.get('report_path'), result.get('report_sha256')
+                if (isinstance(path, str) and path.strip() and isinstance(digest, str)
+                        and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)):
+                    item = {**item, 'result': {key: value for key, value in result.items()
+                                             if key != 'summary'}}
             lines.append('- Accepted local work and unverified draft: '+json.dumps(item, ensure_ascii=True))
     for item in view.get('worker_work', {}).get('items', []):
         lines.append('- Worker work: ' + json.dumps(item, ensure_ascii=True))

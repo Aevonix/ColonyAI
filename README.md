@@ -19,7 +19,8 @@ channels, model endpoints and optional hardware adapters.
 - **Shared work:** native tasks, children, crons and enrolled external work appear
   in one scoped view, refreshed at model-request boundaries. Source coverage and
   missing observations stay explicit. Accepted drafts retain their identity
-  through delayed acknowledgments.
+  through delayed acknowledgments. Completed artifact prose opens on demand;
+  its status, limitations and report receipt remain in automatic context.
 - **A private instance:** source-backed preferences, inspectable attention and
   revisable relationship appraisals can guide relevant behavior. Relationship
   state and action permissions are separate. Automatic persistent opinions are
@@ -51,7 +52,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.9" "colony-hermes==1.1.9"
+python -m pip install "colonyai[hermes]==1.1.10" "colony-hermes==1.1.10"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
