@@ -1784,7 +1784,13 @@ class ColonyClient:
                     and any(isinstance(block, dict) and block.get('type') == 'input_audio' for block in message['content'])
                     for message in [payload.get('user_message'), payload.get('assistant_message'),
                                     *(payload.get('checkpoint_messages') or [])])
-                route = ('turns/source-media/document' if document_source else
+                video_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
+                    and any(isinstance(block, dict) and block.get('type') == 'input_video' for block in message['content'])
+                    for message in [payload.get('user_message'), payload.get('assistant_message'),
+                                    *(payload.get('checkpoint_messages') or [])])
+                # Mixed sources must also require a video-aware receiver.
+                route = ('turns/source-media/video' if video_source else
+                         'turns/source-media/document' if document_source else
                          'turns/source-media/audio' if audio_source else
                          'turns/source-linked/input-parent' if assistant_input_refs else
                          'turns/task-instruction' if instruction_only else

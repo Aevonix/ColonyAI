@@ -474,6 +474,14 @@ class RequestMemory:
                     image_url_hash=hashlib.sha256(image_url.encode()).hexdigest(),
                     image_read={key: result[key] for key in ('source_id', 'source_version', 'read_revision')}
                                | {'asset_hash': result['image']['asset_hash']})
+                if result.get('view') == 'video':
+                    # The canonical original is the clip; the authentic tool
+                    # text/pixel pair separately owns this decoded frame.
+                    self._read_receipts[key][tool_call_id].update(
+                        image_view='video',
+                        image_content=result['content'],
+                        image_read={field: result[field] for field in ('source_id', 'source_version', 'read_revision')}
+                                   | {field: result['video'][field] for field in ('asset_hash', 'requested_ms')})
             if result.get('view') == 'document':
                 self._read_receipts[key][tool_call_id]['document_read'] = {
                     field: result[field] for field in ('source_id', 'source_version', 'read_revision', 'offset')
@@ -586,7 +594,7 @@ class RequestMemory:
                 or (isinstance(error, HTTPStatusError) and error.response.status_code in {502, 503, 504}))
             logger.warning('request memory freshness unavailable (%s)', type(error).__name__)
         if fresh:
-            # Only explicitly opened images pay this small metadata read. A
+            # Only explicitly opened images/frames pay this metadata read. A
             # later correction need not erase a source to change its meaning.
             # Do not download pixels again or change the turn's recall policy.
             for row in _read_rows(request):
@@ -597,16 +605,26 @@ class RequestMemory:
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
                         raise TimeoutError('source_image_verification_deadline')
+                    view = receipt.get('image_view', 'image')
                     response = self.client.post('/v1/host/memory/read', timeout=remaining,
                         _deadline_monotonic=deadline, json={'identity': {'host_id': 'hermes'},
                             'person_id': contact, 'session_id': scope.session_id,
-                            'source_view': 'image', **receipt['image_read']})
+                            'source_view': view, **receipt['image_read']})
                     response.raise_for_status()
                     checked = response.json()['source']
                     receipt['image_current'] = (checked.get('read_revision') == receipt['image_read']['read_revision']
                         and checked.get('watermark') == watermark and checked.get('source_refs') == receipt['sources']
-                        and checked.get('view') == 'image' and checked.get('image_bytes_included') is False
-                        and checked.get('image', {}).get('asset_hash') == receipt['image_read']['asset_hash'])
+                        and checked.get('view') == view and checked.get('image_bytes_included') is False
+                        and checked.get(view, {}).get('asset_hash') == receipt['image_read']['asset_hash'])
+                    if view == 'video':
+                        receipt['image_current'] = (receipt['image_current']
+                            and checked.get('source_id') == receipt['image_read']['source_id']
+                            and checked.get('source_version') == receipt['image_read']['source_version']
+                            and checked.get('content') == receipt['image_content']
+                            and checked.get('video') == {'asset_hash': receipt['image_read']['asset_hash'],
+                                'mime_type': 'video/mp4', 'requested_ms': receipt['image_read']['requested_ms']}
+                            and type(checked['video']['requested_ms']) is int
+                            and 'image' not in checked)
                 except Exception:
                     receipt['image_current'] = False
             # PDF parsing can finish or change without changing canonical
