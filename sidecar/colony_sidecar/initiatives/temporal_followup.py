@@ -289,10 +289,19 @@ class TemporalFollowups:
             return 'outside_availability'
         return 'due'
 
-    def list_for_context(self, *, contact_id, limit=30, now=None):
+    def list_for_context(self, *, contact_id, limit=30, now=None, outbound_refs=None):
         point = self.clock() if now is None else epoch(now)
+        where, params = 'contact_id=?', [contact_id]
+        if outbound_refs is not None:
+            refs = tuple(dict.fromkeys(outbound_refs))
+            if not refs:
+                return []
+            # Select the receipt's exact waits before applying the context cap.
+            where += " AND json_extract(payload,'$.outbound_ref') IN (" + ','.join('?' for _ in refs) + ')'
+            params.extend(refs)
+        params.append(min(100, max(1, int(limit))))
         with self.transaction() as db:
-            values = db.execute('SELECT * FROM temporal_followups WHERE contact_id=? ORDER BY updated_at DESC LIMIT ?', (contact_id, min(100, max(1, int(limit))))).fetchall()
+            values = db.execute('SELECT * FROM temporal_followups WHERE '+where+' ORDER BY updated_at DESC LIMIT ?', params).fetchall()
             result = []
             for value in values:
                 row = self._refresh(db, self._row(value), point)

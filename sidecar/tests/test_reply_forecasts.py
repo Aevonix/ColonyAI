@@ -149,6 +149,40 @@ async def test_prospective_accepted_dispatch_to_exact_current_reply(runtime):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('outbound_ref,receipt_outbound_ref', [
+    ('logical-out', 'logical-out'), ('whatsapp:provider-out', '')])
+async def test_old_matching_wait_gets_first_dispatch_before_context_limit(runtime, outbound_ref, receipt_outbound_ref):
+    r = runtime
+    waits = TemporalFollowups(r.commitments, clock=lambda:r.now[0])
+    original = waits.get(r.wait_id)
+    params = {key:original[key] for key in ('commitment_id','work_id','contact_id',
+        'source_refs','source_versions','source_session_id','expected_after_seconds','expires_at')}
+    r.wait_id = 'older-matching-wait'
+    r.fid = forecasts._fid(r.wait_id)
+    waits.expect_reply(wait_id=r.wait_id, outbound_ref=outbound_ref, **params)
+    for number in range(105):
+        r.now[0] += .01
+        waits.expect_reply(wait_id=f'newer-unrelated-{number}',
+            outbound_ref=f'other-outbound-{number}', **params)
+    waits.expect_reply(wait_id='foreign-reference-collision', outbound_ref=outbound_ref,
+        **{**params, 'contact_id':r.other_person})
+    assert r.wait_id not in {row['wait_id'] for row in waits.list_for_context(contact_id=r.person, limit=100)}
+    await coverage(r)
+    sent = await dispatch(r, outbound_ref=receipt_outbound_ref)
+    first = history(r)['forecasts']
+    assert len(first) == 1
+    assert first[0]['created_at'] == r.now[0]
+    assert waits.get(r.wait_id)['dispatch_receipt_ref'] == sent['receipt_ref']
+    assert waits.get('foreign-reference-collision')['dispatch_receipt_ref'] is None
+    assert waits.get('newer-unrelated-104')['dispatch_receipt_ref'] is None
+    await dispatch(r, **sent)
+    assert history(r)['forecasts'] == first
+    r.now[0] += 20
+    await reply(r)
+    assert (await view(r))['status'] == 'reply_observed_in_time'
+
+
+@pytest.mark.asyncio
 async def test_reply_before_ack_never_issues_retrospective_forecast(runtime):
     r=runtime
     await coverage(r)

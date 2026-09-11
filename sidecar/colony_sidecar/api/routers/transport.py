@@ -86,7 +86,13 @@ async def observe(body: TransportReceipt, request: Request):
                     raise ValueError('followup_receipt_recipient_mismatch')
                 waits.mark_followup_dispatched(body.followup_wait_id, action_digest=body.action_digest,
                     receipt_ref=body.receipt_ref)
-            for row in waits.list_for_context(contact_id=body.contact_id, limit=100):
+            outbound_refs = None
+            if body.direction == 'out':
+                outbound_refs = [body.channel+':'+body.external_ref]
+                if body.outbound_ref:
+                    outbound_refs.append(body.outbound_ref)
+            for row in waits.list_for_context(contact_id=body.contact_id, limit=100,
+                    outbound_refs=outbound_refs):
                 parent = host._commitment_store.get(row['commitment_id'])
                 row = refresh_source_bindings(waits, row, parent['person_id'])
                 row = reconcile_receipts(waits, host._comms_log, row)
