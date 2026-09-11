@@ -65,7 +65,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.3.1" "apsimo-hermes[native-memory]==1.3.1"
+python -m pip install "apsimo[hermes]==1.3.2" "apsimo-hermes[native-memory]==1.3.2"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
