@@ -1,5 +1,20 @@
 # Changelog
 
+## v1.1.9 - working fresh native profiles and Mac instance shutdown
+
+Fresh Hermes profiles now use its supported `custom` provider for the selected
+OpenAI-compatible local endpoint, including optional native task judging.
+Existing configured providers are preserved. The packaged setup qualification
+now resolves the generated profile through native CLI startup before running
+its memory conversations.
+
+A local sidecar records its process identity after startup readiness, avoiding
+the temporary Python launcher command on macOS. The existing stop command can
+then identify and stop that instance while retaining its PID-reuse check.
+
+These changes repair installation and local instance lifecycle. They do not
+change an existing agent's model routing or establish conversational quality.
+
 ## v1.1.8 - linked incident repairs and attributable timing observations
 
 Appraisal extraction now decides separately whether each supplied prior incident

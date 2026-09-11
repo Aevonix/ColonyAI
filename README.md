@@ -51,7 +51,7 @@ checkout is not required:
 ```bash
 python3 -m venv "$HOME/.local/share/colony/venv"
 source "$HOME/.local/share/colony/venv/bin/activate"
-python -m pip install "colonyai[hermes]==1.1.8" "colony-hermes==1.1.8"
+python -m pip install "colonyai[hermes]==1.1.9" "colony-hermes==1.1.9"
 colony init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 

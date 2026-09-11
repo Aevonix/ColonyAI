@@ -245,7 +245,7 @@ def test_native_goals_opt_in_and_existing_instance_reentry_preserve_state(args, 
     assert config['platform_toolsets']['cli'] == ['hermes-cli', 'kanban']
     assert config['kanban']['dispatch_in_gateway'] is True
     assert config['auxiliary']['goal_judge'] == {
-        'provider':'openai', 'model':args.model, 'base_url':args.model_url}
+        'provider':'custom', 'model':args.model, 'base_url':args.model_url}
     assert json.loads(setup._load_existing_env(state/'.env')['COLONY_HERMES_WORK_BOARDS']) == ['default']
     assert not (home/'kanban.db').exists() and not (home/'profiles').exists()
     assert 'Colony does not start or restart it' in capsys.readouterr().out
@@ -650,6 +650,34 @@ def test_local_stop_refuses_reused_pid_and_other_instance_port(tmp_path, monkeyp
     with pytest.raises(SystemExit) as result:
         cli._cmd_start_daemon('127.0.0.1', 7777, True)
     assert result.value.code == 1
+
+
+def test_local_start_records_process_after_python_launcher_exec(tmp_path, monkeypatch):
+    from colony_sidecar import cli
+    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
+    monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
+    monkeypatch.setattr(setup, '_check_port', lambda port: False)
+    monkeypatch.setattr(cli, '_find_pids_on_port', lambda port: [])
+    monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
+    proc = Mock(pid=1234)
+    proc.poll.return_value = None
+    monkeypatch.setattr(cli.subprocess, 'Popen', lambda *a, **k: proc)
+    signature = ['same-start-time venv/python -m uvicorn']
+    monkeypatch.setattr(cli, '_process_signature', lambda pid: signature[0])
+    def ready(*a, **k):
+        signature[0] = 'same-start-time framework/Python -m uvicorn'
+        return True
+    monkeypatch.setattr(cli, '_wait_for_sidecar', ready)
+    monkeypatch.setattr(httpx, 'get', lambda *a, **k: Mock(json=lambda:{'capabilities':[]}))
+    cli._cmd_start_daemon('127.0.0.1', 7777, False)
+    record = json.loads((tmp_path/'sidecar-process.json').read_text())
+    assert record['signature'] == signature[0]
+    def stop(pid, sig):
+        assert (pid, sig) == (1234, 15)
+        signature[0] = ''
+    monkeypatch.setattr(cli.os, 'kill', stop)
+    cli._cmd_stop()
+    assert not (tmp_path/'sidecar.pid').exists()
 
 
 def test_local_status_only_uses_scoped_memory_status(tmp_path, monkeypatch, capsys):

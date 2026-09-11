@@ -654,7 +654,7 @@ def run(root_dir=None, args=None):
             from .setup_native_goals import prepare
             selected = dict(config)
             if fresh_model:
-                selected['model'] = {'provider': 'openai', 'default': model, 'base_url': endpoint}
+                selected['model'] = {'provider': 'custom', 'default': model, 'base_url': endpoint}
             goal_configuration, goal_details = prepare(selected, home,
                 native_env=dotenv_values(home/'.env'), observer_env={}, local_work=local_work)
         # Every runtime/resource/config preflight above occurs before state creation.
@@ -734,7 +734,7 @@ def run(root_dir=None, args=None):
                 enabled.append('colony')
             candidate.setdefault('compression', {})['checkpoint_required'] = True
             if fresh_model:
-                candidate['model'] = {'provider': 'openai', 'default': model, 'base_url': endpoint}
+                candidate['model'] = {'provider': 'custom', 'default': model, 'base_url': endpoint}
             if receipt_choice is not None:
                 candidate, _ = _receipt_preference(candidate, receipt_choice)
             final_config = yaml.safe_dump(candidate, sort_keys=False, allow_unicode=True).encode()
