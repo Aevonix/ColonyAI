@@ -1,5 +1,17 @@
 # Changelog
 
+## v1.1.10 - focused work context and clock use
+
+Automatic shared-work context keeps completed artifact outcomes, identifiers,
+limitations and report receipts. Its generated summary remains available through
+the work API and full report, rather than being repeated in every turn. Work
+without a complete artifact receipt retains its summary.
+
+Clock context retains the current time and its distinction from session start.
+It now asks for time calculations only when needed to answer the request, removing
+unconditional greeting and arithmetic instructions. These changes simplify
+request construction; conversational quality still needs observed qualification.
+
 ## v1.1.9 - working fresh native profiles and Mac instance shutdown
 
 Fresh Hermes profiles now use its supported `custom` provider for the selected

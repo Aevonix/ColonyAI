@@ -993,7 +993,7 @@ class ColonyMemoryProvider(_MemoryProviderABC):
             "role": "system",
             "content": (
                 f"⏰ CURRENT DATE & TIME, right now: {line}. This is TODAY. Use this clock "
-                "when time is relevant to the request. Any 'Conversation started' date in your prompt is only "
+                "when needed to interpret or answer the request. Any 'Conversation started' date in your prompt is only "
                 "when this long-running session began (often days ago), NOT today."
             ),
         }
