@@ -6,6 +6,7 @@ an explicit scoped fixture adapter, never an expected-answer oracle.
 import argparse
 import asyncio
 import base64
+from copy import deepcopy
 from dataclasses import asdict
 from datetime import datetime
 import hashlib
@@ -78,6 +79,54 @@ def save(path, data):
     temporary = path.with_suffix(path.suffix + '.tmp')
     temporary.write_text(json.dumps(data, indent=2))
     temporary.replace(path)
+
+
+class SelectionCapture:
+    """Record this sequential benchmark's selector observations, not credentials."""
+
+    ENVIRONMENT_KEYS = ('COLONY_RECALL_RERANK', 'COLONY_RECALL_RERANK_MIN_SCORE',
+                        'COLONY_RECALL_RERANK_TIMEOUT_MS', 'COLONY_RECALL_RERANK_CALIBRATION')
+    CALIBRATION_KEYS = ('provider', 'model', 'prompt_style', 'format_version',
+                        'weights_revision', 'embedding_identity', 'candidate_format')
+
+    def __init__(self, rerank_fn, calibration, calls):
+        self.rerank_fn, self.calibration, self.calls = rerank_fn, calibration, calls
+        self.observed = []
+        self.selector = RecallSelector(self.rerank, calibration_metadata=lambda: calibration)
+
+    async def rerank(self, query, documents, top_k):
+        observation = {'query': query, 'documents': list(documents), 'top_k': top_k}
+        self.observed.append(observation)
+        start = time.perf_counter()
+        try:
+            result = await self.rerank_fn(query, documents, top_k=top_k)
+            observation.update(outcome='returned', results=deepcopy(result))
+            return result
+        except asyncio.CancelledError:
+            # wait_for cancels the provider on timeout. Do not mislabel an
+            # arbitrary cancellation as a provider-reported timeout.
+            observation['outcome'] = 'cancelled'
+            raise
+        except Exception as exc:
+            # Error messages and HTTP response bodies can contain secrets.
+            observation.update(outcome='error', error_type=type(exc).__name__)
+            raise
+        finally:
+            elapsed = (time.perf_counter() - start) * 1000
+            self.calls.append({'kind': 'rerank', 'ms': elapsed, 'documents': len(documents)})
+
+    async def select(self, query, beliefs, quotations, *, limit=5, max_chars=6000):
+        self.observed = []
+        parameters = {'limit': limit, 'max_chars': max_chars, 'current_work_available': False}
+        replay = {'version': 1, 'query': query, 'beliefs': deepcopy(beliefs),
+                  'quotations': deepcopy(quotations), 'parameters': parameters,
+                  'environment': {key: os.environ.get(key) for key in self.ENVIRONMENT_KEYS},
+                  'calibration': {key: self.calibration[key] for key in self.CALIBRATION_KEYS
+                                  if key in self.calibration},
+                  'calibration_fingerprint': calibration_fingerprint(self.calibration)}
+        selected, context = await self.selector.select_context(query, beliefs, quotations, **parameters)
+        replay.update(rerank_calls=deepcopy(self.observed), selected=deepcopy(selected))
+        return selected, context, replay
 
 
 class GraphReadAdapter:
@@ -160,11 +209,9 @@ async def run(config, args):
     os.environ['COLONY_RECALL_RERANK_CALIBRATION']=calibration_fingerprint(calibration)
     calls=[]
     async def rerank(query, documents, top_k):
-        start=time.perf_counter()
         result=await reranker.rerank(query,documents,top_k=top_k)
-        calls.append({'kind':'rerank','ms':(time.perf_counter()-start)*1000,'documents':len(documents)})
         return [asdict(row) for row in result]
-    selector=RecallSelector(rerank,calibration_metadata=lambda:calibration)
+    selector=SelectionCapture(rerank,calibration,calls)
     ledger=TurnIdempotencyLedger(tmp/'turn-idempotency.db')
     claims=SourceClaimProjection(ledger)
     store=VectorStore(str(tmp/'lancedb'),identity=pipeline.index_identity,catalog=IndexCatalog(ledger))
@@ -218,9 +265,9 @@ async def run(config, args):
                 contact_id=contact,session_id='later',time_query=time_query)
             if args.ranking_format == 'verbose-claim-json':
                 beliefs = [dict(row, ranking_text=row['content']) for row in beliefs]
-            selected,context=await selector.select_context(q['query'],beliefs,quotes,limit=5,max_chars=6000)
+            selected,context,replay=await selector.select(q['query'],beliefs,quotes,limit=5,max_chars=6000)
             results.append({'query_id':q['id'],'split':q['split'],'tags':q['tags'],'arm':arm,
-                'assessment':assess(q,selected,fixture['records']),'context':context,
+                'assessment':assess(q,selected,fixture['records']),'context':context,'replay':replay,
                 'selection_ms':(time.perf_counter()-start)*1000,'query_embedding_ms':query_ms,
                 'graph_ms':graph_ms,'source_semantic_ms':source_ms})
         if (index+1)%12==0: print(f"Actual retrieval {index+1}/{len(fixture['queries'])}",flush=True)
@@ -254,8 +301,8 @@ async def run(config, args):
         lexical=media_store.search(query,contact_id='image-owner',session_id='different')
         _,semantic=await projections.search(query,contact_id='image-owner',session_id='different')
         for arm, candidates in [('lexical',lexical),('hybrid',list({row['id']:row for row in lexical+semantic}.values()))]:
-            selected,context=await selector.select_context(query,[],candidates,limit=5,max_chars=6000)
-            media_results.append({'query':query,'arm':arm,'candidates':len(candidates),'returned':bool(selected),'context':context})
+            selected,context,replay=await selector.select(query,[],candidates,limit=5,max_chars=6000)
+            media_results.append({'query':query,'arm':arm,'candidates':len(candidates),'returned':bool(selected),'context':context,'replay':replay})
     with ledger._connect() as conn:
         job_status={row[0]:row[1] for row in conn.execute('SELECT status,count(*) FROM source_claim_jobs GROUP BY status')}
         claim_count=conn.execute('SELECT count(*) FROM source_claims').fetchone()[0]
@@ -264,6 +311,10 @@ async def run(config, args):
         'extraction_model':model,'calibration':{k:v for k,v in calibration.items() if k != 'endpoint'},
         'fixed_threshold':args.threshold,'state_dir':str(tmp),'ranking_format':args.ranking_format,
         'fixture_sha256':hashlib.sha256(fixture_path.read_bytes()).hexdigest(),'calls':calls,
+        'selection_sources': {str(path.relative_to(ROOT.parents[1])): hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in (Path(__file__).resolve(),
+                         ROOT.parents[1] / 'sidecar/apsimo/intelligence/graph/selection.py',
+                         ROOT.parents[1] / 'sidecar/apsimo/intelligence/graph/recall.py')},
         'limits':['Default corpus: 120 frozen neutral sources, 96 queries, 24 holdout. A supplied smaller fixture is a smoke test.',
             'Actual local extraction/embeddings/reranker and canonical SQLite/Lance. Graph query reads are scoped SQLite fixture adapter, not Neo4j.',
             'Public/team fixture annotations do not invent shared authority: sources belong to fixture owner; six guest privacy queries expect abstention.',

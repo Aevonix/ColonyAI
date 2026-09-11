@@ -1,7 +1,6 @@
 # Create or attach a private Hermes agent
 
-The supported lightweight path uses Hermes **0.21.1** (qualification commit
-`2237be355906fbe6065ce1815711eee52b2d646e`) or **0.21.0**, Python 3.11 to 3.13, and one local
+The supported lightweight path uses Hermes **0.21.2** ([qualification build](HERMES-HOOK-COMPATIBILITY.md)), **0.21.1** or **0.21.0**, Python 3.11 to 3.13, and one local
 OpenAI-compatible chat endpoint. Install Hermes separately using its
 [native installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
 Apsimo does not patch or download Hermes, models, containers or machine services.
@@ -90,7 +89,7 @@ values. Applying uses the existing atomic writer and retains the exact previous
 config in a private `.config.yaml.colony-backup-*` file; repeating an unchanged
 choice adds no backup.
 
-The preference is qualified against Hermes 0.21.1 at the commit above. It writes
+The preference is qualified against the current qualification build. It writes
 native `send_read_receipts` settings in the profile's existing layout, including
 existing alternate spellings that could override each other. Channel enablement,
 sender/group policy, credentials and unrelated extras are retained. A profile
@@ -274,7 +273,7 @@ Update both Apsimo distributions in the environment that runs Apsimo, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "apsimo[hermes]==1.3.2" "apsimo-hermes[native-memory]==1.3.2"
+python -m pip install --upgrade "apsimo[hermes]==1.3.3" "apsimo-hermes[native-memory]==1.3.3"
 apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 

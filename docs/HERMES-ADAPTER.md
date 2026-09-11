@@ -238,9 +238,9 @@ change and qualify the deployment's actual channels and recovery before moving
 that deployment. The scheduled result catches upstream drift; it does not
 establish production readiness or automatically upgrade a running agent.
 
-The qualification target is Hermes v0.21.1, tag `v2026.9.7`, commit
-`2237be355906fbe6065ce1815711eee52b2d646e`, tested on Python 3.12. Hermes 0.21.0
-attachment remains supported. The adapter uses canonical 0.21.1 task and skill
+The qualification target is the [Hermes 0.21.2 compatibility build](HERMES-HOOK-COMPATIBILITY.md),
+based on tag `v2026.9.11`, commit `939e45c91d751fadd94dcd1b873ac3cb44846213`,
+tested on Python 3.12. Hermes 0.21.0 and 0.21.1 attachment remain supported. The adapter uses canonical 0.21.1 task and skill
 modules, with a narrow fallback when those modules are absent on 0.21.0.
 It does not depend on upstream's temporary deprecated-import shims. The package
 allows Python 3.11 through 3.13; those other interpreters are not yet qualified.
@@ -249,7 +249,9 @@ releases are unqualified until the native-loader checks pass against them.
 Hermes is installed separately; this package does not select or upgrade it.
 
 The additional native provider-call memory boundary is qualified on Hermes
-0.21.1 with NeMo Relay 0.8.3. Install it with
+0.21.1 with NeMo Relay 0.8.3 and the Linux 0.21.2 qualification environment
+with NeMo Relay 0.8.4. Upstream frozen environments can select another version;
+qualify that actual interpreter before switching a deployment. Install it with
 `python -m pip install 'apsimo-hermes[native-memory]'`; the supported Hermes
 release also declares this Relay dependency. CI installs that extra explicitly.
 Older Hermes attachment support does not imply this additional erasure coverage.
@@ -525,6 +527,16 @@ provenance, matching parent/session, and a distinct task/turn. Later speakers in
 the same session cannot upgrade a queued guest review. Reviews get a separate
 work record linked to their parent, do not replace the session's current speaker,
 and do not write their internal harness into ordinary conversation evidence.
+
+On 0.21.2, request middleware binds the detached review using the copied parent
+scope and trusted native origin. Trusted native input aliases and authenticated
+source-read receipts are carried from the parent, without promoting the review
+prompt into human evidence. Host-supplied tasks retain their existing source
+bindings. The compatibility build's `on_detached_turn_end` observer reports exact
+success, failure or interruption and releases the review's transient memory state.
+Ordinary user/session ingestion hooks remain skipped. Earlier supported runtimes
+retain their existing lifecycle path. See the [interface cost and removal
+conditions](HERMES-HOOK-COMPATIBILITY.md).
 
 For owner/system reviews, `skill_manage` produces a proposal in Hermes' existing
 `pending/skills` store. Native curator ownership checks still apply. Foreground

@@ -24,7 +24,7 @@ def isolated_platform_environment(monkeypatch):
 
 
 @pytest.mark.parametrize('version, supported', [
-    ('0.21.0', True), ('0.21.1', True), ('0.20.0', False), ('0.22.0', False),
+    ('0.21.0', True), ('0.21.1', True), ('0.21.2', True), ('0.20.0', False), ('0.22.0', False),
 ])
 def test_native_interpreter_requires_a_supported_runtime(version, supported, monkeypatch):
     probe = Mock(return_value=SimpleNamespace(returncode=0, stdout=json.dumps({'version': version})))
@@ -32,7 +32,7 @@ def test_native_interpreter_requires_a_supported_runtime(version, supported, mon
     if supported:
         assert setup_hermes._interpreter('/selected/python') == Path('/selected/python')
     else:
-        with pytest.raises(ValueError, match='Hermes 0.21.0 or 0.21.1'):
+        with pytest.raises(ValueError, match='Hermes 0.21.0, 0.21.1, or 0.21.2'):
             setup_hermes._interpreter('/selected/python')
     assert probe.call_args.args[0][:3] == ['/selected/python', '-I', '-c']
     assert probe.call_args.kwargs['timeout'] == 30

@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.3.3 - native history erasure and Hermes 0.21.2 compatibility
+
+Native session-history results are checked against scoped canonical erasures
+before reaching the model. Exact source ancestry covers retained text and
+structured messages, derived tool spans and later same-turn erasure. Unrelated
+traceable turns remain readable; untraceable titles and previews are omitted.
+This is logical recall filtering, not physical deletion of native history,
+backups or raw files. Untracked historical material has no invented source links.
+
+Native repeat-read warnings retain the authenticated history receipt; altered
+or unrecognized source wrappers are withheld without gaining provenance.
+On earlier Hermes versions, authorized steering instructions survive when
+appended to a withheld source read. The source body stays withheld and may need
+to be read again; unrelated appended text gains no authority.
+
+Attachment accepts Hermes 0.21.2 while retaining the earlier supported versions.
+Native merged user inputs retain their current source attribution and historical
+erasure checks whether Hermes merges clean text or enriched API content.
+
+Detached automatic reviews inherit the exact parent participant, source bindings
+and trusted memory provenance through existing request middleware. Their final
+state uses the small detached-execution observer in the documented compatibility
+build; ordinary persistence hooks remain skipped. Internal review prompts do not
+become human memory, and a later speaker cannot upgrade a queued guest review.
+
+The recall benchmark now retains exact selection candidates, reranker inputs and
+returned scores or failures for reproducible analysis. This adds no runtime
+telemetry, changes no recall budget, and makes no model-quality claim.
+
 ## v1.3.2 - conversation provenance and repeated-request recall
 
 Native turn ingestion now preserves the actual conversation platform independently

@@ -3752,6 +3752,12 @@ async def source_erasure_feed(contact_id: str, after: int = Query(0, ge=0), requ
         raise HTTPException(status_code=409, detail={"code": "erasure_history_mismatch"}) from exc
 
 
+class NativeHistoryReference(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    session_id: str = Field(min_length=1, max_length=256)
+    message_hash: str = Field(pattern=r'^[0-9a-f]{64}$')
+
+
 class SourceFreshnessRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
     contact_id: str = Field(min_length=1, max_length=256)
@@ -3759,10 +3765,11 @@ class SourceFreshnessRequest(BaseModel):
     after: int = Field(default=0, ge=0)
     source_refs: list[SourceReference] = Field(max_length=512)
     unannotated_input_refs: list[SourceInputReference] = Field(default_factory=list, max_length=512)
+    native_history_refs: list[NativeHistoryReference] = Field(default_factory=list, max_length=512)
 
     @model_validator(mode='after')
     def exact_source_selector(self):
-        if not self.source_refs and not self.unannotated_input_refs:
+        if not self.source_refs and not self.unannotated_input_refs and not self.native_history_refs:
             raise ValueError('Exact source revisions or captured inputs are required')
         return self
 
@@ -3792,6 +3799,11 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     current = ledger.source_references([ref.source_id for ref in body.source_refs],
                                       contact_id=person, session_id=body.session_id)
     page['sources_current'] = expected == {(ref['source_id'], ref['source_version']) for ref in current}
+    if body.native_history_refs:
+        from apsimo.turns.history_references import resolve
+        page['native_history_matches'] = resolve(ledger, contact_id=person,
+            session_id=body.session_id,
+            references=[ref.model_dump() for ref in body.native_history_refs])
     if body.unannotated_input_refs:
         from apsimo.turns.source_annotations import inputs_unannotated
         refs = [ref.model_dump() for ref in body.unannotated_input_refs]

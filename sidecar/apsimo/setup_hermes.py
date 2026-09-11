@@ -233,8 +233,8 @@ def _interpreter(candidate):
         'from hermes_cli.plugins import get_plugin_manager; '
         'print(json.dumps({"version":importlib.metadata.version("hermes-agent")}))'],
         capture_output=True, text=True, timeout=30)
-    if probe.returncode or json.loads(probe.stdout.splitlines()[-1]).get('version') not in {'0.21.0', '0.21.1'}:
-        raise ValueError('Select the Python interpreter of Hermes 0.21.0 or 0.21.1 with its native dependencies installed')
+    if probe.returncode or json.loads(probe.stdout.splitlines()[-1]).get('version') not in {'0.21.0', '0.21.1', '0.21.2'}:
+        raise ValueError('Select the Python interpreter of Hermes 0.21.0, 0.21.1, or 0.21.2 with its native dependencies installed')
     return python
 
 

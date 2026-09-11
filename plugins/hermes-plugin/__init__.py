@@ -2409,6 +2409,7 @@ def register(ctx: Any) -> None:
 
     initialized_turns = OrderedDict()
     initialization_lock = threading.Lock()
+    review_parent_memory = ContextVar('apsimo_review_parent_memory', default=None)
 
     def pre_llm_call(**kwargs: Any) -> None:
         key = tuple(str(kwargs.get(name) or '') for name in ('session_id', 'task_id', 'turn_id'))
@@ -2690,12 +2691,22 @@ def register(ctx: Any) -> None:
                 denial = native_drafts.before_tool(_TOOL_EXECUTION_CONTEXT.get() or {})
                 if denial is not None:
                     return denial
+            def dispatch(selected_args):
+                value = next_call(selected_args)
+                context = _TOOL_EXECUTION_CONTEXT.get() or {}
+                if context.get('tool_name') == 'session_search':
+                    from .native_history import reconcile
+                    scope = _TRANSPORT_SCOPES.for_execution(
+                        session_id=context.get('session_id',''), task_id=context.get('task_id',''),
+                        turn_id=context.get('turn_id',''))
+                    return reconcile(selected_args,value,scope,context,request_memory)
+                return value
             if execution_observer is not None:
-                return execution_observer.tool(next_call, args, **{
+                return execution_observer.tool(dispatch, args, **{
                     key: value for key, value in kwargs.items()
                     if key not in {"next_call", "args"}
                 })
-            return next_call(args)
+            return dispatch(args)
         return _tool_execution_middleware(**{**kwargs, "next_call": observed,
             'revalidate_participant': lambda scope: _current_participant(client, scope),
             'revalidate_input': check_supplied_input})
@@ -2857,6 +2868,25 @@ def register(ctx: Any) -> None:
     ctx.register_hook("pre_api_request", bind_current_session)
     def capture_review_parent(**kwargs):
         if _native_background_review():
+            # Detached native forks no longer invoke persistence-oriented
+            # turn hooks. The native origin and copied parent context bind
+            # their exact request here, without ingesting the review harness.
+            scope = _TRANSPORT_SCOPES.for_execution(
+                session_id=kwargs.get('session_id', ''),
+                task_id=kwargs.get('task_id', ''), turn_id=kwargs.get('turn_id', ''))
+            if scope is None:
+                parent = _REVIEW_PARENT_SCOPE.get()
+                # Hermes's cache-parity review shares this exact parent
+                # session. Never obtain authority from its latest speaker.
+                fields = {**kwargs, 'parent_session_id': parent.session_id if parent else ''}
+                scope = _TRANSPORT_SCOPES.put(_background_review_scope(parent, **fields))
+                supplied_input = input_provenance.current()
+                if supplied_input is not None:
+                    supplied_input.bind(scope, fields['parent_session_id'])
+                request_memory.observe_review(scope, review_parent_memory.get())
+                native_memory.bind(scope)
+                if execution_observer is not None:
+                    execution_observer.start(scope, review_parent=parent, **fields)
             return None
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(session_id=kwargs.get("session_id", ""),
@@ -2870,6 +2900,7 @@ def register(ctx: Any) -> None:
             scope = _TRANSPORT_SCOPES.for_execution(session_id=native['session_id'],
                 task_id=native['task_id'], turn_id=native['turn_id'])
         _REVIEW_PARENT_SCOPE.set(scope if scope is not None and scope.valid_participant else None)
+        review_parent_memory.set(request_memory.snapshot_review_parent(scope))
         from .review_evidence import capture
         capture(scope, kwargs.get('request'))
         return None  # No provider request changes.
@@ -2877,6 +2908,27 @@ def register(ctx: Any) -> None:
     ctx.register_middleware('llm_request', reconcile_request)
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
+    def detached_turn_end(**kwargs):
+        scope = _TRANSPORT_SCOPES.for_execution(
+            session_id=kwargs.get('session_id', ''),
+            task_id=kwargs.get('task_id', ''), turn_id=kwargs.get('turn_id', ''))
+        if (scope is None or scope.platform != 'background_review'
+                or not all(kwargs.get(name) for name in ('session_id', 'task_id', 'turn_id'))
+                or kwargs.get('parent_session_id') != scope.session_id):
+            return None
+        native_memory.finish(scope.session_id, scope.task_id, scope.turn_id)
+        request_memory.finish(task_id=scope.task_id, turn_id=scope.turn_id,
+                              contact_id=scope.contact_id)
+        if execution_observer is not None:
+            execution_observer.end(**kwargs)
+    # Earlier supported runtimes deliver ordinary turn-end hooks for reviews.
+    # Newer ones expose a separate observer with no persistence payload.
+    try:
+        from hermes_cli.plugins import VALID_HOOKS
+    except ImportError:
+        VALID_HOOKS = ()
+    if 'on_detached_turn_end' in VALID_HOOKS:
+        ctx.register_hook('on_detached_turn_end', detached_turn_end)
     from .completed_reports import CompletedReports
     ctx.register_hook('kanban_task_completed', CompletedReports(
         client, turn_outbox, _TRANSPORT_SCOPES, request_memory, _TOOL_EXECUTION_CONTEXT.get,

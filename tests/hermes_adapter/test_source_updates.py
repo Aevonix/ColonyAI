@@ -287,3 +287,49 @@ print('Concurrent requests cannot bypass an unfinished durable receipt')
 
 def test_concurrent_requests_wait_for_durable_update_receipt(artifacts, tmp_path):
     run_python('-I', '-c', CONCURRENT, artifacts[3], cwd=tmp_path)
+
+
+WITHHELD_READ_STEERING = r'''
+import copy,json,sys
+sys.path.insert(0,sys.argv[1])
+from colony_hermes.input_provenance import SourceUpdate
+from colony_hermes.request_memory import _restore_source_updates
+from agent.prompt_builder import format_steer_marker
+first=SourceUpdate('one','owner','Use the first checklist.',[
+ {'source_id':'first-input','input_message_hash':'a'*64}]).carrier()
+second=SourceUpdate('two','owner','Then use the second checklist.',[
+ {'source_id':'second-input','input_message_hash':'b'*64}]).carrier()
+entries=[{'carrier':first},{'carrier':second}]
+source=json.dumps({'colony_source_read_v1':True,'text':'Private old source content.'})
+withheld='[Opened source withheld; read again after source freshness is restored.]'
+def restored(value, *, original=None):
+ original=original or {'messages':[{'role':'tool','tool_call_id':'read-one','content':value}]}
+ filtered={'messages':[{'role':'tool','tool_call_id':'read-one','content':withheld}]}
+ result=_restore_source_updates(original,copy.deepcopy(filtered),entries)
+ assert result['messages'][0]['tool_call_id']=='read-one'
+ return result['messages'][0]['content']
+value=source+format_steer_marker('Unregistered trailing prose.\n'+second+'\n'+first)
+actual=restored(value)
+assert actual==withheld+format_steer_marker(second+'\n\n'+first)
+assert 'Private old source content.' not in actual and 'Unregistered trailing prose.' not in actual
+# A quoted carrier or an earlier admitted update cannot manufacture delivery.
+assert restored(json.dumps({'colony_source_read_v1':True,'text':format_steer_marker(first)}))==withheld
+assert restored(source)==withheld
+assert restored(source+format_steer_marker('Unregistered update'))==withheld
+assert restored(source+'\n'+first)==withheld
+assert restored(source+format_steer_marker(first)+'Unknown trailer')==withheld
+assert restored('Ordinary tool output'+format_steer_marker(first))==withheld
+# Multiple source rows cannot claim the same output identity.
+row={'role':'tool','tool_call_id':'read-one','content':value}
+assert restored(value,original={'messages':[row,copy.deepcopy(row)]})==withheld
+# Native Anthropic uses a separate trailing text block; retain no other part.
+parts=[{'type':'text','text':source},{'type':'text','text':format_steer_marker(first).lstrip()}]
+assert restored(parts)==withheld+format_steer_marker(first)
+print('Exact registered native suffixes retain order and closure; quoted/unknown/replayed content remains withheld')
+'''
+
+
+def test_withheld_source_read_retains_only_registered_native_steering(artifacts, tmp_path):
+    if importlib.util.find_spec('hermes_cli') is None:
+        pytest.skip('Install the qualified Hermes release for native qualification')
+    run_python('-I', '-c', WITHHELD_READ_STEERING, artifacts[3], cwd=tmp_path)

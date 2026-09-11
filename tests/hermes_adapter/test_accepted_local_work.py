@@ -40,9 +40,17 @@ def response(**kwargs):
             assert observed['local_work']['items'][0]['status']=='assigned',observed
             assert observed['local_work']['items'][0]['native_execution_id'],observed
             calls=[call('tool_search',{'queries':['read selected local work source']})]
-    elif len(rows)==1 and MODE!='cancel':
-        assert 'colony_read_work_source' in json.loads(rows[-1]['content'])['tools'],rows
-        calls=[call('tool_call',{'name':'colony_read_work_source','arguments':{'source':0}})]
+    elif MODE!='cancel' and 'tools' in json.loads(rows[-1]['content']):
+        search=json.loads(rows[-1]['content'])
+        if 'colony_read_work_source' not in search['tools']:
+            # Native search can decline a weak query. Follow its connected-source
+            # hint once; still require real discovery before invoking the tool.
+            assert len(rows)==1 and not search['tools'],rows
+            sources=search['results'][0]['available_sources']
+            assert any(source['name']=='colony_local_work' for source in sources),search
+            calls=[call('tool_search',{'queries':['colony_local_work read source']})]
+        else:
+            calls=[call('tool_call',{'name':'colony_read_work_source','arguments':{'source':0}})]
     else:
         if MODE!='cancel':
             assert json.loads(rows[-1]['content'])['native_read']['content'].find('neutral fixture source')>=0,rows

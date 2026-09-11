@@ -13,6 +13,7 @@ import re
 import threading
 import time
 from collections import OrderedDict
+from dataclasses import dataclass
 from httpx import HTTPStatusError, NetworkError, RemoteProtocolError, TimeoutException
 
 from .client import source_message_hash
@@ -103,10 +104,34 @@ def _image_url(part):
     return None
 
 
+def _matches_read_text(value, expected):
+    if value == expected:
+        return True
+    if not isinstance(value, str) or not isinstance(expected, str) or not value.startswith(expected):
+        return False
+    # The native executor appends this warning after our handler registers its
+    # result. Accept only the exact runtime-produced decoration of that same
+    # authenticated history read, never arbitrary trailing model/tool prose.
+    match = re.match(r'\n\n\[Tool loop warning: idempotent_no_progress_warning; count=([1-9][0-9]*); ',
+                     value[len(expected):])
+    if match is None:
+        return False
+    try:
+        if json.loads(expected).get('apsimo_native_history_read_v1') is not True:
+            return False
+        from agent.tool_guardrails import ToolGuardrailDecision, append_toolguard_guidance, _DECISION_MESSAGES
+        code, count = 'idempotent_no_progress_warning', int(match.group(1))
+        decision = ToolGuardrailDecision(action='warn', code=code, tool_name='session_search', count=count,
+            message=_DECISION_MESSAGES[code].format(tool_name='session_search', count=count))
+        return append_toolguard_guidance(expected, decision) == value
+    except (ImportError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
 def _read_receipt(row, receipts):
     receipt = receipts.get(row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id'))
     value = _read_value(row)
-    if not receipt or _read_text(value) != receipt['text']:
+    if not receipt or not _matches_read_text(_read_text(value), receipt['text']):
         return None
     if receipt.get('image_url_hash'):
         image = _image_url(value[1]) if isinstance(value, list) and len(value) == 2 else None
@@ -125,10 +150,68 @@ def _read_rows(request):
                             if isinstance(part, dict) and part.get('type') == 'tool_result')
 
 
+def _restore_source_updates(original, filtered, updates):
+    """Keep validated steering when older Hermes appends it to a source read.
+
+    The source body remains withheld. Only registered carriers in an actual
+    native suffix survive; neither other suffix prose nor marker syntax grants
+    source ancestry or participant authority. Call after check_updates passes.
+    """
+    try:
+        from agent.prompt_builder import format_steer_marker, STEER_MARKER_OPEN, STEER_MARKER_CLOSE
+    except ImportError:
+        return filtered
+    restored = {}
+    for row in _read_rows(original):
+        if not _historical_source_read(row):
+            continue
+        identity = row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id')
+        value = _read_value(row)
+        text = _read_text(value)
+        if not isinstance(identity, str) or not identity or not isinstance(text, str):
+            continue
+        _, end = json.JSONDecoder().raw_decode(text.lstrip())
+        suffix = text.lstrip()[end:]
+        if isinstance(value, list) and len(value) > 1:
+            # Native Anthropic steering is a separate trailing text part.
+            suffix = value[-1].get('text', '') if isinstance(value[-1], dict) else ''
+        if not isinstance(suffix, str):
+            continue
+        marker = '\n\n' + STEER_MARKER_OPEN + '\n'
+        start = suffix.rfind(marker)
+        if start < 0 and isinstance(value, list) and suffix.startswith(marker.lstrip()):
+            suffix = '\n\n' + suffix
+            start = 0
+        if start < 0 or not suffix.endswith('\n' + STEER_MARKER_CLOSE):
+            continue
+        marked = suffix[start:]
+        inner = marked[len(marker):-len('\n' + STEER_MARKER_CLOSE)]
+        if format_steer_marker(inner) != marked:
+            continue
+        carriers = [entry['carrier'] for entry in updates if entry['carrier'] in inner]
+        carriers.sort(key=inner.index)
+        if carriers:
+            restored.setdefault(identity, []).append(carriers)
+    for row in _read_rows(filtered):
+        identity = row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id')
+        candidates = restored.get(identity, []) if isinstance(identity, str) else []
+        if len(candidates) != 1:
+            continue
+        field = 'output' if row.get('type') == 'function_call_output' else 'content'
+        if row.get(field) == '[Opened source withheld; read again after source freshness is restored.]':
+            row[field] += format_steer_marker('\n\n'.join(candidates[0]))
+    return filtered
+
+
 def _historical_source_read(row):
     try:
-        payload = json.loads(_read_text(_read_value(row)))
-        return isinstance(payload, dict) and payload.get('colony_source_read_v1') is True
+        # A source wrapper with unrecognized trailing text is not authenticated,
+        # but still needs withholding. This classification never grants lineage.
+        text = _read_text(_read_value(row))
+        payload = json.JSONDecoder().raw_decode(text.lstrip())[0] if isinstance(text, str) else None
+        return isinstance(payload, dict) and (
+            payload.get('colony_source_read_v1') is True
+            or payload.get('apsimo_native_history_read_v1') is True)
     except (TypeError, ValueError):
         return False
 
@@ -140,22 +223,11 @@ def _user_input(row):
                         for part in row['content'])))
 
 
-def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None,
-                   read_receipts=None):
-    """Keep current-turn recall and remove exact evidence, preserving tool structure.
-
-    Hashes include original session and speaker. Trying those retained origins
-    also removes exact full-message copies carried into a child/new session;
-    this does not attempt substring or semantic paraphrase deletion.
-    """
+def erased_turn_indices(messages, rules, *, aliases=None, stop=None):
+    """Exact source hashes govern whole derived turn spans, including tools."""
     origins = {}
     for rule in rules:
         origins.setdefault(rule['session_id'], set()).update(rule['message_hashes'])
-
-    def erased(content):
-        return any(source_message_hash(session, {'role': role, 'content': content}) in hashes
-                   for session, hashes in origins.items() for role in ('user', 'assistant'))
-
     def erased_origin(row):
         # A whole historical turn can contain derived tool arguments, results
         # and reasoning absent from its canonical user/assistant source. Bind
@@ -177,6 +249,35 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
                 candidates.extend((texts[0], _PACKET.sub('', _MEMORY.sub('', texts[0]))))
         return any(source_message_hash(session, {'role': role, 'content': value}) in hashes
                    for value in candidates for session, hashes in origins.items())
+
+    stop = len(messages) if stop is None else stop
+    starts = [i for i, row in enumerate(messages) if _user_input(row)]
+    withheld = set()
+    for start, end in zip(starts, [*starts[1:], len(messages)]):
+        if start >= stop:
+            break
+        end = min(end, stop)
+        if any(erased_origin(row) for row in messages[start:end] if isinstance(row, dict)):
+            withheld.update(range(start, end))
+    return withheld
+
+
+def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None, current_content=None, current_input=None,
+                   read_receipts=None):
+    """Keep current-turn recall and remove exact evidence, preserving tool structure.
+
+    Hashes include original session and speaker. Trying those retained origins
+    also removes exact full-message copies carried into a child/new session;
+    this does not attempt substring or semantic paraphrase deletion.
+    """
+    origins = {}
+    for rule in rules:
+        origins.setdefault(rule['session_id'], set()).update(rule['message_hashes'])
+
+    def erased(content):
+        return any(source_message_hash(session, {'role': role, 'content': content}) in hashes
+                   for session, hashes in origins.items() for role in ('user', 'assistant'))
+
 
     def packet(match, keep_packet, native_context):
         block = match.group()
@@ -292,14 +393,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         # The authenticated, observed input still starts the active turn.
         current_user = max((i for i in user_indices if current_content is not None
                             and messages[i].get('content') == current_content), default=latest_user)
-        withheld = set()
-        if fresh and origins:
-            for start, end in zip(user_indices, [*user_indices[1:], len(messages)]):
-                if start >= current_user:
-                    break
-                end = min(end, current_user)
-                if any(erased_origin(row) for row in messages[start:end] if isinstance(row, dict)):
-                    withheld.update(range(start, end))
+        withheld = erased_turn_indices(messages, rules, aliases=aliases, stop=current_user) if fresh else set()
         retained = []
         for i, original in enumerate(messages):
             if not isinstance(original, dict):
@@ -349,7 +443,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
 
 
 def _restore_current_suffix(request, tail, current):
-    """Recover only a native-observed suffix lost by plain-user repair.
+    """Recover only a native-observed suffix merged by plain-user repair.
 
     Split the exact observed clean tail temporarily so ordinary filtering still
     checks each historical row for erasure. The wire is recombined afterwards.
@@ -361,14 +455,18 @@ def _restore_current_suffix(request, tail, current):
     if (not isinstance(clean, str) or not isinstance(enriched, str)
             or clean != tail[-1] or not enriched.startswith(clean) or enriched == clean):
         return request, None
+    # Native versions may merge the clean row or retain its api_content. Both
+    # exact observed forms need splitting so erasure checks see historical
+    # rows separately from the current, attributed input.
     joined = '\n\n'.join(value for value in tail if value)
+    joined_enriched = '\n\n'.join(value for value in [*tail[:-1], enriched] if value)
     for key in ('messages', 'input'):
         rows = request.get(key)
         if not isinstance(rows, list):
             continue
         index = max((i for i, row in enumerate(rows) if isinstance(row, dict)
                      and row.get('role') == 'user'), default=-1)
-        if index < 0 or rows[index].get('content') != joined:
+        if index < 0 or rows[index].get('content') not in (joined, joined_enriched):
             continue
         split = [{'role': 'user', 'content': value} for value in tail[:-1]]
         split.append({'role': 'user', 'content': enriched})
@@ -387,6 +485,17 @@ def _recombine_current_suffix(request, repair):
     combined = {**original, 'content': '\n\n'.join(row['content'] for row in rows[index:index+count]
         if row['content'])}
     return {**request, key: [*rows[:index], combined, *rows[index+count:]]}
+
+
+@dataclass(frozen=True)
+class _ReviewParentObservation:
+    observer: object
+    contact_id: str
+    session_id: str
+    turn_id: str
+    aliases: dict
+    packets: set
+    read_receipts: dict
 
 
 class RequestMemory:
@@ -430,14 +539,53 @@ class RequestMemory:
             self._read_receipts[key] = {}
             self._requests_seen.discard(key)
             self._host_inputs.pop(key, None)
-            self._aliases.move_to_end(key)
-            while len(self._aliases) > 32:
-                evicted, _ = self._aliases.popitem(last=False)
-                self._supplied.pop(evicted, None)
-                self._requests_seen.discard(evicted)
-                self._read_receipts.pop(evicted, None)
-                self._host_inputs.pop(evicted, None)
-                self._plain_user_tails.pop(evicted, None)
+            self._trim_observations(key)
+
+    def _trim_observations(self, key):
+        self._aliases.move_to_end(key)
+        while len(self._aliases) > 32:
+            evicted, _ = self._aliases.popitem(last=False)
+            self._supplied.pop(evicted, None)
+            self._requests_seen.discard(evicted)
+            self._read_receipts.pop(evicted, None)
+            self._host_inputs.pop(evicted, None)
+            self._plain_user_tails.pop(evicted, None)
+
+    def snapshot_review_parent(self, scope):
+        """Copy native observations before parent cleanup, without attesting freshness."""
+        if scope is None or not scope.valid_participant or scope.platform == 'background_review':
+            return None
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        with self._lock:
+            if key not in self._aliases:
+                return None
+            aliases, current, _, packets = self._aliases[key]
+            aliases, packets = copy.deepcopy(aliases), set(packets)
+            if current is not None and current.get('api_content'):
+                aliases[_content_key(current['api_content'])] = copy.deepcopy(current.get('content'))
+            packet = _native_packet(current)
+            if packet is not None:
+                packets.add(packet.group())
+            return _ReviewParentObservation(self, scope.contact_id, scope.session_id, scope.turn_id,
+                aliases, packets, copy.deepcopy(self._read_receipts.get(key, {})))
+
+    def observe_review(self, scope, snapshot):
+        """Carry exact parent observations into a detached turn, never its current input."""
+        if (not isinstance(snapshot, _ReviewParentObservation) or snapshot.observer is not self
+                or scope is None or not scope.valid_participant or scope.platform != 'background_review'
+                or scope.contact_id != snapshot.contact_id or scope.session_id != snapshot.session_id
+                or not scope.task_id or not scope.turn_id or scope.turn_id == snapshot.turn_id):
+            return False
+        key = (scope.contact_id, scope.task_id, scope.turn_id)
+        with self._lock:
+            self._aliases[key] = copy.deepcopy(snapshot.aliases), None, None, set(snapshot.packets)
+            self._supplied[key] = {}
+            self._read_receipts[key] = copy.deepcopy(snapshot.read_receipts)
+            self._requests_seen.discard(key)
+            self._host_inputs.pop(key, None)
+            self._plain_user_tails[key] = []
+            self._trim_observations(key)
+        return True
 
     def observe_host_input(self, scope, messages, request_input, *, text, sources, watermark):
         """Record typed host provenance, not marker text parsed from a quotation.
@@ -684,6 +832,7 @@ class RequestMemory:
                 return {'request': withheld_request(filtered, failure=supplied_input.failure),
                     'source': 'colony', 'freshness_retryable': False,
                     'reason': 'source_update_unavailable'}
+            filtered = _restore_source_updates(original_request, filtered, updates)
             supplied_input.admit_updates(scope, filtered, updates)
         if operational and not (fresh and observed and operational['contact_id'] == contact
                                 and operational['watermark'] == watermark):
