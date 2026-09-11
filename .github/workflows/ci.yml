@@ -11,6 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       COLONY_TEST_HERMES_PATH: ${{ github.workspace }}/.qualification/hermes
+      AEVA_HERMES_TEST_SOURCE: ${{ github.workspace }}/.qualification/hermes
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
@@ -40,12 +41,17 @@ jobs:
           python -m pytest tests/hermes_adapter -q --junitxml=hermes-adapter-results.xml
           python - <<'PY'
           import xml.etree.ElementTree as ET
-          cases = [case for case in ET.parse('hermes-adapter-results.xml').iter('testcase')
-                   if case.get('classname', '').endswith('.test_native_task_channels')
-                   and case.get('name') == 'test_native_task_channels']
-          assert len(cases) == 1, 'The actual concurrent native task fixture was not collected'
-          assert not any(cases[0].find(outcome) is not None for outcome in ('skipped', 'failure', 'error')), \
-              'The actual concurrent native task fixture must run and pass'
+          collected = list(ET.parse('hermes-adapter-results.xml').iter('testcase'))
+          for module, name in (
+              ('test_native_task_channels', 'test_native_task_channels'),
+              ('test_native_review_boundary', 'test_native_executor_read_only_review'),
+          ):
+              cases = [case for case in collected
+                       if case.get('classname', '').endswith('.' + module)
+                       and case.get('name') == name]
+              assert len(cases) == 1, f'{name} was not collected'
+              assert not any(cases[0].find(outcome) is not None for outcome in ('skipped', 'failure', 'error')), \
+                  f'{name} must run and pass'
           PY
           python -m pytest hostworker/tests -q
           python -m pytest benchmarks/source_recall/test_harness.py -q
