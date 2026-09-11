@@ -133,6 +133,21 @@ class LocalImageStore:
             self._write_durable(path, data)
         return digest
 
+    def store_source_video(self, data: bytes) -> str:
+        """Retain bounded MP4 bytes using the existing source original mapping.
+
+        As for PDF, the predecessor-compatible internal suffix is not MIME.
+        Ownership, backup and deletion continue to use the same asset namespace.
+        """
+        if self._base_dir.name != 'sources':
+            raise ValueError('video requires canonical source ownership')
+        self._ensure_dirs()
+        digest = hashlib.sha256(data).hexdigest()
+        path = self._original_path(digest, 'video/mp4')
+        if not path.exists() or hashlib.sha256(path.read_bytes()).hexdigest() != digest:
+            self._write_durable(path, data)
+        return digest
+
     def delete_original(self, image_hash: str) -> bool:
         """Delete an owned original and thumbnail after ledger reference checks."""
         if len(image_hash) != 64 or any(c not in "0123456789abcdef" for c in image_hash):

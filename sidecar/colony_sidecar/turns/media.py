@@ -1,4 +1,4 @@
-"""Owned image/audio/PDF originals and fallible derivatives in the source ledger."""
+"""Owned image/audio/PDF/video originals and fallible source derivatives."""
 from __future__ import annotations
 
 import asyncio
@@ -100,6 +100,28 @@ def normalize_messages(conn, store, turn_id, session_id, messages):
             if index in consumed:
                 continue
             kind = block.get('type') if isinstance(block, dict) else None
+            if kind == 'input_video':
+                from .video import decode_video_input, disposition
+                changed = True
+                try:
+                    data = decode_video_input(block)
+                except ValueError as exc:
+                    blocks.append({'type': 'video_unretained', 'reason': str(exc),
+                                   'reference_sha256': hashlib.sha256(json.dumps(block, sort_keys=True).encode()).hexdigest()})
+                    continue
+                asset = store.store_source_video(data)
+                conn.execute('''INSERT INTO source_media(asset_hash,mime_type,size_bytes,width,height,status,media_metadata_json)
+                    VALUES (?,'video/mp4',?,0,0,'video_pending',?) ON CONFLICT(asset_hash) DO UPDATE SET
+                    status=CASE WHEN source_media.status='orphan' THEN 'video_pending' ELSE source_media.status END,
+                    next_attempt=CASE WHEN source_media.status='orphan' THEN 0 ELSE source_media.next_attempt END,
+                    media_metadata_json=CASE WHEN source_media.status='orphan' THEN excluded.media_metadata_json
+                                             ELSE source_media.media_metadata_json END''',
+                    (asset, len(data), json.dumps({'video': disposition('pending')})))
+                conn.execute('''INSERT OR IGNORE INTO source_media_links
+                    (turn_id,message_hash,asset_hash,block_index,role) VALUES (?,?,?,?,?)''',
+                    (turn_id, original_hash, asset, index, message['role']))
+                blocks.append({'type': 'video', 'asset_id': 'sha256:' + asset, 'mime_type': 'video/mp4'})
+                continue
             if kind == 'input_document':
                 from .documents import decode_document, disposition
                 changed = True
@@ -147,7 +169,7 @@ def normalize_messages(conn, store, turn_id, session_id, messages):
                     except Exception:
                         blocks.append({'type': 'audio_transcript_unretained', 'reason': 'invalid_audio_transcript'})
                 continue
-            if kind in {'audio_transcript', 'audio_url', 'input_video', 'video_url',
+            if kind in {'audio_transcript', 'audio_url', 'video_url',
                         'document_url', 'input_file', 'file_url'}:
                 changed = True
                 blocks.append({'type': 'media_unretained', 'reason': 'unsupported_or_unpaired_media',
@@ -223,23 +245,33 @@ class SourceMedia:
         return [row for row in rows if row['message_hash'] in {
             source_message_hash(row['session_id'], message) for message in json.loads(row['messages_json'])}]
 
-    def read(self, asset_hash, *, contact_id, session_id, image_source=None, metadata_only=False):
+    def read(self, asset_hash, *, contact_id, session_id, image_source=None, metadata_only=False, video_source=None):
         if not re.fullmatch('[0-9a-f]{64}', asset_hash):
             raise KeyError('unknown asset')
         # Serialize ownership check and file open with erasure. No static route.
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
             owners = self._owned(conn, asset_hash, contact_id, session_id)
-            if image_source is not None:
+            source = image_source if image_source is not None else video_source
+            if source is not None:
                 from .idempotency import canonical_turn_digest
-                owners = [owner for owner in owners if owner['turn_id'] == image_source['source_id']
-                          and canonical_turn_digest(json.loads(owner['messages_json'])) == image_source['source_version']]
+                owners = [owner for owner in owners if owner['turn_id'] == source['source_id']
+                          and canonical_turn_digest(json.loads(owner['messages_json'])) == source['source_version']]
             if not owners:
                 raise KeyError('unknown asset')
             row = conn.execute('SELECT * FROM source_media WHERE asset_hash=?', (asset_hash,)).fetchone()
             if row is None or row['status'] == 'orphan':
                 raise KeyError('unknown asset')
             path = self.store._original_path(asset_hash, row['mime_type'])
+            if video_source is not None:
+                from .video import MAX_VIDEO_BYTES
+                if row['mime_type'] != 'video/mp4' or not 0 < row['size_bytes'] <= MAX_VIDEO_BYTES:
+                    raise ValueError('source_video_unavailable')
+                with path.open('rb') as stream:
+                    data = stream.read(MAX_VIDEO_BYTES + 1)
+                if len(data) != row['size_bytes'] or hashlib.sha256(data).hexdigest() != asset_hash:
+                    raise ValueError('source_video_original_integrity_mismatch')
+                return (None if metadata_only else data), row['mime_type']
             if image_source is not None:
                 if (row['mime_type'] not in {'image/png', 'image/jpeg', 'image/webp'}
                         or not 0 < row['size_bytes'] <= MAX_IMAGE_BYTES):
@@ -292,7 +324,7 @@ class SourceMedia:
         with closing(self.ledger._connect()) as conn:
             return 'pending' if conn.execute("SELECT 1 FROM source_media WHERE status='orphan'").fetchone() else 'complete'
 
-    def claim_job(self, *, include_documents=False):
+    def claim_job(self, *, include_documents=False, include_videos=False):
         now = time.time()
         with closing(self.ledger._connect()) as conn, conn:
             conn.execute('BEGIN IMMEDIATE')
@@ -301,6 +333,9 @@ class SourceMedia:
             if include_documents:
                 eligibility += " OR (mime_type='application/pdf' AND (status='document_pending' OR (status='document_running' AND lease_until<=?)))"
                 parameters.append(now)
+            if include_videos:
+                eligibility += " OR (mime_type='video/mp4' AND ((status='video_pending' AND next_attempt<=?) OR (status='video_running' AND lease_until<=?)))"
+                parameters.extend([now, now])
             # Original insertion order is shared across media kinds. A stream
             # of later PDF arrivals cannot starve an already eligible image,
             # or vice versa. Leased, failed and orphan rows are not eligible.
@@ -309,7 +344,7 @@ class SourceMedia:
             if row is None:
                 return None
             token = uuid.uuid4().hex
-            status = 'document_running' if row['mime_type'] == 'application/pdf' else 'running'
+            status = {'application/pdf': 'document_running', 'video/mp4': 'video_running'}.get(row['mime_type'], 'running')
             conn.execute("UPDATE source_media SET status=?,attempts=attempts+1,lease_token=?,lease_until=? WHERE asset_hash=?",
                          (status, token, now + 60, row['asset_hash']))
             return dict(row, lease_token=token)
@@ -380,6 +415,86 @@ class SourceMedia:
             result = disposition('failed', 'document_original_or_parser_unavailable')
         self.finish_document(job, result)
 
+    def finish_video(self, job, result, *, description=None, model=None, provenance=None, error=None):
+        from .video import VERSION
+        metadata = {**result, 'frames': [
+            {k: v for k, v in frame.items() if k != 'data_url'} for frame in result.get('frames', [])]}
+        with closing(self.ledger._connect()) as conn, conn:
+            conn.execute('BEGIN IMMEDIATE')
+            if (not conn.execute("SELECT 1 FROM source_media WHERE asset_hash=? AND status='video_running' AND lease_token=?",
+                                 (job['asset_hash'], job['lease_token'])).fetchone()
+                    or not conn.execute('SELECT 1 FROM source_media_links WHERE asset_hash=?', (job['asset_hash'],)).fetchone()):
+                return False
+            status = ('video_pending' if error else 'complete') if result['status'] == 'complete' else 'video_' + result['status']
+            next_attempt = time.time() + min(900, 15 * 2 ** min(job['attempts'], 6)) if error else 0
+            conn.execute('''UPDATE source_media SET status=?,description=?,model=?,description_version=?,error=?,
+                model_provenance_json=?,media_metadata_json=?,next_attempt=?,lease_until=0,lease_token='' WHERE asset_hash=?''',
+                (status, description, model, VERSION, error or result.get('reason'), json.dumps(provenance or {}),
+                 json.dumps({'video': metadata}), next_attempt, job['asset_hash']))
+            if description is not None and status == 'complete':
+                conn.execute('DELETE FROM source_media_search WHERE asset_hash=?', (job['asset_hash'],))
+                conn.execute('INSERT INTO source_media_search(asset_hash,description) VALUES (?,?)', (job['asset_hash'], description))
+                from .source_vectors import enqueue
+                for row in conn.execute('SELECT DISTINCT turn_id FROM source_media_links WHERE asset_hash=?', (job['asset_hash'],)):
+                    enqueue(conn, row['turn_id'])
+            return True
+
+    async def process_video(self, job, router):
+        from .video import MAX_VIDEO_BYTES, decode_video, disposition
+        try:
+            with self.store._original_path(job['asset_hash'], job['mime_type']).open('rb') as stream:
+                data = stream.read(MAX_VIDEO_BYTES + 1)
+            if len(data) > MAX_VIDEO_BYTES or hashlib.sha256(data).hexdigest() != job['asset_hash']:
+                raise ValueError('invalid_original')
+            result = await decode_video(data)
+        except (OSError, ValueError):
+            result = disposition('failed', 'video_original_unavailable_or_changed')
+        if result['status'] != 'complete':
+            self.finish_video(job, result)
+            return
+        # Decoding can outlive an erasure or a replaced lease. Do not submit
+        # captured frames to inference after that source has already gone.
+        with closing(self.ledger._connect()) as conn:
+            if not conn.execute('''SELECT 1 FROM source_media m WHERE asset_hash=?
+                AND status='video_running' AND lease_token=? AND EXISTS
+                (SELECT 1 FROM source_media_links l WHERE l.asset_hash=m.asset_hash)''',
+                (job['asset_hash'], job['lease_token'])).fetchone():
+                return
+        model, provenance = None, {}
+        try:
+            from colony_sidecar.beliefs.source_claims import local_tier
+            from colony_sidecar.router.tiers import ModelTier
+            functions = getattr(router, 'supports_function_routing', False) is True
+            config = router.tier_config(ModelTier.VISION) if router is not None and not functions else None
+            tier = local_tier(router, ModelTier.VISION) if config is not None and getattr(config, 'supports_vision', False) is True else None
+            if not functions and tier is None:
+                self.finish_video(job, result, error='local_vision_role_unavailable')
+                return
+            parts = []
+            for frame in result['frames']:
+                parts.extend([{'type': 'text', 'text': f"Sample at {frame['actual_ms']}ms relative to first decoded frame:"},
+                              {'type': 'image_url', 'image_url': {'url': frame['data_url']}}])
+            response = await asyncio.wait_for(router.complete(messages=[
+                {'role': 'system', 'content': DESCRIPTION_PROMPT + ' These are samples from a short clip. '
+                 'Describe each visible sampled state with its given relative time. '
+                 'Do not infer activity between samples or identify capture wall time. Audio was not processed.'},
+                {'role': 'user', 'content': parts}], force_tier=tier,
+                context={'task': 'source_video_description', 'function_role': 'vision',
+                         'max_output_tokens': 1600, 'allow_fallback': functions}), 40 if functions else 20)
+            model = response.model_id
+            provenance = {'function_role': getattr(response, 'function_role', '') or 'vision',
+                'config_revision': getattr(response, 'config_revision', '') or 'unknown',
+                'weight_revision': getattr(response, 'model_revision', '') or 'unknown', 'model_id': model}
+            description = description_text(response)
+            times = ', '.join(str(frame['actual_ms']) for frame in result['frames'])
+            description = f'Sampled video evidence at [{times}]ms from the first decoded frame; intervening activity and audio unobserved. ' + description
+            self.finish_video(job, result, description=description, model=model, provenance=provenance)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            reason = str(exc) if isinstance(exc, ValueError) and str(exc) in _DESCRIPTION_ERRORS else type(exc).__name__
+            self.finish_video(job, result, model=model, provenance=provenance, error=reason)
+
     async def process_one(self, router):
         try:
             self.collect_orphans()
@@ -387,11 +502,14 @@ class SourceMedia:
             # A fenced but undeletable orphan must not starve other image jobs.
             # Explicit erasure reports pending; later passes retry deletion.
             pass
-        job = self.claim_job(include_documents=True)
+        job = self.claim_job(include_documents=True, include_videos=True)
         if job is None:
             return False
         if job['mime_type'] == 'application/pdf':
             await self.process_document(job)
+            return True
+        if job['mime_type'] == 'video/mp4':
+            await self.process_video(job, router)
             return True
         model, provenance = None, {}
         try:

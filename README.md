@@ -15,7 +15,8 @@ channels, model endpoints and optional hardware adapters.
   and optional semantic retrieval. Retained images, audio and PDF pages keep
   references to their originals. Capture and supported media readers depend on
   the integration. [Memory](docs/MEMORY-QUALITY.md),
-  [audio](docs/SOURCE-AUDIO.md), [documents](docs/SOURCE-DOCUMENTS.md).
+  [audio](docs/SOURCE-AUDIO.md), [documents](docs/SOURCE-DOCUMENTS.md),
+  [selected video](docs/SOURCE-VIDEOS.md) with an optional decoder.
 - **Shared work:** native tasks, children, crons and enrolled external work appear
   in one scoped view, refreshed at model-request boundaries. Source coverage and
   missing observations stay explicit. Accepted drafts retain their identity
