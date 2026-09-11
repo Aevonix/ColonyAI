@@ -652,7 +652,8 @@ def test_local_stop_refuses_reused_pid_and_other_instance_port(tmp_path, monkeyp
     assert result.value.code == 1
 
 
-def test_local_start_records_process_after_python_launcher_exec(tmp_path, monkeypatch):
+@pytest.mark.parametrize('interrupted', [False, True])
+def test_local_start_records_process_after_python_launcher_exec(tmp_path, monkeypatch, interrupted):
     from colony_sidecar import cli
     monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
     monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
@@ -666,10 +667,18 @@ def test_local_start_records_process_after_python_launcher_exec(tmp_path, monkey
     monkeypatch.setattr(cli, '_process_signature', lambda pid: signature[0])
     def ready(*a, **k):
         signature[0] = 'same-start-time framework/Python -m uvicorn'
+        if interrupted:
+            raise KeyboardInterrupt()
         return True
     monkeypatch.setattr(cli, '_wait_for_sidecar', ready)
     monkeypatch.setattr(httpx, 'get', lambda *a, **k: Mock(json=lambda:{'capabilities':[]}))
-    cli._cmd_start_daemon('127.0.0.1', 7777, False)
+    if interrupted:
+        with pytest.raises(KeyboardInterrupt):
+            cli._cmd_start_daemon('127.0.0.1', 7777, False)
+        proc.terminate.assert_called_once_with()
+    else:
+        cli._cmd_start_daemon('127.0.0.1', 7777, False)
+        proc.terminate.assert_not_called()
     record = json.loads((tmp_path/'sidecar-process.json').read_text())
     assert record['signature'] == signature[0]
     def stop(pid, sig):

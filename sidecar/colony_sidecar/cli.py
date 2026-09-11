@@ -1708,13 +1708,19 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     # Wait for health check
     _load_dotenv()
     api_key = os.environ.get("COLONY_CLIENT_API_KEY") or os.environ.get("COLONY_API_KEY", "dev-mode-no-key")
-    healthy = _wait_for_sidecar(host, port, api_key, timeout=20.0)
-    if local_instance and proc.poll() is None:
-        # macOS Python launchers exec the framework interpreter during startup.
-        # Record the serving child, rather than its transient launcher command.
-        record = pid_path.with_name("sidecar-process.json")
-        record.write_text(json.dumps({"pid": proc.pid, "signature": _process_signature(proc.pid)}))
-        record.chmod(0o600)
+    try:
+        healthy = _wait_for_sidecar(host, port, api_key, timeout=20.0)
+    except BaseException:
+        if local_instance and proc.poll() is None:
+            proc.terminate()
+        raise
+    finally:
+        if local_instance and proc.poll() is None:
+            # macOS Python launchers exec the framework interpreter during startup.
+            # Retain the serving child, including after an interrupted wait.
+            record = pid_path.with_name("sidecar-process.json")
+            record.write_text(json.dumps({"pid": proc.pid, "signature": _process_signature(proc.pid)}))
+            record.chmod(0o600)
     if healthy:
         import httpx
         try:
