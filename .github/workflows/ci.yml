@@ -9,12 +9,16 @@ on:
 jobs:
   hermes-adapter:
     runs-on: ubuntu-latest
+    env:
+      COLONY_TEST_HERMES_PATH: ${{ github.workspace }}/.qualification/hermes
     steps:
       - uses: actions/checkout@v6
       - uses: actions/checkout@v6
         with:
-          repository: NousResearch/hermes-agent
-          ref: 2237be355906fbe6065ce1815711eee52b2d646e
+          # Explicit qualification build; latest unmodified upstream is checked
+          # separately by hermes-upstream.yml. See the compatibility note.
+          repository: Kurcide/hermes-agent
+          ref: a78454b963030962ccefd7e37461e35d2082b587
           path: .qualification/hermes
           persist-credentials: false
       - uses: actions/setup-python@v6
@@ -33,7 +37,16 @@ jobs:
       - name: Qualify built artifacts and profile isolation
         run: |
           export AEVA_HERMES_TEST_PYTHON="$(command -v python)"
-          python -m pytest tests/hermes_adapter -q
+          python -m pytest tests/hermes_adapter -q --junitxml=hermes-adapter-results.xml
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = [case for case in ET.parse('hermes-adapter-results.xml').iter('testcase')
+                   if case.get('classname', '').endswith('.test_native_task_channels')
+                   and case.get('name') == 'test_native_task_channels']
+          assert len(cases) == 1, 'The actual concurrent native task fixture was not collected'
+          assert not any(cases[0].find(outcome) is not None for outcome in ('skipped', 'failure', 'error')), \
+              'The actual concurrent native task fixture must run and pass'
+          PY
           python -m pytest hostworker/tests -q
           python -m pytest benchmarks/source_recall/test_harness.py -q
 

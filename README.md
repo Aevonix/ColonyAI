@@ -42,6 +42,9 @@ ordinary-use evidence for useful autonomous learning. The
 ## Start with Hermes
 
 The current qualification target is Hermes 0.21.1; 0.21.0 attachment remains supported.
+Optional [concurrent background tasks](docs/NATIVE-TASK-CHANNELS.md) require the
+callback correction in the [pinned Hermes compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
+The daily upstream check remains separate, and setup does not patch your runtime.
 Native final-summary memory filtering requires NeMo Relay 0.8.3, included in
 the `native-memory` extra below. Older attachments retain ordinary request filtering.
 Use the selected Hermes runtime's Python interpreter for attachment;
