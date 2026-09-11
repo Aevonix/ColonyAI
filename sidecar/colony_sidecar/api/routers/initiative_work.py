@@ -69,9 +69,9 @@ def guarded(operation):
 
 
 @router.get('')
-def pending(contact_id: str, request: Request):
+def pending(contact_id: str, request: Request, discover: bool = False):
     ledger, person = store(request, contact_id)
-    return guarded(lambda: {'items': ledger.pending(person)})
+    return guarded(lambda: {'items': ledger.pending(person, discover=discover)})
 
 
 @router.get('/{initiative_id}')
@@ -82,7 +82,7 @@ def review(initiative_id: str, contact_id: str, request: Request):
         if home is None or 'default' not in boards:
             raise ValueError('selected_native_review_board_required')
         return ledger.get(initiative_id) | {'execution': {'native_board': 'default',
-            'worker_profile': 'default', 'source_home_id': hashlib.sha256(str(home).encode()).hexdigest()}}
+            'worker_profile': 'colony-reviews', 'source_home_id': hashlib.sha256(str(home).encode()).hexdigest()}}
     return guarded(selected)
 
 

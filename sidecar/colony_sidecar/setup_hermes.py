@@ -514,7 +514,7 @@ def run(root_dir=None, args=None):
                 raise ValueError('--preferences-only requires --whatsapp-read-receipts on or off')
             if root_dir or any(getattr(args, name, None) for name in (
                     'start', 'refresh_adapter', 'replace_memory_provider', 'local_work',
-                    'native_goals', 'model_url', 'model', 'adapter_wheel', 'agent_name',
+                    'native_goals', 'native_reviews', 'model_url', 'model', 'adapter_wheel', 'agent_name',
                     'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'encrypt',
                     'passphrase', 'claim_genesis', 'mcp_harnesses', 'no_harness')) or (
                     getattr(args, 'host_framework', None) not in (None, 'hermes')):
@@ -571,6 +571,11 @@ def run(root_dir=None, args=None):
             if getattr(args, 'native_goals', False):
                 from .setup_native_goals import enable
                 enable(state)
+            if (getattr(args, 'native_reviews', False) or
+                    (getattr(args, 'refresh_adapter', False) and
+                     (config.get('plugins', {}).get('colony', {}).get('native_reviews') or {}).get('enabled') is True)):
+                from .setup_native_reviews import configure
+                configure(state, install=True)
             if receipt_choice is not None:
                 _write_receipt_preference(home, receipt_choice)
             os.environ['COLONY_STATE_DIR'] = str(state)
@@ -629,7 +634,10 @@ def run(root_dir=None, args=None):
         native_goals = bool(getattr(args, 'native_goals', False))
         if not noninteractive and not native_goals:
             native_goals = ask('Enable persistent tasks using this Hermes profile and its gateway? [y/N]', 'N').lower() in {'y','yes'}
-        if local_work or native_goals:
+        native_reviews = bool(getattr(args, 'native_reviews', False))
+        if not noninteractive and not native_reviews:
+            native_reviews = ask('Enable bounded read-only operational reviews? [y/N]', 'N').lower() in {'y','yes'}
+        if local_work or native_goals or native_reviews:
             from .setup_local_work import verify_tools
             verify_tools(endpoint, model, model_key)
         port = int(getattr(args, 'port', 7777))
@@ -697,7 +705,7 @@ def run(root_dir=None, args=None):
             model_configuration = {'provider': 'local', 'baseUrl': endpoint,
                 'apiKey': model_key, 'localHosts': local_hosts,
                 'models': {name: model for name in ('small', 'medium', 'large')}}
-            if local_work:
+            if local_work or native_reviews:
                 from .setup_local_work import planning_configuration
                 planning_configuration(model_configuration)
             _private_write(staged/'.colony-llm-config.json', _json(model_configuration))
@@ -791,6 +799,9 @@ def run(root_dir=None, args=None):
         if local_work:
             from .setup_local_work import install
             install(state)
+        if native_reviews:
+            from .setup_native_reviews import configure
+            configure(state, install=True)
         print(f'Private agent configured in {home}; state in {state}.')
         print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
         print('Canonical memory capture and recollection are enabled for new Hermes sessions.')

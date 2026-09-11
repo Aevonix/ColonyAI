@@ -476,6 +476,30 @@ def test_worker_profile_creation_and_role_refresh_align_memory_spill(tmp_path, m
     assert yaml.safe_load(path.read_text())==after
 
 
+def test_review_setup_is_opt_in_and_upgrade_preserves_selection(args, monkeypatch):
+    from colony_sidecar import setup_native_reviews, setup_local_work
+    calls = []
+    monkeypatch.setattr(setup_native_reviews, 'configure', lambda state, **kw: calls.append((state, kw)))
+    monkeypatch.setattr(setup_local_work, 'verify_tools', lambda *a: None)
+    assert setup.run_init(None, args) == 0
+    assert calls == []
+    home = Path(args.hermes_home); state = home/'colony'
+    args.native_reviews = True
+    assert setup.run_init(None, args) == 0
+    assert calls == [(state, {'install': True})]
+    path = home/'config.yaml'; config = yaml.safe_load(path.read_text())
+    config['plugins']['colony']['native_reviews'] = {'enabled': True, 'instance_dir': str(state)}
+    path.write_text(yaml.safe_dump(config))
+    args.native_reviews = False; args.refresh_adapter = True
+    monkeypatch.setattr(setup_hermes, 'refresh_adapter', lambda *a: None)
+    assert setup.run_init(None, args) == 0
+    assert len(calls) == 2
+    config['plugins']['colony']['native_reviews']['enabled'] = False
+    path.write_text(yaml.safe_dump(config))
+    assert setup.run_init(None, args) == 0
+    assert len(calls) == 2
+
+
 def test_refresh_rejects_local_edits_before_mutation(args, monkeypatch):
     assert setup.run_init(None, args)==0
     home=Path(args.hermes_home);state=home/'colony'

@@ -7,10 +7,11 @@ import pytest
 
 
 PROBE = r'''
-import json,os,socket,sys,types,time,hashlib
+import json,os,socket,sys,types,time,hashlib,shutil
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
+if sys.argv[4]:sys.path.insert(0,sys.argv[4])
 package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native forecast qualification')
 socket.socket.connect=no_network
@@ -28,8 +29,19 @@ from colony_hermes.initiative_work import NativeReviews
 from colony_hermes.runtime_models import RuntimeModelObserver
 from unittest.mock import patch
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
-(root/'config.yaml').write_text('plugins: {enabled: []}\n')
+(root/'config.yaml').write_text('plugins: {enabled: [], colony: {owner_contact_id: owner}}\n')
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
+shutil.copytree(sys.argv[2],state/'adapter/colony_hermes')
+for name in ('catalog.py','contract.py'):
+ shutil.copyfile(Path(sys.argv[2]).parents[1]/'hostworker/colony_hostworker'/name,state/'adapter/colony_hermes/colony_hostworker'/name)
+(state/'instance.json').write_text(json.dumps({'version':1,'profile':'local','hermes_home':str(root),
+ 'hermes_python':sys.executable,'sidecar_python':sys.executable,'sidecar_module_root':sys.argv[1],
+ 'adapter_binding':{'mode':'private-directory'}}))
+(state/'.colony-llm-config.json').write_text(json.dumps({'provider':'vllm','models':{},
+ 'modelPool':{'planning-fixture':{'model':'replaceable-planning-model',
+ 'baseUrl':'http://127.0.0.1:9/v1','supportsTools':True}},'functionRoles':{'planning':['planning-fixture']}}))
+from colony_sidecar.setup_native_reviews import configure
+configure(state,install=True)
 store=InitiativeStore(state);host._initiative_store=store
 host._expectations=ExpectationEngine(ExpectationStore(str(state/'expectations.db')))
 sources=get_turn_idempotency_ledger(state)
@@ -41,7 +53,7 @@ async def authority(request,next_call):
      audiences=frozenset({'viewer'}),authenticated=True)
  return await next_call(request)
 app.include_router(initiative_work.router)
-client=TestClient(app);worker=NativeReviews(client,'owner')
+client=TestClient(app);worker=NativeReviews(client,'owner',{'enabled':True,'instance_dir':str(state)})
 def proposal(label):
  return store.create(type='operational',description=label,priority=.5,
     action_hint='operational_review',source_type='operational',created_by='autonomy_loop',
@@ -156,7 +168,8 @@ def test_actual_native_forecast_learning(tmp_path):
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result=subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
+        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+        os.environ.get('AEVA_HERMES_TEST_SOURCE',os.environ.get('COLONY_TEST_HERMES_PATH',''))],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode==0,result.stdout+result.stderr
     assert '"next_horizon_changed": true' in result.stdout

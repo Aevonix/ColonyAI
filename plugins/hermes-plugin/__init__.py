@@ -2289,6 +2289,11 @@ def _require_coexistence_latches() -> None:
 def register(ctx: Any) -> None:
     """Register the governed adapter against Hermes 0.18.2-compatible APIs."""
 
+    config = _plugin_config(ctx)
+    if (config.get('native_reviews') or {}).get('worker') is True:
+        from .review_worker import register_worker
+        register_worker(ctx, config['native_reviews'])
+        return
     _require_coexistence_latches()
     for method in ("register_tool", "register_hook", "register_middleware"):
         if not callable(getattr(ctx, method, None)):
@@ -2340,7 +2345,7 @@ def register(ctx: Any) -> None:
     boundary = _prepare_runtime_boundary(config)
     client = ColonyClient(url=url, api_key=api_key)
     work_coordinator = CommitmentCoordinator(client)
-    native_reviews = NativeReviews(client, owner_contact_id)
+    native_reviews = NativeReviews(client, owner_contact_id, config.get('native_reviews'))
     native_followups = NativeFollowups(client, owner_contact_id)
     native_config = config.get('native_local_work')
     native_drafts = (NativeDrafts.for_execution(native_config, client, owner_contact_id)
