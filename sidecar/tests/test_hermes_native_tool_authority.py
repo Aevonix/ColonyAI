@@ -37,7 +37,16 @@ def test_owner_and_attested_system_keep_native_tools(runtime, sender, platform):
     _, ctx, _, _ = runtime
     _pre(ctx, session="s", task="t", turn="u", platform=platform, sender=sender)
     for name in NATIVE_TOOLS:
-        assert call(ctx, name) == "executed"
+        # History now reconciles successful results against memory erasures.
+        # A native error needs no database fixture and must remain unchanged.
+        expected = (json.dumps({"success": False, "error": "fixture has no stored sessions"})
+                    if name == "session_search" else "executed")
+        invoked = []
+        def dispatch(args):
+            invoked.append(args)
+            return expected
+        assert call(ctx, name, dispatch=dispatch) == expected
+        assert invoked == [{}]
 
 
 @pytest.mark.parametrize("overrides", [{"session": "other"}, {"task": "other"},
