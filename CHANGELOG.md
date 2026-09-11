@@ -1,5 +1,26 @@
 # Changelog
 
+## v1.2.1 - bounded native operational reviews
+
+Autonomous operational reviews use an opt-in native profile with two tools:
+read registered evidence and report through the current task's native lifecycle.
+The profile cannot invoke terminal, file mutation, arbitrary attachments,
+delegation or task creation. Registered log samples include current size and
+filesystem measurements; missing writer and retention configuration is explicit.
+The existing planning role is refreshed before new work is dispatched.
+
+Guided attachment exposes `--native-reviews`; adapter refresh preserves the
+existing choice. Historical reviews still reconcile. New temporal follow-up
+workers remain undispatched until their bounded report path is integrated with
+the existing governed outbox. Owner conversations and shared tasks retain their
+own tools and profiles. Native integration tests exercise actual discovery,
+worker identity, evidence selection and completion; model usefulness requires
+a separate deployment qualification.
+
+The pinned Hermes compatibility build also retains named custom-provider
+timeouts through transport resolution. Doctor no longer advises restoring
+Hermes' retired normal output cap. Native truncation recovery remains intact.
+
 ## v1.2.0 - shared native tasks during conversation
 
 The optional `colony_task` tool starts durable Hermes work while foreground
