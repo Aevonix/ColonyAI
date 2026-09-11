@@ -1171,3 +1171,44 @@ def test_native_setup_updates_existing_secret_name_without_adding_an_alias(
     provider = provider_mod.ApsimoMemoryProvider()
     secret = next(row for row in provider.get_config_schema() if row['key'] == 'api_key')
     assert secret['env_var'] == 'APSIMO_API_KEY'
+
+
+@pytest.mark.parametrize('layout', ['apsimo', 'colony', 'hermes-plugin'])
+def test_copied_provider_uses_actual_sibling_helper_without_installed_adapter(
+        monkeypatch, tmp_path, layout):
+    import builtins
+    from apsimo.setup import _hermes_plugin_files
+    home = tmp_path / 'profile'
+    home.mkdir()
+    for content, destination in _hermes_plugin_files(_PROVIDER_PATH.parents[2], home):
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_bytes(content)
+    if layout != 'apsimo':
+        (home / 'plugins/apsimo').rename(home / 'plugins' / layout)
+    memory = home / 'plugins/apsimo-memory'
+    if layout == 'colony':
+        memory.rename(home / 'plugins/colony-memory')
+        memory = home / 'plugins/colony-memory'
+    original_import = builtins.__import__
+    def without_installed_adapter(name, *args, **kwargs):
+        if name == 'apsimo_hermes.environment':
+            raise ModuleNotFoundError('No installed adapter in copied-layout fixture',
+                                      name='apsimo_hermes')
+        return original_import(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, '__import__', without_installed_adapter)
+    spec = importlib.util.spec_from_file_location('copied_memory_' + layout.replace('-', '_'),
+                                                  memory / 'provider.py')
+    module = importlib.util.module_from_spec(spec)
+    monkeypatch.setitem(sys.modules, spec.name, module)
+    spec.loader.exec_module(module)
+    assert module._environment_path == home / 'plugins' / layout / 'environment.py'
+    monkeypatch.setattr(module, '_active_hermes_home', lambda: home)
+    monkeypatch.delenv('COLONY_API_KEY', raising=False)
+    monkeypatch.setenv('APSIMO_API_KEY', 'copied-layout-fixture-key')
+    before = dict(module.os.environ)
+    provider = module.ApsimoMemoryProvider(config={'url':'http://fixture.invalid',
+        'contact_id':'fixture-owner', 'turn_writer':'disabled'})
+    assert provider._api_key == 'copied-layout-fixture-key'
+    assert dict(module.os.environ) == before
+    assert provider.name == 'apsimo'
+    provider.shutdown()

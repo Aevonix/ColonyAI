@@ -30,9 +30,9 @@ import sys
 import urllib.request
 
 HOME = os.path.expanduser("~")
-PLUGINS_DIR = os.environ.get("COLONY_DOCTOR_PLUGINS_DIR", os.path.join(HOME, ".hermes", "plugins"))
+PLUGINS_DIR = os.environ.get("APSIMO_DOCTOR_PLUGINS_DIR", os.environ.get("COLONY_DOCTOR_PLUGINS_DIR", os.path.join(HOME, ".hermes", "plugins")))
 STATE_FILE = os.path.join(HOME, ".hermes", ".colony_doctor_state.json")
-SIDECAR_URL = os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
+SIDECAR_URL = os.environ.get("APSIMO_URL", os.environ.get("COLONY_URL", "http://127.0.0.1:7777"))
 
 FAILS, WARNS, OKS = [], [], []
 def ok(m):   OKS.append(m);   print(f"  ✅ {m}")
@@ -55,6 +55,9 @@ def valid_hooks():
         return None  # unknown -> skip the name check rather than false-fail
 
 def colony_key():
+    configured = os.environ.get("APSIMO_API_KEY", os.environ.get("COLONY_API_KEY", ""))
+    if configured:
+        return configured
     try:
         for ln in open(os.path.join(HOME, ".colony", ".env")):
             if ln.startswith("COLONY_API_KEY="):
@@ -221,7 +224,7 @@ def live_checks():
     except Exception as e:
         fail(f"contact-resolve failed: {e}")
     # Colony LLM provider sane (generative, not an embedding model)
-    cfg_path = os.path.join(os.environ.get("COLONY_STATE_DIR", os.path.join(HOME, ".colony", "data")),
+    cfg_path = os.path.join(os.environ.get("APSIMO_STATE_DIR", os.environ.get("COLONY_STATE_DIR", os.path.join(HOME, ".colony", "data"))),
                             ".colony-llm-config.json")
     try:
         cfg = json.load(open(cfg_path))
@@ -257,7 +260,9 @@ def config_checks():
     try:
         from hermes_cli.config import load_config, cfg_get
         c = load_config()
-        col = cfg_get(c, "plugins", "colony", default={}) or {}
+        col = cfg_get(c, "plugins", "apsimo", default=None)
+        if col is None:
+            col = cfg_get(c, "plugins", "colony", default={}) or {}
         large = str(col.get("llm_large", "")).lower()
         if col.get("llm_provider") and "embed" not in large:
             ok(f"colony LLM configured (provider={col.get('llm_provider')}, model={col.get('llm_large')})")

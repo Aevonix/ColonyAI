@@ -34,7 +34,11 @@ except ModuleNotFoundError as error:
     if error.name not in {"apsimo_hermes", "apsimo_hermes.environment"}:
         raise
     import importlib.util
-    _environment_path = Path(__file__).resolve().parents[1] / "hermes-plugin" / "environment.py"
+    _siblings = Path(__file__).resolve().parents[1]
+    _environment_path = next((path for directory in ("apsimo", "colony", "hermes-plugin")
+                              if (path := _siblings / directory / "environment.py").is_file()), None)
+    if _environment_path is None:
+        raise ModuleNotFoundError("Apsimo memory requires its sibling adapter environment helper") from None
     _environment_spec = importlib.util.spec_from_file_location("_apsimo_memory_environment", _environment_path)
     _environment_module = importlib.util.module_from_spec(_environment_spec)
     _environment_spec.loader.exec_module(_environment_module)

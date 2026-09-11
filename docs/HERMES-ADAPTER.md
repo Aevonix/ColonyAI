@@ -40,26 +40,27 @@ python -m build
 Install the resulting wheel with the Python interpreter that runs Hermes:
 
 ```sh
-python -m pip install dist/apsimo_hermes-1.0.33-py3-none-any.whl
+python -m pip install dist/apsimo_hermes-1.3.0-py3-none-any.whl
 ```
 
-The wheel exposes `colony` through `hermes_agent.plugins` and `colony-memory`
-through `hermes_agent.memory_providers`. It maps the canonical source files in
+The wheel exposes `apsimo` through `hermes_agent.plugins` and `apsimo-memory`
+through `hermes_agent.memory_providers`. Exact legacy aliases `colony` and
+`colony-memory` target the same canonical modules; only the selected general
+adapter registers tools and hooks. It maps the canonical source files in
 `plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
-Only `catalog.py` and `contract.py` from `hostworker/colony_hostworker/` are
-included in the adapter's private catalog package. Source-checkout plugin paths
-and the existing installer's copying behavior remain compatible.
+Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
+included in the adapter's private catalog package. The legacy source installer forwards to the guided, profile-aware installer.
 
 ## Activation and current limits
 
 Installing the wheel makes the adapters discoverable. It does not change a
 Hermes profile, select a memory provider, or enable tools. Activation requires
-the existing general-adapter configuration, `plugins.enabled: [colony]`, and
-`memory.provider: colony-memory` in the selected private profile. Preserve
+the existing general-adapter configuration, `plugins.enabled: [apsimo]`, and
+`memory.provider: apsimo-memory` in the selected private profile. Preserve
 other enabled plugins when editing that list. These two durable selections make
 the general plugin the canonical writer and keep the memory provider read-only,
 including cold native workers that do not inherit launcher environment flags.
-An explicit `plugins.disabled: [colony]` or an enabled list excluding `colony`
+An explicit `plugins.disabled: [apsimo]` or an enabled list excluding `apsimo`
 takes precedence over inherited flags. A contradictory configured provider
 `turn_writer: enabled` is rejected; native `colony-memory.json` settings retain
 their precedence over legacy `memory.config`.
@@ -74,9 +75,9 @@ COLONY_MEMORY_TURN_WRITER=disabled
 ```
 
 Configure the sidecar URL and contact through native `hermes memory setup`
-and matching `plugins.colony` configuration, and supply `COLONY_API_KEY` privately.
+and matching `plugins.apsimo` configuration, and supply `APSIMO_API_KEY` privately.
 Native setup stores non-secret fields in the selected profile's
-`colony-memory.json`, which overrides legacy `memory.config`. The
+`apsimo-memory.json` (retaining an existing `colony-memory.json` selection), which overrides legacy `memory.config`. The
 general adapter needs a private writable turn outbox and verified participant
 bindings. Consequential tools retain their existing mediator requirements.
 This packaging change does not provision those dependencies.
@@ -88,15 +89,15 @@ override a same-name directory plugin. Remove or archive obsolete plugin
 directories only as part of an intentional profile migration.
 
 When the memory provider is selected, native CLI discovery exposes
-`hermes colony-memory status`, `goals`, `context`, and `sync`. These commands
+`hermes apsimo-memory status`, `goals`, `context`, and `sync`. These commands
 resolve the same selected profile settings and credentials as the provider;
 explicit URL/contact arguments remain available. The Typer app remains available
 to existing callers.
 
 Profile settings and handoff files stay scoped to the selected Hermes home.
 The provider remains attached through a sidecar startup outage and retries on
-later requests. Automatic profile activation remains follow-up work; packaging
-alone does not establish production readiness.
+later requests. Use `apsimo init` for guided attachment and explicit refresh of a managed
+installation. Packaging alone does not establish production readiness.
 
 ## Durable source capture
 
@@ -604,6 +605,11 @@ This prepares the profile and enables `plugins.colony.native_reviews` in the
 selected native root configuration. An existing profile belonging to another
 instance is retained and installation fails. Named conversation profiles must
 select their root deployment for this shared worker.
+
+When enabled, the existing native dispatch tick discovers at most five new
+server-eligible read-only proposals and reconciles already bound work. A separate
+LLM queue steward or scheduling service is unnecessary. Disabling the choice
+stops new discovery while preserving observation of existing bindings.
 
 The profile exposes two tools: `colony_read_work_source` and
 `colony_review_report`. Native `agent.disabled_toolsets: [kanban]` removes

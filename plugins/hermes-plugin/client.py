@@ -1635,7 +1635,7 @@ def _resolve_env_placeholder(value: Any) -> str:
     return text
 
 
-class ColonyClient:
+class ApsimoClient:
     """Small synchronous client; effect endpoints are intentionally absent."""
 
     def __init__(self, url: str | None = None, api_key: str | None = None):
@@ -1839,7 +1839,10 @@ class ColonyClient:
             return False
 
 
+ColonyClient = ApsimoClient
+
 __all__ = [
+    "ApsimoClient",
     "ColonyClient",
     "PrivateSQLitePath",
     "PrivateSQLitePathError",

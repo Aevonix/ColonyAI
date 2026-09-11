@@ -7,29 +7,41 @@ import pytest
 
 
 PROBE = r'''
-import json,os,socket,sys,types,time,hashlib
+import json,os,socket,sys,types,time,hashlib,shutil
 from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
-package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
+if sys.argv[4]:sys.path.insert(0,sys.argv[4])
+package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[2]];sys.modules['apsimo_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native forecast qualification')
 socket.socket.connect=no_network
 from hermes_cli import kanban_db as kb
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import initiative_work,host
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.self_model.expectations import ExpectationStore,ExpectationEngine
-from colony_sidecar.self_model import runtime_forecasts
-from colony_sidecar.turns import get_turn_idempotency_ledger
-from colony_sidecar.turns.hermes_kanban import task_snapshot
-from colony_hermes.initiative_work import NativeReviews
-from colony_hermes.runtime_models import RuntimeModelObserver
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import initiative_work,host
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.self_model.expectations import ExpectationStore,ExpectationEngine
+from apsimo.self_model import runtime_forecasts
+from apsimo.turns import get_turn_idempotency_ledger
+from apsimo.turns.hermes_kanban import task_snapshot
+from apsimo_hermes.initiative_work import NativeReviews
+from apsimo_hermes.runtime_models import RuntimeModelObserver
 from unittest.mock import patch
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
-(root/'config.yaml').write_text('plugins: {enabled: []}\n')
+(root/'config.yaml').write_text('plugins: {enabled: [], colony: {owner_contact_id: owner}}\n')
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
+shutil.copytree(sys.argv[2],state/'adapter/apsimo_hermes')
+for name in ('catalog.py','contract.py'):
+ shutil.copyfile(Path(sys.argv[2]).parents[1]/'hostworker/apsimo_hostworker'/name,state/'adapter/apsimo_hermes/apsimo_hostworker'/name)
+(state/'instance.json').write_text(json.dumps({'version':1,'profile':'local','hermes_home':str(root),
+ 'hermes_python':sys.executable,'sidecar_python':sys.executable,'sidecar_module_root':sys.argv[1],
+ 'adapter_binding':{'mode':'private-directory'}}))
+(state/'.colony-llm-config.json').write_text(json.dumps({'provider':'vllm','models':{},
+ 'modelPool':{'planning-fixture':{'model':'replaceable-planning-model',
+ 'baseUrl':'http://127.0.0.1:9/v1','supportsTools':True}},'functionRoles':{'planning':['planning-fixture']}}))
+from apsimo.setup_native_reviews import configure
+configure(state,install=True)
 store=InitiativeStore(state);host._initiative_store=store
 host._expectations=ExpectationEngine(ExpectationStore(str(state/'expectations.db')))
 sources=get_turn_idempotency_ledger(state)
@@ -41,7 +53,7 @@ async def authority(request,next_call):
      audiences=frozenset({'viewer'}),authenticated=True)
  return await next_call(request)
 app.include_router(initiative_work.router)
-client=TestClient(app);worker=NativeReviews(client,'owner')
+client=TestClient(app);worker=NativeReviews(client,'owner',{'enabled':True,'instance_dir':str(state)})
 def proposal(label):
  return store.create(type='operational',description=label,priority=.5,
     action_hint='operational_review',source_type='operational',created_by='autonomy_loop',
@@ -93,9 +105,9 @@ stale=client.post('/v1/host/initiative-work/'+first.id+'/model-observation',json
 assert stale.status_code==409,stale.text
 assert not projection['suggestion_enabled'] and projection['comparison']['receipt_ref']==first_history['outcomes'][0]['receipt_ref']
 assert runtime_forecasts.project(started,native,snapshot,'other')['status']=='source_unavailable'
-from colony_sidecar.turns.local_work import local_work_view
-from colony_sidecar.turns.executions import request_work_context
-from colony_sidecar.turns import hermes_kanban
+from apsimo.turns.local_work import local_work_view
+from apsimo.turns.executions import request_work_context
+from apsimo.turns import hermes_kanban
 original_snapshot=hermes_kanban.task_snapshot
 snapshot_reads=[]
 def counted_snapshot(*args,**kwargs):
@@ -156,7 +168,8 @@ def test_actual_native_forecast_learning(tmp_path):
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result=subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
+        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+        os.environ.get('AEVA_HERMES_TEST_SOURCE',os.environ.get('COLONY_TEST_HERMES_PATH',''))],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode==0,result.stdout+result.stderr
     assert '"next_horizon_changed": true' in result.stdout

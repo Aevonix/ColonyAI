@@ -18,6 +18,8 @@ TOOLS = frozenset({'colony_read_work_source', 'colony_review_report'})
 
 
 def validate_profile(config, home, owner):
+    from .naming import legacy_native_configuration
+    config = legacy_native_configuration(config)
     lane = config.get('plugins', {}).get('colony', {}).get('native_reviews', {})
     if (config.get('toolsets') != [TOOLSET]
             or config.get('platform_toolsets', {}).get('cli') != [TOOLSET]
@@ -43,28 +45,37 @@ def refresh_profile(config, home, owner):
     if Path(manifest['hermes_home']).resolve() != home:
         raise ValueError('selected_review_instance_required')
     environment = dict(os.environ, **manifest.get('sidecar_environment', {}))
-    environment.update(COLONY_SKIP_DOTENV='1', COLONY_STATE_DIR=str(state),
+    environment.update(APSIMO_SKIP_DOTENV='1', APSIMO_STATE_DIR=str(state),
+                       COLONY_SKIP_DOTENV='1', COLONY_STATE_DIR=str(state),
                        PYTHONPATH=manifest['sidecar_module_root'])
     result = subprocess.run([manifest['sidecar_python'], '-B', '-m',
-        'colony_sidecar.setup_native_reviews', '--refresh-role', str(state)],
+        'apsimo.setup_native_reviews', '--refresh-role', str(state)],
         env=environment, capture_output=True, text=True, timeout=30)
     if result.returncode:
         raise ValueError('review_planning_role_refresh_failed')
     import yaml
     path = home/'profiles'/PROFILE
-    validate_profile(yaml.safe_load((path/'config.yaml').read_bytes()), home, owner)
+    from .naming import selected_name, preferred
+    worker_config = yaml.safe_load((path/'config.yaml').read_bytes())
+    validate_profile(worker_config, home, owner)
+    selected = selected_name(worker_config)
     # Missing adapter installation must fail before a task can become ready.
-    if any(not (path/'plugins/colony'/name).is_file() for name in ('__init__.py', 'plugin.yaml')):
+    plugin_path = path/'plugins'/selected
+    if selected == 'apsimo' and not plugin_path.exists():
+        plugin_path = path/'plugins/colony'  # retained managed flat directory
+    if any(not (plugin_path/name).is_file() for name in ('__init__.py', 'plugin.yaml')):
         raise ValueError('read_only_review_adapter_required')
     environment = dict(os.environ, HERMES_HOME=str(path), HERMES_KANBAN_HOME=str(home))
     for key in ('HERMES_KANBAN_TASK', 'HERMES_KANBAN_RUN_ID', 'HERMES_KANBAN_CLAIM_LOCK'):
         environment.pop(key, None)
+    toolset = preferred(TOOLSET) if selected == 'apsimo' else TOOLSET
+    expected = {preferred(name) for name in TOOLS} if selected == 'apsimo' else TOOLS
     ready = subprocess.run([manifest['hermes_python'], '-I', '-B', '-c',
         'from model_tools import get_tool_definitions; '
         'names={x["function"]["name"] for x in get_tool_definitions('
-        'enabled_toolsets=["colony_review"],disabled_toolsets=["kanban"],'
+        f'enabled_toolsets={[toolset]!r},disabled_toolsets=["kanban"],'
         'quiet_mode=True)}; '
-        'assert names=={"colony_read_work_source","colony_review_report"}, names'],
+        f'assert names=={set(expected)!r}, names'],
         env=environment, capture_output=True, text=True, timeout=30)
     if ready.returncode:
         raise ValueError('read_only_review_tools_unavailable')
@@ -197,8 +208,12 @@ class ReviewWorker:
 
 def register_worker(ctx, lane):
     from hermes_cli.config import load_config
+    from .naming import NativeNames, selected_name
     worker = ReviewWorker(lane)
-    validate_profile(load_config(), worker.home, worker.owner)
+    config = load_config()
+    validate_profile(config, worker.home, worker.owner)
+    if not isinstance(ctx, NativeNames):
+        ctx = NativeNames(ctx, selected_name(config) == 'apsimo')
     ctx.register_hook('pre_tool_call', worker.before_tool)
     ctx.register_tool(name='colony_read_work_source', toolset=TOOLSET, handler=worker.read,
         schema={'name': 'colony_read_work_source',

@@ -1592,28 +1592,23 @@ def test_legacy_effect_pollers_are_inert_and_installer_cannot_enable_them():
     assert "--poller" not in installer
     assert "--autonomy" not in installer
     assert "hermes cron create" not in installer
-    assert "colony-initiative-poller.py" in installer
-    assert "colony-queue-worker.py" in installer
+    assert "-m apsimo init" in installer
+    assert "cp " not in installer
 
 
 def test_installed_plugin_carries_authoritative_catalog(tmp_path, monkeypatch):
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    result = subprocess.run(
-        ["bash", str(PLUGIN_DIR / "install.sh"), "--force"],
-        text=True,
-        capture_output=True,
-        timeout=10,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
-
-    installed = hermes_home / "plugins" / "colony"
+    from apsimo.setup import _hermes_plugin_files
+    for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], hermes_home):
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(content)
+    installed = hermes_home / "plugins" / "apsimo"
     for relative in (
-        "colony_hostworker/__init__.py",
-        "colony_hostworker/catalog.py",
-        "colony_hostworker/contract.py",
+        "apsimo_hostworker/__init__.py",
+        "apsimo_hostworker/catalog.py",
+        "apsimo_hostworker/contract.py",
     ):
         assert (installed / relative).is_file()
     script = """
@@ -1927,7 +1922,7 @@ def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path
     monkeypatch.setenv("HERMES_HOME", str(home))
     # The copied layout need not have an installed colony_memory wheel, and
     # cannot accidentally read one instead of its own sibling implementation.
-    monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "colony")
+    monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "apsimo")
     for name in ("COLONY_GENERAL_PLUGIN_ACTIVE", "COLONY_MEMORY_WORKER_TOOLS", "COLONY_MEMORY_TURN_WRITER"):
         monkeypatch.delenv(name, raising=False)
     profile = {"memory": {"provider": "colony-memory"}, "plugins": {"enabled": ["colony"]}}

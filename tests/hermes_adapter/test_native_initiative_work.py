@@ -1,4 +1,4 @@
-"""Real Hermes board transitions, scoped HTTP and independent steward clients."""
+"""Real Hermes board transitions, scoped HTTP and concurrent dispatch ticks."""
 import importlib.util
 import os
 from pathlib import Path
@@ -15,7 +15,7 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
 if len(sys.argv)>4 and sys.argv[4]:sys.path.insert(0,sys.argv[4])
-package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
+package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[2]];sys.modules['apsimo_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native review qualification')
 socket.socket.connect=no_network
 from hermes_cli import kanban_db as kb
@@ -25,17 +25,17 @@ except ModuleNotFoundError:
  from hermes_cli.kanban_db import _record_task_failure
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import initiative_work,host,executions
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.turns.local_work import local_work_view
-from colony_hermes.initiative_work import NativeReviews
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import initiative_work,host,executions
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.turns.local_work import local_work_view
+from apsimo_hermes.initiative_work import NativeReviews
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
 (root/'config.yaml').write_text('plugins: {enabled: [], colony: {owner_contact_id: owner}}\n')
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
-shutil.copytree(sys.argv[2],state/'adapter/colony_hermes')
+shutil.copytree(sys.argv[2],state/'adapter/apsimo_hermes')
 for name in ('catalog.py','contract.py'):
- shutil.copyfile(Path(sys.argv[2]).parents[1]/'hostworker/colony_hostworker'/name,state/'adapter/colony_hermes/colony_hostworker'/name)
+ shutil.copyfile(Path(sys.argv[2]).parents[1]/'hostworker/apsimo_hostworker'/name,state/'adapter/apsimo_hermes/apsimo_hostworker'/name)
 (state/'instance.json').write_text(json.dumps({'version':1,'profile':'local','hermes_home':str(root),
  'hermes_python':sys.executable,'sidecar_python':sys.executable,'sidecar_module_root':sys.argv[1],
  'adapter_binding':{'mode':'private-directory'}}))
@@ -43,7 +43,7 @@ routing={'provider':'vllm','models':{},'modelPool':{'planning-fixture':{
  'model':'replaceable-planning-model','baseUrl':'http://127.0.0.1:9/v1','supportsTools':True}},
  'functionRoles':{'planning':['planning-fixture']}}
 (state/'.colony-llm-config.json').write_text(json.dumps(routing))
-from colony_sidecar.setup_native_reviews import configure
+from apsimo.setup_native_reviews import configure
 configure(state,install=True)
 review_config={'enabled':True,'instance_dir':str(state)}
 import yaml
@@ -68,8 +68,14 @@ clients=[TestClient(app),TestClient(app)]
 checked=clients[0].get('/v1/host/initiative-work/'+first.id,params={'contact_id':'owner'})
 assert checked.status_code==200,checked.text
 reviews=[NativeReviews(client,'owner',review_config) for client in clients]
+NativeReviews(clients[0],'owner').reconcile(board='default')
+reviews[0].reconcile(board='default',dry_run=True)
+reviews[0].reconcile(board='other')
+with kb.connect(board='default') as db:
+ assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==0
 with ThreadPoolExecutor(max_workers=2) as pool:
- results=list(pool.map(lambda index:reviews[index].work(first.id),range(2)))
+ list(pool.map(lambda index:reviews[index].reconcile(board='default'),range(2)))
+results=[review.work(first.id) for review in reviews]
 tid=results[0]['native_work']['native_task_id']
 assert all(r['native_work']['native_task_id']==tid and r['status']=='assigned' for r in results),results
 for i in range(2):reviews[i].reconcile(board='default',dry_run=False)
@@ -138,7 +144,7 @@ failed=reviews[1].work(second.id)
 assert failed['status']=='failed' and failed['result']['run_outcome']=='gave_up',failed
 assert failed['result']['error']=='controlled spawn failure',failed
 reviews[0].reconcile(board='default')
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.turns import get_turn_idempotency_ledger
 source_ledger=get_turn_idempotency_ledger(state)
 with source_ledger._connect() as evidence:
  sources=evidence.execute('SELECT messages_json FROM turn_sources').fetchall()
@@ -163,7 +169,7 @@ third=proposal('Review missing worker readiness')
 try:NativeReviews(clients[0],'owner').work(third.id)
 except ValueError as error:assert str(error)=='read_only_review_profile_not_installed'
 else:raise AssertionError('Unconfigured review dispatched')
-manifest_path=root/'profiles/colony-reviews/plugins/colony/plugin.yaml'
+manifest_path=root/'profiles/colony-reviews/plugins/apsimo/plugin.yaml'
 manifest_before=manifest_path.read_bytes();manifest_path.unlink()
 try:
  try:reviews[0].work(third.id)
@@ -172,6 +178,7 @@ try:
 finally:manifest_path.write_bytes(manifest_before)
 with kb.connect(board='default') as db:assert db.execute('SELECT count(*) FROM tasks').fetchone()[0]==2
 print(json.dumps({'independent_cycles_one_task':True,'actual_native_completion':True,
+                  'dispatch_discovers_without_steward':True,'disabled_discovery_no_task':True,
                   'shared_visibility':True,'lost_ack_recovery':True,'failed_vs_blocked':True,
                   'planning_swap':True,'missing_profile_no_dispatch':True,'models':0,'network':0}))
 '''

@@ -657,7 +657,7 @@ def test_hostworker_never_imports_the_sidecar_or_a_server():
 
 def test_independence_rule_is_documented_in_the_contract():
     contract_source = (
-        _HOSTWORKER_DIR / "colony_hostworker" / "contract.py"
+        _HOSTWORKER_DIR / "apsimo_hostworker" / "contract.py"
     ).read_text(encoding="utf-8")
     module_docstring = ast.get_docstring(ast.parse(contract_source)) or ""
     flattened = " ".join(module_docstring.split())

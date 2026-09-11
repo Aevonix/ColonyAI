@@ -18,22 +18,28 @@ native-memory = ["nemo-relay>=0.8.3,<0.9"]
 
 [project.entry-points."hermes_agent.plugins"]
 apsimo = "apsimo_hermes"
+colony = "apsimo_hermes"
 
 [project.entry-points."hermes_agent.memory_providers"]
 apsimo-memory = "apsimo_memory"
+colony-memory = "apsimo_memory"
 
 [tool.setuptools]
-packages = ["apsimo_hermes", "apsimo_hermes.apsimo_hostworker", "apsimo_memory"]
+packages = ["apsimo_hermes", "apsimo_hermes.apsimo_hostworker", "apsimo_memory", "colony_hermes", "colony_memory"]
 include-package-data = false
 
 [tool.setuptools.package-dir]
 apsimo_hermes = "plugins/hermes-plugin"
 "apsimo_hermes.apsimo_hostworker" = "plugins/hermes-plugin/apsimo_hostworker"
 apsimo_memory = "plugins/apsimo-memory"
+colony_hermes = "compat/colony_hermes"
+colony_memory = "compat/colony_memory"
 
 [tool.setuptools.package-data]
 apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md"]
 apsimo_memory = ["plugin.yaml", "SKILL.md"]
+colony_hermes = ["plugin.yaml"]
+colony_memory = ["plugin.yaml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/hermes_adapter"]

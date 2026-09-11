@@ -13,6 +13,7 @@ from types import SimpleNamespace as NS
 from unittest.mock import MagicMock,patch
 sys.path.insert(0,sys.argv[1]);sys.path.insert(1,sys.argv[2])
 if sys.argv[3]:sys.path.append(sys.argv[3])
+if sys.argv[5]:sys.path.insert(0,sys.argv[5])
 trusted=sys.argv[4]=='attested'
 import httpx
 from fastapi import FastAPI
@@ -73,7 +74,7 @@ with patch(openai_target,return_value=client),patch(tools_target+'.get_tool_defi
     agent=AIAgent(api_key='neutral',base_url='http://127.0.0.1:1/v1',provider='openai',model='neutral/model',
         quiet_mode=True,skip_context_files=True,skip_memory=False,platform='cli',max_iterations=1)
     agent._use_prompt_caching=False;agent.save_trajectories=False;agent.compression_enabled=False
-    provider=agent._memory_manager.get_provider('colony')
+    provider=agent._memory_manager.get_provider('apsimo')
     assert provider is not None
     assert provider._prefetch_contact(agent.session_id)==''
     result=agent.run_conversation('What is my neutral orchard badge?',task_id='ordinary-cli')
@@ -111,4 +112,5 @@ def test_native_cli_prefetch_uses_current_resolved_scope(artifacts, tmp_path, mo
         COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='none', COLONY_OWNER_CONTACT_ID='contact-a',
         COLONY_GUARD_CHAT_MODE='off')
     run_python('-I', '-c', PROBE, artifacts[3], ROOT / 'sidecar',
-        os.environ.get('COLONY_TEST_DEPENDENCY_PATH', ''), mode, cwd=tmp_path, env=env)
+        os.environ.get('COLONY_TEST_DEPENDENCY_PATH', ''), mode,
+        os.environ.get('HERMES_TEST_SOURCE', ''), cwd=tmp_path, env=env)

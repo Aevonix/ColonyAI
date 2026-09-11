@@ -10,7 +10,7 @@ remain unchanged.
 | Preferred distribution or interface | Compatibility name |
 | --- | --- |
 | `apsimo`, import `apsimo` | `colonyai`, import `colony_sidecar` |
-| `apsimo-hermes`, import `apsimo_hermes` | `colonyai-hermes`, import `colony_hermes` |
+| `apsimo-hermes`, import `apsimo_hermes` | `colony-hermes`, import `colony_hermes` |
 | `apsimo-hostworker`, import `apsimo_hostworker` | import `colony_hostworker` |
 | `apsimo` and `apsimo-*` CLI commands | existing `colony` and `colony-*` commands |
 | `APSIMO_*` environment variables | existing `COLONY_*` variables |
