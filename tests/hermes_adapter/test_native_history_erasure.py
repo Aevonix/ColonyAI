@@ -15,7 +15,7 @@ from colony_hermes.request_memory import filter_request, RequestMemory
 db=SessionDB(home/'state.db')
 db.create_session('native-original','cli')
 db.set_session_title('native-original','Specimen drawer twelve')
-for session in ('history-reader','after-forget','history-guest'):
+for session in ('history-reader','warning-reader','after-forget','history-guest'):
     db.create_session(session,'cli')
 secret='The specimen belongs in drawer twelve.'
 kept='The spare lamp uses a rechargeable cell.'
@@ -37,6 +37,9 @@ def record_register(self,*args,**kwargs):
     observed_memory.append(self)
     return original_register(self,*args,**kwargs)
 RequestMemory.register_source_read=record_register
+agent._tool_guardrails.reset_for_turn()
+# Reproduce the observed full-result warning, without optional result stubs.
+agent._stall_guards=False
 prime('history-reader','history-task','history-turn')
 opened=dispatch({'session_id':'native-original'},session='history-reader',task='history-task',turn='history-turn',
     call='native-history-read',tool='session_search')
@@ -48,11 +51,38 @@ assert secret in json.dumps(first_checked),first_checked
 scope=colony_hermes._TRANSPORT_SCOPES.for_execution(session_id='history-reader',task_id='history-task',turn_id='history-turn')
 supplied=observed_memory[-1].supplied_snapshot(scope)
 assert {r['source_id'] for r in supplied} >= {'native-secret','native-kept'},supplied
+# A second actual native dispatch appends its idempotent-read warning after
+# the adapter registered the raw result. It must retain authenticated lineage.
+prime('warning-reader','warning-task','warning-turn',supplied=False)
+warning_scope=colony_hermes._TRANSPORT_SCOPES.for_execution(
+    session_id='warning-reader',task_id='warning-task',turn_id='warning-turn')
+assert observed_memory[-1].supplied_snapshot(warning_scope)==[]
+dispatch({'session_id':'native-original'},session='warning-reader',task='warning-task',turn='warning-turn',
+    call='native-history-warning',tool='session_search')
+warned_output=dict(dispatch.last_result)
+assert '[Tool loop warning: idempotent_no_progress_warning;' in warned_output['content'],warned_output
+warning_messages=[{'role':'user','content':''},warned_output]
+warning_checked=apply_llm_request_middleware({'messages':warning_messages},
+    session_id='warning-reader',task_id='warning-task',turn_id='warning-turn').payload
+assert secret in json.dumps(warning_checked),warning_checked
+warning_refs=observed_memory[-1].supplied_snapshot(warning_scope)
+assert {r['source_id'] for r in warning_refs} >= {'native-secret','native-kept'},warning_refs
+# Neither arbitrary appended prose nor a modified JSON body inherits the
+# receipt. A source-shaped tool result is withheld instead of passed raw.
+for forged in (warned_output['content']+' Extra unobserved content.',
+               warned_output['content'].replace(secret,'Altered source text.')):
+    forged_checked=apply_llm_request_middleware({'messages':[{'role':'user','content':''},
+        {**warned_output,'content':forged}]},session_id='warning-reader',task_id='warning-task',
+        turn_id='warning-turn').payload
+    assert 'Opened source withheld' in json.dumps(forged_checked),forged_checked
 ledger.record_source('derived-native-history',contact_id='person',session_id='history-reader',
     messages=[{'role':'assistant','content':'A derived specimen answer.','_supplied_sources':supplied}],derive_claims=False)
 ledger.erase_sources(contact_id='person',turn_ids=['native-secret'])
 checked=apply_llm_request_middleware({'messages':messages},session_id='history-reader',task_id='history-task',turn_id='history-turn').payload
 assert secret not in json.dumps(checked) and 'withheld' in json.dumps(checked),checked
+warning_erased=apply_llm_request_middleware({'messages':warning_messages},
+    session_id='warning-reader',task_id='warning-task',turn_id='warning-turn').payload
+assert secret not in json.dumps(warning_erased) and 'withheld' in json.dumps(warning_erased),warning_erased
 # A resumed/delegated copy cannot manufacture a fresh authentic read receipt.
 copied=filter_request({'messages':[{'role':'user','content':'Use the earlier read.'},first_output]},
     contact_id='person',watermark=2,rules=ledger.erasure_feed('person',0)['events'],fresh=True,

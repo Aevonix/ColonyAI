@@ -104,10 +104,34 @@ def _image_url(part):
     return None
 
 
+def _matches_read_text(value, expected):
+    if value == expected:
+        return True
+    if not isinstance(value, str) or not isinstance(expected, str) or not value.startswith(expected):
+        return False
+    # The native executor appends this warning after our handler registers its
+    # result. Accept only the exact runtime-produced decoration of that same
+    # authenticated history read, never arbitrary trailing model/tool prose.
+    match = re.match(r'\n\n\[Tool loop warning: idempotent_no_progress_warning; count=([1-9][0-9]*); ',
+                     value[len(expected):])
+    if match is None:
+        return False
+    try:
+        if json.loads(expected).get('apsimo_native_history_read_v1') is not True:
+            return False
+        from agent.tool_guardrails import ToolGuardrailDecision, append_toolguard_guidance, _DECISION_MESSAGES
+        code, count = 'idempotent_no_progress_warning', int(match.group(1))
+        decision = ToolGuardrailDecision(action='warn', code=code, tool_name='session_search', count=count,
+            message=_DECISION_MESSAGES[code].format(tool_name='session_search', count=count))
+        return append_toolguard_guidance(expected, decision) == value
+    except (ImportError, AttributeError, KeyError, TypeError, ValueError):
+        return False
+
+
 def _read_receipt(row, receipts):
     receipt = receipts.get(row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id'))
     value = _read_value(row)
-    if not receipt or _read_text(value) != receipt['text']:
+    if not receipt or not _matches_read_text(_read_text(value), receipt['text']):
         return None
     if receipt.get('image_url_hash'):
         image = _image_url(value[1]) if isinstance(value, list) and len(value) == 2 else None
@@ -128,7 +152,10 @@ def _read_rows(request):
 
 def _historical_source_read(row):
     try:
-        payload = json.loads(_read_text(_read_value(row)))
+        # A source wrapper with unrecognized trailing text is not authenticated,
+        # but still needs withholding. This classification never grants lineage.
+        text = _read_text(_read_value(row))
+        payload = json.JSONDecoder().raw_decode(text.lstrip())[0] if isinstance(text, str) else None
         return isinstance(payload, dict) and (
             payload.get('colony_source_read_v1') is True
             or payload.get('apsimo_native_history_read_v1') is True)
