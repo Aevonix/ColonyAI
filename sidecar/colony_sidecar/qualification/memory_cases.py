@@ -123,7 +123,8 @@ def memory_outcomes(observed, oracle):
 
 
 CASES = [
-    CaseSpec(id='memory.formation-quality', version='1', role='extraction', boundary='cognition_consumer',
+    CaseSpec(id='memory.formation-quality', version='2', role='extraction', boundary='cognition_consumer',
+        target_tasks=('source_claim_extraction',),
         consumer='source_memory', evaluator='memory_outcomes', timeout_seconds=240,
         inputs={'contact_id': 'person', 'recall_session': 'later-conversation',
             'query': 'tea preference after evening caffeine', 'now': '2026-04-10T12:00:00+00:00', 'max_chars': 6000,
@@ -139,7 +140,8 @@ CASES = [
                 'value_contains': 'decaffeinated tea', 'memory_kind': 'preference',
                 'evidence_contains': ['after 18:00', 'caffeine keeps me awake']}],
             'recall_contains': ['decaffeinated tea', 'after 18:00']}),
-    CaseSpec(id='memory.corrected-recollection', version='1', role='extraction', boundary='cognition_consumer',
+    CaseSpec(id='memory.corrected-recollection', version='2', role='extraction', boundary='cognition_consumer',
+        target_tasks=('source_claim_extraction',),
         consumer='source_memory', evaluator='memory_outcomes', timeout_seconds=180,
         inputs={'contact_id': 'person', 'recall_session': 'later-conversation',
             'query': 'Where is the spare sensor stored?', 'now': '2026-04-10T12:00:00+00:00', 'max_chars': 6000,

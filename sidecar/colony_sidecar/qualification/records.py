@@ -65,6 +65,7 @@ class CaseSpec:
     timeout_seconds: float = 60
     max_output_bytes: int = 262144
     provenance: str = 'public'
+    target_tasks: tuple[str, ...] = ()
 
     def record(self):
         if not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9_.-]{0,99}', self.id):
@@ -79,7 +80,13 @@ class CaseSpec:
             raise ValueError('Case output bound must be 1..1048576 bytes')
         if not isinstance(self.inputs, dict) or not isinstance(self.oracle, dict):
             raise ValueError('Case input and oracle must be objects')
+        if (not isinstance(self.target_tasks, tuple) or len(self.target_tasks) > 16
+                or any(not isinstance(task, str) or not re.fullmatch(r'[a-z][a-z0-9_]{0,99}', task)
+                       for task in self.target_tasks)
+                or len(set(self.target_tasks)) != len(self.target_tasks)):
+            raise ValueError('Target tasks must be distinct bounded task names')
         value = asdict(self)
         value['required_capabilities'] = list(self.required_capabilities)
+        value['target_tasks'] = list(self.target_tasks)
         return {**value, 'sha256': digest(value), 'inputs_sha256': digest(self.inputs),
                 'oracle_sha256': digest(self.oracle)}

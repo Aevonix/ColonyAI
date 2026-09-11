@@ -102,6 +102,8 @@ def router_for(config, binding, cases):
     for case in cases:
         current = roles.get(case.role, {})
         roles[case.role] = {**(current if isinstance(current, dict) else {}), 'candidates': [binding]}
+        for task in case.target_tasks:
+            selected.setdefault('taskRoles', {})[task] = case.role
     router = LLMRouter(tiers={})
     router.configure(selected)
     return router
@@ -162,6 +164,9 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                       'case_sha256': record['sha256'], 'attempt': 1, 'evidence_mode': evidence_mode,
                       'outcome': 'interrupted', 'primary_outcome': 'unverified', 'checks': {},
                       'observations': [], 'output': None, 'effects': {}, 'elapsed_ms': None,
+                      'qualification_routing': {'scope': 'isolated_router_copy',
+                          'role': case.role, 'binding': recipe['binding'],
+                          'target_task_role_overrides': {task: case.role for task in case.target_tasks}},
                       'cleanup': 'not_started', 'failure_category': None}
             if started_path.exists():
                 previous = read(started_path)
