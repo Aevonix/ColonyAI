@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.1.11 - source-aware native task continuation
+
+Registered transports can supply already retained input references while Hermes
+allocates the actual session. Current participant checks still govern the root
+turn, compression successors and joined children. The transport does not create
+native session identities or grant additional authority.
+
+Interrupted native tasks can use their retained source text as the root recall
+query. The supported request middleware restores current recalled evidence when
+Hermes merges adjacent plain user rows during automatic continuation. It matches
+the exact native-observed tail and filters historical evidence for forgetting
+before recombining it. Historical recall and user-authored markers cannot become
+current provenance.
+
+Qualification covers the built adapter and actual native request path. Transport
+admission, task persistence and reply delivery remain responsibilities of the
+runtime and the deployment's registered transport.
+
 ## v1.1.10 - focused work context and clock use
 
 Automatic shared-work context keeps completed artifact outcomes, identifiers,

@@ -306,6 +306,44 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
     return result
 
 
+def _restore_current_suffix(request, tail, current):
+    """Recover only a native-observed suffix lost by plain-user repair.
+
+    Split the exact observed clean tail temporarily so ordinary filtering still
+    checks each historical row for erasure. The wire is recombined afterwards.
+    Quoted markers and historical api_content never become current provenance.
+    """
+    if len(tail) < 2 or not isinstance(current, dict):
+        return request, None
+    clean, enriched = current.get('content'), current.get('api_content')
+    if (not isinstance(clean, str) or not isinstance(enriched, str)
+            or clean != tail[-1] or not enriched.startswith(clean) or enriched == clean):
+        return request, None
+    joined = '\n\n'.join(value for value in tail if value)
+    for key in ('messages', 'input'):
+        rows = request.get(key)
+        if not isinstance(rows, list):
+            continue
+        index = max((i for i, row in enumerate(rows) if isinstance(row, dict)
+                     and row.get('role') == 'user'), default=-1)
+        if index < 0 or rows[index].get('content') != joined:
+            continue
+        split = [{'role': 'user', 'content': value} for value in tail[:-1]]
+        split.append({'role': 'user', 'content': enriched})
+        return {**request, key: [*rows[:index], *split, *rows[index+1:]]}, (key, index, len(split), rows[index])
+    return request, None
+
+
+def _recombine_current_suffix(request, repair):
+    if repair is None:
+        return request
+    key, index, count, original = repair
+    rows = request[key]
+    combined = {**original, 'content': '\n\n'.join(row['content'] for row in rows[index:index+count]
+        if row['content'])}
+    return {**request, key: [*rows[:index], combined, *rows[index+count:]]}
+
+
 class RequestMemory:
     """One bounded feed reconciliation per actual native model request."""
 
@@ -317,6 +355,7 @@ class RequestMemory:
         self._requests_seen = set()
         self._read_receipts = {}
         self._host_inputs = {}
+        self._plain_user_tails = {}
 
     def observe(self, scope, messages, *, user_message=None):
         # Native pre_llm_call exposes both clean content and persisted
@@ -332,8 +371,14 @@ class RequestMemory:
             and messages[-1].get('role') == 'user'
             and user_message is not None and messages[-1].get('content') == user_message
             and scope.valid_participant) else None
+        tail = []
+        for row in reversed(messages[-32:]):
+            if not isinstance(row, dict) or row.get('role') != 'user' or not isinstance(row.get('content'), str):
+                break
+            tail.insert(0, row['content'])
         key = (scope.contact_id, scope.task_id, scope.turn_id)
         with self._lock:
+            self._plain_user_tails[key] = tail if scope.valid_participant else []
             packets = {match.group() for row in messages if (match := _native_packet(row)) is not None}
             self._aliases[key] = (aliases, current, copy.deepcopy(user_message) if current else None, packets)
             self._supplied[key] = {}
@@ -347,6 +392,7 @@ class RequestMemory:
                 self._requests_seen.discard(evicted)
                 self._read_receipts.pop(evicted, None)
                 self._host_inputs.pop(evicted, None)
+                self._plain_user_tails.pop(evicted, None)
 
     def observe_host_input(self, scope, messages, request_input, *, text, sources, watermark):
         """Record typed host provenance, not marker text parsed from a quotation.
@@ -413,6 +459,7 @@ class RequestMemory:
                     self._requests_seen.discard(key)
                     self._read_receipts.pop(key, None)
                     self._host_inputs.pop(key, None)
+                    self._plain_user_tails.pop(key, None)
         return list(refs.values())
 
     def __call__(self, request, scope, *, operational=None):
@@ -423,6 +470,7 @@ class RequestMemory:
             observed = observed_key in self._aliases
             read_receipts = copy.deepcopy(self._read_receipts.get(observed_key, {}))
             host_input = copy.deepcopy(self._host_inputs.get(observed_key))
+            tail = list(self._plain_user_tails.get(observed_key, []))
         current_content = current.get('api_content', current.get('content')) if current else None
         # Only native-observed recall and authenticated read receipts can
         # nominate parents. User-authored markers cannot select other people's
@@ -547,15 +595,21 @@ class RequestMemory:
             fresh = False
         # Do not raise: Hermes intentionally fails open on middleware errors.
         # Failure returns an explicit reduced request instead of stale history.
+        repair = None
+        original_request = request
+        if fresh and observed:
+            request, repair = _restore_current_suffix(request, tail, current)
         try:
             filtered = filter_request(request, contact_id=contact, watermark=watermark,
                                       rules=rules, fresh=fresh, aliases=aliases,
                                       current_content=current_content, current_input=current_input,
                                       read_receipts=read_receipts)
         except Exception:
-            filtered = filter_request(request, contact_id=contact, watermark=0, rules=[], fresh=False,
+            filtered = filter_request(original_request, contact_id=contact, watermark=0, rules=[], fresh=False,
                                       read_receipts=read_receipts)
             fresh = False
+            repair = None
+        filtered = _recombine_current_suffix(filtered, repair)
         if operational and not (fresh and observed and operational['contact_id'] == contact
                                 and operational['watermark'] == watermark):
             from .request_work import replace_context

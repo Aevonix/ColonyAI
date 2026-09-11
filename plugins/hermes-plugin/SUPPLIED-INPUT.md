@@ -65,3 +65,20 @@ no excerpt text. Erased or inaccessible inputs disappear on the next read;
 annotated inputs require the canonical source reader instead of a clipped work
 label that could omit the correction. Active work and ancestry are selected
 before optional excerpts within the same eight-record, 4,000-character budget.
+
+
+Registered native platforms may wrap their actual message handler in
+`transport_input(contact_id=..., platform=..., input_refs=..., source_refs=...)`
+before Hermes allocates a session. Only the first independently authenticated
+root turn on that platform can bind the scope. Wrap the execution handler,
+including startup resume, rather than the earlier admission callback. Persist
+`result` before the wrapper exits because native delivery runs afterwards.
+Detached children cannot retain a scope after its owning handler closes.
+
+An automatic resume can set the optional bounded `recall_query` to its already
+validated original input. The memory provider uses it only after normal
+participant checks, and only for a bound root session. Child queries remain
+independent. This preserves Hermes' empty-event automatic continuation semantics
+while retrieving task-relevant current evidence. Exact native plain-user-tail
+merges preserve only the current observed recall suffix; historical rows still
+receive ordinary erasure filtering before the wire row is recombined.

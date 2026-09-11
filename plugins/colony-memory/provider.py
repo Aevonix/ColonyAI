@@ -1039,6 +1039,13 @@ class ColonyMemoryProvider(_MemoryProviderABC):
                 "participant binding"
             )
             return ""
+        try:
+            from colony_hermes.input_provenance import current
+            supplied = current()
+            if supplied is not None:
+                query = supplied.recollection_query(effective_session, query)
+        except ImportError:
+            pass
         t = self._prefetch_thread
         if t is not None and t.is_alive():
             t.join(timeout=9.0)
