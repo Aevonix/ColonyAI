@@ -192,6 +192,6 @@ async def test_mcp_forget_tool_reaches_the_real_erasure_api(ledger, monkeypatch)
     original_client = httpx.AsyncClient
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kw: original_client(transport=ASGITransport(app=app), base_url="http://test", **kw))
     server = create_server()
-    result = await server._tool_manager._tools["colony_forget_sources"].fn(source_ids=["turn-a"], contact_id="contact-a")
+    result = await server._tool_manager._tools["apsimo_forget_sources"].fn(source_ids=["turn-a"], contact_id="contact-a")
     assert result["source_erased"] is True
     assert ledger.is_source_erased("turn-a", "contact-a")
