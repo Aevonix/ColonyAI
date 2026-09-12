@@ -66,29 +66,63 @@ def _key(scope):
     return scope.contact_id, scope.session_id, scope.task_id, scope.turn_id
 
 
+def _arguments_hash(arguments):
+    try:
+        return hashlib.sha256(json.dumps(arguments, sort_keys=True, ensure_ascii=True,
+            separators=(',', ':'), allow_nan=False).encode()).hexdigest()
+    except (TypeError, ValueError):
+        return None
+
+
+def _call_identity(name, arguments):
+    """Native dispatch unwraps local calls, while SDK history keeps tool_call.
+
+    Normalization alone grants nothing: checked() still requires the matching
+    observed execution arguments, result bytes and current request identity.
+    """
+    if name != 'tool_call':
+        return name, None
+    try:
+        from tools import tool_search
+        arguments = json.loads(arguments) if isinstance(arguments, str) else arguments
+        if not isinstance(arguments, dict):
+            return None
+        underlying, selected, error = tool_search.resolve_underlying_call(arguments)
+        if error or not underlying or underlying == getattr(tool_search, 'CONNECTOR_BATCH_SENTINEL', None):
+            return None
+        digest = _arguments_hash(selected)
+        return (underlying, digest) if digest is not None else None
+    except Exception:
+        return None
+
+
 def _request_results(request):
     calls, results = {}, {}
+    def add(rows, call_id, value):
+        # A repeated ID cannot disambiguate one actual native completion.
+        rows[call_id] = value if call_id not in rows else None
     for message in request.get('messages', request.get('input', [])):
         if not isinstance(message, dict):
             continue
         if message.get('role') == 'assistant':
             for call in message.get('tool_calls') or []:
                 if isinstance(call, dict) and isinstance(call.get('function'), dict):
-                    calls[call.get('id')] = call['function'].get('name')
+                    add(calls, call.get('id'), _call_identity(call['function'].get('name'),
+                                                           call['function'].get('arguments')))
         elif message.get('type') == 'function_call':
-            calls[message.get('call_id')] = message.get('name')
+            add(calls, message.get('call_id'), _call_identity(message.get('name'), message.get('arguments')))
         if message.get('role') == 'tool':
-            results[message.get('tool_call_id')] = message.get('content')
+            add(results, message.get('tool_call_id'), message.get('content'))
         elif message.get('type') == 'function_call_output':
-            results[message.get('call_id')] = message.get('output')
+            add(results, message.get('call_id'), message.get('output'))
         if isinstance(message.get('content'), list):
             for block in message['content']:
                 if not isinstance(block, dict):
                     continue
                 if message.get('role') == 'assistant' and block.get('type') == 'tool_use':
-                    calls[block.get('id')] = block.get('name')
+                    add(calls, block.get('id'), _call_identity(block.get('name'), block.get('input')))
                 elif message.get('role') == 'user' and block.get('type') == 'tool_result':
-                    results[block.get('tool_use_id')] = block.get('content')
+                    add(results, block.get('tool_use_id'), block.get('content'))
     return calls, results
 
 
@@ -138,6 +172,7 @@ class ToolObservations:
             turn.setdefault(call_id, {'name': name, 'sha256': hashlib.sha256(value.encode()).hexdigest(),
                                        'visible': {}, 'api_request_id': request_id,
                 'arguments': argument_preview(arguments),
+                'arguments_sha256': _arguments_hash(arguments),
                 'input_sha256': hashlib.sha256(scope.user_message.encode()).hexdigest(), 'sources': self.request_memory.supplied_snapshot(scope)})
             while len(turn) > 16:
                 turn.popitem(last=False)
@@ -158,8 +193,10 @@ class ToolObservations:
             for call_id, record in self._turns.get(key, {}).items():
                 text = results.get(call_id)
                 record['visible'].pop(request_id, None)
-                name = calls.get(call_id)
-                if (isinstance(name, str) and operation(name) == record['name'] and isinstance(text, str)
+                identity = calls.get(call_id)
+                name, arguments_hash = identity if identity is not None else (None, None)
+                if (isinstance(name, str) and operation(name) == record['name']
+                        and (arguments_hash is None or arguments_hash == record['arguments_sha256']) and isinstance(text, str)
                         and hashlib.sha256(text.encode()).hexdigest() == record['sha256']):
                     record['visible'][request_id] = name
                     if (record['sources'] is not None
