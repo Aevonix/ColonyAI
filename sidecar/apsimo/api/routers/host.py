@@ -109,12 +109,8 @@ from apsimo.api.schemas.host import (
     MemoryEmbedRequest,
     MemoryEmbedResponse,
     MemoryEntry,
-    MemoryFlushRequest,
-    MemoryFlushResponse,
     MemoryReadRequest,
     MemoryReadResponse,
-    MemoryReconcileRequest,
-    MemoryReconcileResponse,
     MemoryConflictEntry,
     MemoryConflictsResponse,
     MemorySearchRequest,
@@ -122,8 +118,6 @@ from apsimo.api.schemas.host import (
     MemoryVerifyRequest,
     MemoryVerifyResponse,
     MemoryStatsResponse,
-    MemoryWriteRequest,
-    MemoryWriteResponse,
     RerankRequest,
     RerankResponse,
     RerankResult,
@@ -679,8 +673,7 @@ async def health() -> HostHealthResponse:
     memory_backend_down = False
     if _graph is not None:
         # "Wired" alone only means the client object was constructed. Probe
-        # the backend (same determination as /memory/status) so health never
-        # advertises a memory capability whose store is unreachable.
+        # the backend before advertising this graph-backed capability.
         if await _graph_backend_reachable():
             notes["memory"] = "ColonyGraph wired (backend reachable)"
         else:
@@ -688,10 +681,10 @@ async def health() -> HostHealthResponse:
             caps = [c for c in caps if c != "memory"]
             notes["memory"] = (
                 "ColonyGraph wired but backend UNREACHABLE — "
-                "memory reads/writes are failing"
+                "graph-backed reads are unavailable; canonical source search is independent"
             )
     else:
-        notes["memory"] = "ColonyGraph not wired — memory endpoints return stubs"
+        notes["memory"] = "Graph-backed reads unavailable; canonical source search is independent"
     if _response_gate is not None:
         notes["response_gate"] = "ResponseGate wired"
     else:
@@ -1283,9 +1276,8 @@ def _validate_skill_id(skill_id: str) -> None:
 async def _graph_backend_reachable() -> bool:
     """Whether the wired graph's backend actually answers.
 
-    The single availability determination for memory honesty — the same
-    probe /memory/status reports as ``neo4j_connected``. False when no
-    graph is wired at all.
+    The remaining graph-backed reads and health checks share this probe.
+    False when no graph is wired at all.
     """
     if _graph is None:
         return False
@@ -1369,33 +1361,6 @@ async def memory_read(
         return MemoryReadResponse(entries=[])
 
 
-@router.get("/memory/status")
-async def memory_status():
-    """Diagnostic for memory subsystem wiring."""
-    neo4j_connected = False
-    embeddings_ready = False
-    vector_store_ready = False
-
-    if _graph is not None:
-        try:
-            await _graph.driver.verify_connectivity()
-            neo4j_connected = True
-        except Exception:
-            pass
-        embeddings_ready = _graph._embed_fn is not None
-        vector_store_ready = _graph._vector_store is not None
-
-    wired = neo4j_connected and embeddings_ready and vector_store_ready
-    return {
-        "wired": wired,
-        # distinguishes "no graph configured" from "configured but down"
-        "graph_wired": _graph is not None,
-        "neo4j_connected": neo4j_connected,
-        "embeddings_ready": embeddings_ready,
-        "vector_store_ready": vector_store_ready,
-    }
-
-
 @router.get("/memory/distill-preview")
 async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
     """Shadow distill previews: while COLONY_DISTILL_TURNS is off, every stored
@@ -1411,49 +1376,6 @@ async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
         logger.warning("memory_distill_preview failed: %s", exc)
         return {"enabled": enabled, "count": 0, "preview": []}
     return {"enabled": enabled, "count": len(items), "preview": items}
-
-
-@router.post("/memory/write", response_model=MemoryWriteResponse)
-async def memory_write(
-    body: MemoryWriteRequest,
-    request: Request = None,
-) -> MemoryWriteResponse:
-    person_id = resolve_request_person(
-        request,
-        claimed_person_id=body.person_id,
-        context_person_id=(body.context.contact_id if body.context else None),
-        audience=body.audience,
-    )
-    body.person_id = person_id
-    if body.context is not None and person_id is not None:
-        body.context.contact_id = person_id
-    if _graph is None:
-        # Degrade gracefully to match the pattern used by the rest of
-        # the router (list_insights, list_briefings, etc.): when the
-        # underlying store isn't wired, accept the call and mark the
-        # write as not persisted rather than raising 501.
-        return MemoryWriteResponse(id="", accepted=False)
-    try:
-        memory_id = await _graph.store_memory(
-            content=body.content,
-            person_id=person_id,
-            memory_type=body.type or "episodic",
-            entities=body.entities or [],
-            importance=body.strength if body.strength is not None else 1.0,
-            metadata={"tags": body.tags} if body.tags else None,
-            source_type=body.source_type or "inference",
-            source_uri=body.source_uri,
-            source_version=body.source_version,
-            content_hash=body.content_hash,
-        )
-        return MemoryWriteResponse(
-            id=memory_id or str(uuid.uuid4()),
-            accepted=True,
-        )
-    except Exception as exc:
-        logger.warning("memory_write failed: %s", exc)
-        await _raise_if_graph_unreachable("memory_write")
-        return MemoryWriteResponse(id="error", accepted=False)
 
 
 @router.post("/memory/search", response_model=MemorySearchResponse)
@@ -1493,40 +1415,6 @@ async def memory_search(body: MemorySearchRequest, request: Request) -> MemorySe
             "code": "memory_backend_unavailable",
             "message": "Canonical memory could not be read or selected",
         }) from None
-
-
-@router.post("/memory/flush", response_model=MemoryFlushResponse)
-async def memory_flush(body: MemoryFlushRequest) -> MemoryFlushResponse:
-    if _graph is None:
-        return MemoryFlushResponse(accepted=False)
-    try:
-        await _graph.flush(reason=body.reason)
-        return MemoryFlushResponse(accepted=True)
-    except Exception as exc:
-        logger.warning("memory_flush failed: %s", exc)
-        return MemoryFlushResponse(accepted=False)
-
-
-@router.post("/memory/reconcile", response_model=MemoryReconcileResponse)
-async def memory_reconcile(body: MemoryReconcileRequest) -> MemoryReconcileResponse:
-    if _graph is None:
-        return MemoryReconcileResponse()
-    try:
-        from apsimo.intelligence.graph.reconciler import FileReconciler
-        reconciler = FileReconciler(_graph)
-        result = await reconciler.reconcile(dry_run=body.dry_run or False)
-        return MemoryReconcileResponse(
-            files_checked=result["files_checked"],
-            memories_verified=result["memories_verified"],
-            memories_staled=result["memories_staled"],
-            memories_superseded=result["memories_superseded"],
-            errors=result["errors"],
-        )
-    except Exception as exc:
-        logger.warning("memory_reconcile failed: %s", exc)
-        return MemoryReconcileResponse(
-            errors=[str(exc)],
-        )
 
 
 @router.get("/memory/conflicts", response_model=MemoryConflictsResponse)

@@ -155,22 +155,11 @@ async def test_memory_search_requires_scope(client):
 
 
 @pytest.mark.asyncio
-async def test_memory_write_no_graph(client):
-    resp = await client.post("/v1/host/memory/write", json={
-        "identity": {"host_id": "test"},
-        "content": "test memory",
-    })
-    assert resp.status_code == 200
-    assert resp.json()["accepted"] is False
-
-
-@pytest.mark.asyncio
-async def test_memory_flush_no_graph(client):
-    resp = await client.post("/v1/host/memory/flush", json={
-        "identity": {"host_id": "test"},
-    })
-    assert resp.status_code == 200
-    assert resp.json()["accepted"] is False
+@pytest.mark.parametrize('method,path', [('post','write'),('post','flush'),('post','reconcile'),('get','status')])
+async def test_retired_graph_memory_routes_are_absent(client, method, path):
+    resp = await client.request(method, '/v1/host/memory/' + path,
+                                json={'identity': {'host_id': 'test'}})
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

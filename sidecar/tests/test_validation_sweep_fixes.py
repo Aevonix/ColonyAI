@@ -29,7 +29,7 @@ class _DeadBackendGraph:
 
     Mirrors the live failure: the client object exists (so the sidecar
     considers memory "wired") but every operation raises, and
-    driver.verify_connectivity() — the /memory/status availability
+    driver.verify_connectivity() — the remaining graph-read availability
     determination — fails.
     """
 
@@ -214,11 +214,6 @@ async def test_memory_endpoints_distinguish_backend_down(app, dead_graph):
         assert read.status_code == 503
         assert read.json()["detail"]["code"] == "memory_backend_unavailable"
 
-        write = await client.post("/v1/host/memory/write", json={
-            "identity": {"host_id": "t"}, "content": "remember this",
-        })
-        assert write.status_code == 503
-        assert write.json()["detail"]["code"] == "memory_backend_unavailable"
 
 
 # ---------------------------------------------------------------------------

@@ -137,27 +137,6 @@ class MemoryReadResponse(BaseModel):
     source: Optional[Dict[str, Any]] = None
 
 
-class MemoryWriteRequest(BaseModel):
-    identity: HostIdentity
-    context: Optional[HostTurnContext] = None
-    content: str
-    type: Optional[str] = None
-    person_id: Optional[str] = None
-    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
-    entities: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    strength: Optional[float] = None
-    source_type: Optional[str] = "inference"
-    source_uri: Optional[str] = None
-    source_version: Optional[str] = None
-    content_hash: Optional[str] = None
-
-
-class MemoryWriteResponse(BaseModel):
-    id: str
-    accepted: bool
-
-
 class MemorySearchRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
     identity: HostIdentity
@@ -199,19 +178,6 @@ class MemorySearchResponse(BaseModel):
     watermark: int = Field(ge=0)
     retrieval: Dict[str, str]
     annotation_checks: List[SourceAnnotationCheck] = Field(default_factory=list, max_length=20)
-
-
-class MemoryReconcileRequest(BaseModel):
-    identity: HostIdentity
-    dry_run: Optional[bool] = False
-
-
-class MemoryReconcileResponse(BaseModel):
-    files_checked: int = 0
-    memories_verified: int = 0
-    memories_staled: int = 0
-    memories_superseded: int = 0
-    errors: List[str] = []
 
 
 class MemoryConflictEntry(BaseModel):
@@ -292,16 +258,6 @@ class ContextAssembleResponse(BaseModel):
     notices: Optional[List[str]] = None
     projection_attestation: Optional[ContextProjectionAttestation] = None
     source_erasure_watermark: Optional[int] = None
-
-
-class MemoryFlushRequest(BaseModel):
-    identity: HostIdentity
-    reason: Optional[str] = None
-
-
-class MemoryFlushResponse(BaseModel):
-    accepted: bool
-    job_id: Optional[str] = None
 
 
 class MemoryEmbedRequest(BaseModel):

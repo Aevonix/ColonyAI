@@ -17,7 +17,10 @@ Usage:
     # Periodic health check
     pytest tests/integration/ -v -m health
 
-All tests are idempotent — safe to run repeatedly against a live system.
+This historical suite includes mutations. Use an isolated qualification deployment.
+Memory checks are read-only and require a scoped credential plus
+COLONY_TEST_PERSON_ID; useful recall and source persistence are covered by
+../test_canonical_memory_search.py and the canonical source suites.
 """
 
 from __future__ import annotations
@@ -81,6 +84,13 @@ def _post(client, path, data, expect_status=200):
     return resp.json()
 
 
+def _memory_search_payload(query):
+    person = os.environ.get('COLONY_TEST_PERSON_ID', '').strip()
+    assert person, "Set COLONY_TEST_PERSON_ID to this credential's exact participant"
+    return {'identity': {'host_id': 'integration'}, 'person_id': person,
+            'session_id': 'memory-integration', 'query': query, 'limit': 5}
+
+
 def _get(client, path, expect_status=200):
     """Helper: GET and assert status."""
     resp = client.get(f"/v1/host{path}")
@@ -134,7 +144,7 @@ class TestAuthentication:
         with httpx.Client(base_url=BASE_URL, timeout=10) as c:
             resp = c.post("/v1/host/memory/search", json={
                 "identity": {"host_id": "test"},
-                "context": {"session_id": "s1", "contact_id": "c1"},
+                "person_id": "c1", "session_id": "s1",
                 "query": "test",
             })
             if API_KEY:  # only test if auth is configured
@@ -145,7 +155,7 @@ class TestAuthentication:
         with httpx.Client(base_url=BASE_URL, headers={"Authorization": "Bearer wrong-key"}, timeout=10) as c:
             resp = c.post("/v1/host/memory/search", json={
                 "identity": {"host_id": "test"},
-                "context": {"session_id": "s1", "contact_id": "c1"},
+                "person_id": "c1", "session_id": "s1",
                 "query": "test",
             })
             if API_KEY:
@@ -175,7 +185,7 @@ class TestErrorHandling:
 
     def test_missing_required_fields(self, client):
         """Missing required fields returns 422."""
-        resp = client.post("/v1/host/memory/write", json={"identity": {"host_id": "test"}})
+        resp = client.post("/v1/host/memory/search", json={"identity": {"host_id": "test"}})
         assert resp.status_code == 422
 
     def test_nonexistent_endpoint(self, client):
@@ -195,127 +205,21 @@ class TestErrorHandling:
 
 
 class TestMemory:
-    """Memory write, search, vector indexing, and retrieval."""
+    """Read the scoped canonical surface without creating health-check memories."""
 
-    def test_write_and_search(self, client):
-        """Write a memory and find it via search."""
-        content = f"Integration test memory {uuid.uuid4().hex[:8]}"
-        _post(client, "/memory/write", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "content": content,
-            "type": "episodic",
-            "entities": ["test", "integration"],
-            "strength": 0.9,
-        })
-        time.sleep(2)
-        data = _post(client, "/memory/search", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": "integration test memory",
-            "limit": 5,
-        })
-        entries = data.get("entries", [])
-        assert len(entries) > 0, "Memory search returned no results"
-        assert any(content in e.get("content", "") for e in entries), \
-            f"Written content not found in search results"
+    def test_search_response_contract(self, client):
+        data = _post(client, '/memory/search', _memory_search_payload('memory'))
+        assert isinstance(data['content'], str) and 0 <= data['count'] <= 5
+        assert data['watermark'] >= 0
+        assert isinstance(data['source_refs'], list)
+        assert data['retrieval']['semantic'] in {'ready', 'failed', 'unavailable'}
 
-    def test_search_returns_score(self, client):
-        """Search results include a non-null relevance score."""
-        data = _post(client, "/memory/search", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": "colony",
-            "limit": 3,
-        })
-        entries = data.get("entries", [])
-        if entries:
-            assert entries[0].get("score") is not None, "Search score is null"
-
-    def test_search_empty_for_nonsense(self, client):
-        """Search with nonsense query returns empty or low-score results."""
-        data = _post(client, "/memory/search", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": "xyzzyqwertyflopnik9999",
-            "limit": 3,
-        })
-        # Should not crash, results may be empty
-        assert "entries" in data
-
-    def test_write_idempotent(self, client):
-        """Writing the same content twice does not crash."""
-        content = f"Idempotency test {uuid.uuid4().hex[:8]}"
-        payload = {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "content": content,
-            "type": "semantic",
-            "entities": ["test"],
-            "strength": 0.5,
-        }
-        r1 = _post(client, "/memory/write", payload)
-        r2 = _post(client, "/memory/write", payload)
-        assert r1.get("accepted") is True
-        assert r2.get("accepted") is True  # Should not crash on duplicate
-
-    def test_write_with_entities(self, client):
-        """Written entities are stored and searchable."""
-        unique_entity = f"entity_{uuid.uuid4().hex[:6]}"
-        _post(client, "/memory/write", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "content": f"Testing entity {unique_entity} in memory",
-            "type": "semantic",
-            "entities": [unique_entity],
-            "strength": 0.7,
-        })
-        time.sleep(1)
-        data = _post(client, "/memory/search", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": unique_entity,
-            "limit": 3,
-        })
-        entries = data.get("entries", [])
-        if entries:
-            entities = entries[0].get("entities", []) or []
-            assert unique_entity in entities, f"Entity {unique_entity} not in {entities}"
-
-    def test_strength_ranking(self, client):
-        """Higher-strength memories should rank higher than lower-strength ones."""
-        tag = uuid.uuid4().hex[:6]
-        _post(client, "/memory/write", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "content": f"Low importance {tag}",
-            "type": "semantic",
-            "entities": [tag],
-            "strength": 0.2,
-        })
-        _post(client, "/memory/write", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "content": f"High importance {tag}",
-            "type": "semantic",
-            "entities": [tag],
-            "strength": 0.95,
-        })
-        time.sleep(2)
-        data = _post(client, "/memory/search", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": tag,
-            "limit": 5,
-        })
-        entries = data.get("entries", [])
-        if len(entries) >= 2:
-            # High importance should have higher score
-            high_scores = [e["score"] for e in entries if "High" in e.get("content", "")]
-            low_scores = [e["score"] for e in entries if "Low" in e.get("content", "")]
-            if high_scores and low_scores:
-                assert high_scores[0] >= low_scores[0], \
-                    f"High strength ({high_scores[0]}) should >= low ({low_scores[0]})"
+    def test_canonical_projection_status(self, client):
+        scope = _memory_search_payload('memory')
+        response = client.get('/v1/host/memory/sources/claims/status',
+                              params={'contact_id':scope['person_id']})
+        assert response.status_code == 200, response.text
+        assert set(response.json()) == {'sources', 'media', 'semantic'}
 
 
 class TestEmbedding:
@@ -981,15 +885,11 @@ class TestPersistence:
         assert len(goals) > 0, "No goals found — create some before testing persistence"
 
     def test_memories_persisted(self, client):
-        """Memories survive a restart."""
-        data = _post(client, "/memory/search", {
-            "identity": {"host_id": "test"},
-            "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": "colony",
-            "limit": 3,
-        })
-        entries = data.get("entries", [])
-        assert len(entries) > 0, "No memories found — write some before testing persistence"
+        """Search previously recorded source evidence after a manual restart."""
+        query = os.environ.get('COLONY_TEST_MEMORY_QUERY', '').strip()
+        assert query, 'Set COLONY_TEST_MEMORY_QUERY to known retained evidence after restart'
+        data = _post(client, '/memory/search', _memory_search_payload(query))
+        assert data['count'] > 0 and data['source_refs'], 'Known source evidence was not recalled'
 
     def test_identity_persisted(self, client):
         """Identity/chain state survives a restart."""
@@ -1054,29 +954,13 @@ class TestSystemHealthCheck:
         results["health"] = data["status"] == "ok"
         results["capabilities"] = len(data["capabilities"])
 
-        # Memory
+        # Memory availability is a read. Creating synthetic memories here
+        # polluted ordinary recall on every periodic health check.
         try:
-            _post(client, "/memory/write", {
-                "identity": {"host_id": "test"},
-                "context": {"session_id": "s1", "contact_id": "c1"},
-                "content": f"Health check {uuid.uuid4().hex[:6]}",
-                "type": "episodic",
-                "strength": 0.5,
-            })
-            results["memory_write"] = True
+            data = _post(client, '/memory/search', _memory_search_payload('memory'))
+            results['memory_search'] = isinstance(data['source_refs'], list)
         except Exception:
-            results["memory_write"] = False
-
-        try:
-            data = _post(client, "/memory/search", {
-                "identity": {"host_id": "test"},
-                "context": {"session_id": "s1", "contact_id": "c1"},
-                "query": "health check",
-                "limit": 1,
-            })
-            results["memory_search"] = True
-        except Exception:
-            results["memory_search"] = False
+            results['memory_search'] = False
 
         # Gate
         try:

@@ -200,6 +200,7 @@ def test_senderless_legacy_turn_writer_without_static_policy_stays_ineligible(
 def graph(monkeypatch, tmp_path):
     graph = _Graph()
     monkeypatch.setattr(host, "_graph", graph)
+    monkeypatch.setattr(host, "_goals_store", None)
     monkeypatch.setattr(host, "_presence_store", None)
     monkeypatch.setattr(host, "_contacts_store", None)
     monkeypatch.setattr(host, "_context_provenance", None)
@@ -242,9 +243,9 @@ async def test_scoped_token_is_denied_without_exact_route_scope(tmp_path, graph)
     app = _app(keyring)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         response = await c.post(
-            "/v1/host/memory/write",
+            "/v1/host/memory/sources/forget",
             headers=_headers("scoped-secret"),
-            json=_memory_payload(content="private fact"),
+            json={"contact_id":"contact-owner", "source_ids":["unknown"]},
         )
     assert response.status_code == 403
     assert response.json()["detail"]["code"] == "insufficient_scope"
@@ -389,39 +390,15 @@ async def test_memory_person_is_derived_and_body_cannot_broaden_it(tmp_path, gra
             "/v1/host/memory/search", headers=headers,
             json=_memory_payload(query="alpha"),
         )
-        write = await c.post(
-            "/v1/host/memory/write", headers=headers,
-            json=_memory_payload(content="private fact"),
-        )
         broaden = await c.post(
             "/v1/host/memory/search", headers=headers,
             json=_memory_payload(query="alpha", person_id="someone-else"),
         )
 
-    assert (read.status_code, search.status_code, write.status_code) == (200, 200, 200)
+    assert (read.status_code, search.status_code) == (200, 200)
     assert broaden.status_code == 403
     assert graph.read_calls[0]["person_id"] == "contact-owner"
     assert graph.search_calls == []
-    assert graph.write_calls[0]["person_id"] == "contact-owner"
-
-
-@pytest.mark.asyncio
-async def test_memory_context_and_person_claim_must_agree(tmp_path, graph):
-    keyring = tmp_path / "keys.json"
-    _write_keyring(keyring, [_principal()])
-    app = _app(keyring)
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        response = await c.post(
-            "/v1/host/memory/write",
-            headers=_headers("scoped-secret"),
-            json=_memory_payload(
-                content="private fact",
-                person_id="contact-owner",
-                context={"session_id": "s1", "contact_id": "someone-else"},
-            ),
-        )
-    assert response.status_code == 403
-    assert graph.write_calls == []
 
 
 @pytest.mark.asyncio

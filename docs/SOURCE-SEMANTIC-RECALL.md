@@ -45,6 +45,11 @@ Sidecar reasoning binds this tool to the authenticated request's participant and
 session, requires `memory:search`, and rejects model-provided scope selectors.
 Unbound internal invocations report unavailable instead of searching globally.
 
+Canonical turn ingestion records what participants said and what tools actually
+observed. Owner corrections use the attributed source-annotation API; erasure
+uses source-forget. The search and source-read APIs project that evidence.
+Periodic availability checks only read these surfaces and create no memories.
+
 The normal source transaction queues projection in the existing turn ledger.
 The existing source worker embeds at most 16 chunks per pass, persists its
 cursor and retries failures with backoff. A restart resumes those jobs. Caption
