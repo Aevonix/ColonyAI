@@ -9,7 +9,6 @@ RUN apt-get update && \
 
 COPY pyproject.toml README.md LICENSE ./
 COPY apsimo/ ./apsimo/
-COPY colony_sidecar/ ./colony_sidecar/
 
 RUN pip install --no-cache-dir .
 
