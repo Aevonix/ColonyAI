@@ -111,6 +111,46 @@ async def test_explicit_effective_date_preserves_historical_state(source_app, tm
 
 
 @pytest.mark.asyncio
+async def test_literal_time_on_date_correction_preserves_source_and_validity(source_app, tmp_path):
+    # Controlled valid proposals exercise the demonstrated source-date grammar;
+    # they do not reconstruct discarded output from a previous model run.
+    old = "My workshop access ends at 16:30 UTC on 18 September 2026."
+    new = "Correction: My workshop access ends at 17:15 UTC on 18 September 2026."
+    projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path / "turn-idempotency.db"))
+    model = Model({
+        old: claim(old, "16:30 UTC on 18 September 2026", predicate="access_until",
+                   valid_to_text="16:30 UTC on 18 September 2026"),
+        new: claim(new, "17:15 UTC on 18 September 2026", predicate="access_until",
+                   operation="correct", match_prior=True,
+                   valid_to_text="17:15 UTC on 18 September 2026"),
+    })
+    async with AsyncClient(transport=ASGITransport(app=source_app), base_url="http://test") as client:
+        await ingest(client, "access-original", old, tz="America/New_York")
+        assert await projection.process_one(model)
+        await ingest(client, "access-correction", new, tz="America/New_York")
+        assert await projection.process_one(model)
+    reopened = SourceClaimProjection(TurnIdempotencyLedger(projection.ledger.db_path))
+    packet = prepared(reopened, "workshop access", now="2026-09-18T16:45:00+00:00")[0]
+    current, = packet["assertions"]
+    assert current["value"] == "17:15 UTC on 18 September 2026"
+    assert current["operation"] == "correct"
+    assert current["valid_to"] == "2026-09-18T17:15:00+00:00"
+    with sqlite3.connect(projection.ledger.db_path) as db:
+        rows = db.execute('SELECT data_json,retracted_by FROM source_claims').fetchall()
+    assert len(rows) == 2
+    assert next(json.loads(data) for data, ref in rows if not ref)["evidence"] == new
+    prior = next((json.loads(data), ref) for data, ref in rows if json.loads(data)["evidence"] == old)
+    assert prior[0]["valid_to"] == "2026-09-18T16:30:00+00:00" and prior[1]
+
+
+def test_date_support_does_not_accept_a_normalized_expression_absent_from_the_source():
+    text = "My workshop access ends at 17:15 UTC on 18 September 2026."
+    proposal = claim(text, "17:15 UTC on 18 September 2026", predicate="access_until",
+                     valid_to_text="2026-09-18T17:15Z")
+    assert validated_claims(json.dumps([proposal]), message=text, prior=[], observed_at=None) == []
+
+
+@pytest.mark.asyncio
 async def test_newer_report_does_not_win_and_conflict_is_atomic(source_app, tmp_path, monkeypatch):
     a, b = "Nora reports the workshop starts at nine.", "Owen reports the workshop starts at ten."
     projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path / "turn-idempotency.db"))
