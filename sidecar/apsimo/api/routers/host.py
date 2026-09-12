@@ -12382,56 +12382,6 @@ async def delete_affect_event(event_id: str):
 # Theory of Mind — Shared Facts
 # ---------------------------------------------------------------------------
 
-async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
-                                source: str, confidence: float, *, record=None) -> bool:
-    """Mirror a shared fact into the memory graph as a `fact` memory.
-
-    Shared facts live in their own store; semantic recall searches the memory
-    graph. Without this mirror a stored fact is structurally unrecallable
-    (recall.fact_coverage measured exactly that). A linked fact's hash includes
-    its source and contact: replay can reinforce that support, but cannot
-    take ownership of identical wording from another turn or a legacy row.
-
-    Returns True when the fact reached the graph (created or reinforced),
-    False otherwise — callers on the hot path ignore this; the backfill
-    endpoint uses it to count per-fact outcomes."""
-    if _graph is None or not (fact or "").strip():
-        return False
-    if record and (record.get('metadata') or {}).get('automatic_projection'):
-        # Contact knowledge estimates are not additional world facts. Canonical
-        # assertions and source history already provide grounded recall.
-        return False
-    try:
-        import hashlib
-        lineage = record.get('source_lineage') if record else None
-        if lineage and (_facts_store is None or not _facts_store.source_visible(record)):
-            return False
-        source_uri = 'turn:' + lineage['turn_id'] if lineage else 'tom:shared_fact'
-        metadata = {"shared_fact": True, "fact_source": source or ""}
-        if lineage:
-            metadata.update(source_turn_id=lineage['turn_id'], fact_record_id=record['id'],
-                source_message_hashes=lineage['message_hashes'],
-                model_provenance=(record.get('metadata') or {}).get('model_provenance', {}))
-        # A linked support must not reinforce or take ownership of an old
-        # independent fact, or of the same wording learned in another turn.
-        basis = json.dumps([source_uri, contact_id, fact], ensure_ascii=False) if lineage else fact
-        memory_id = await _graph.store_memory(
-            content=fact,
-            memory_type="fact",
-            entities=[],
-            metadata=metadata,
-            importance=max(0.1, min(1.0, confidence if confidence is not None else 0.7)),
-            person_id=contact_id,
-            source_type="inference",
-            source_uri=source_uri,
-            content_hash=hashlib.sha256(basis.encode("utf-8")).hexdigest(),
-        )
-        return bool(memory_id) if lineage else True
-    except Exception:
-        logger.debug("shared fact -> graph mirror failed", exc_info=True)
-        return False
-
-
 def _append_p8_fact_record(
     record: Mapping[str, Any],
     *,
@@ -12475,7 +12425,6 @@ async def create_shared_fact(
         )
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
-    await _mirror_fact_to_graph(body.fact, body.contact_id, body.source, body.confidence)
     producer = None
     if _p8_runtime is not None:
         try:
@@ -12497,115 +12446,6 @@ async def create_shared_fact(
     return SharedFactResponse(**result)
 
 
-# Single-flight state for the shared-facts -> graph backfill. Facts created
-# before the create-time mirror existed never reached the memory graph, so
-# semantic recall can't see them. The backfill replays them through the same
-# mirror; content-hash dedup makes re-runs mostly idempotent (a re-run
-# reinforces the existing node: +0.05 strength / +1 corroboration — documented
-# behavior, not a bug).
-_facts_backfill_state: Dict[str, Any] = {"running": False}
-
-
-class FactsBackfillRequest(BaseModel):
-    dry_run: bool = True
-    limit: int = 0              # 0 = no cap
-    min_confidence: float = 0.0
-    sleep_ms: int = 150         # serial pacing between embeds (shared embedder)
-
-
-@router.post("/mind/facts/backfill")
-async def backfill_shared_facts(body: FactsBackfillRequest) -> dict:
-    """Mirror existing shared facts into the memory graph (explicit admin op).
-
-    Runs as a background task, mirroring facts serially with ``sleep_ms``
-    spacing so a large backlog cannot saturate a shared embedder. Per-fact
-    failures (e.g. embedder outage — store_memory fails closed) are counted
-    and skipped, never fatal to the run. Single-flight: a second invocation
-    while one is running returns 409. Progress is journaled every 100 facts.
-    """
-    if _facts_store is None:
-        raise HTTPException(status_code=501, detail="Shared facts not initialized")
-    if _graph is None:
-        raise HTTPException(status_code=501, detail="Memory graph not initialized")
-    if _facts_backfill_state.get("running"):
-        raise HTTPException(status_code=409, detail="facts backfill already running")
-
-    # Collect candidates up-front (paged reads from SQLite; no awaits, so the
-    # single-flight check above cannot interleave with another request).
-    facts: list = []
-    offset = 0
-    cap = body.limit if body.limit and body.limit > 0 else None
-    while True:
-        page = _facts_store.list_facts(
-            min_confidence=body.min_confidence, limit=200, offset=offset)
-        rows = page.get("facts") or []
-        if not rows:
-            break
-        facts.extend(rows)
-        offset += len(rows)
-        if cap is not None and len(facts) >= cap:
-            facts = facts[:cap]
-            break
-
-    if body.dry_run:
-        return {"dry_run": True, "started": False, "total": len(facts)}
-
-    sleep_secs = max(0, body.sleep_ms) / 1000.0
-    _facts_backfill_state.update({
-        "running": True, "dry_run": False, "total": len(facts),
-        "processed": 0, "mirrored": 0, "failed": 0,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "finished_at": None,
-    })
-
-    def _journal_progress(final: bool = False) -> None:
-        try:
-            from apsimo.events.journal import append_event
-            append_event("memory.facts_backfill", {
-                "processed": _facts_backfill_state["processed"],
-                "mirrored": _facts_backfill_state["mirrored"],
-                "failed": _facts_backfill_state["failed"],
-                "total": _facts_backfill_state["total"],
-                "final": final,
-            })
-        except Exception:
-            logger.debug("facts backfill journal failed", exc_info=True)
-
-    async def _run() -> None:
-        try:
-            for fact_row in facts:
-                ok = await _mirror_fact_to_graph(
-                    fact_row.get("fact") or "",
-                    fact_row.get("contact_id"),
-                    fact_row.get("source") or "",
-                    fact_row.get("confidence"),
-                    record=fact_row,
-                )
-                _facts_backfill_state["processed"] += 1
-                if ok:
-                    _facts_backfill_state["mirrored"] += 1
-                else:
-                    _facts_backfill_state["failed"] += 1
-                if _facts_backfill_state["processed"] % 100 == 0:
-                    _journal_progress()
-                if sleep_secs:
-                    await asyncio.sleep(sleep_secs)
-        finally:
-            _facts_backfill_state["running"] = False
-            _facts_backfill_state["finished_at"] = (
-                datetime.now(timezone.utc).isoformat())
-            _journal_progress(final=True)
-
-    _spawn_task(_run())
-    return {"dry_run": False, "started": True, "total": len(facts)}
-
-
-@router.get("/mind/facts/backfill")
-async def backfill_shared_facts_status() -> dict:
-    """Progress/status of the current (or last) shared-facts backfill."""
-    return dict(_facts_backfill_state)
-
-
 @router.get("/mind/facts", response_model=SharedFactListResponse)
 async def list_shared_facts(
     contact_id: Optional[str] = Query(None),
@@ -12614,11 +12454,7 @@ async def list_shared_facts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> SharedFactListResponse:
-    """List shared facts with optional filters.
-
-    Also searches the memory graph (Neo4j) for fact/preference/semantic
-    memories that haven't been synced to the SQLite facts store.
-    """
+    """List canonical shared facts with source visibility and optional filters."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
     result = _facts_store.list_facts(
@@ -12628,38 +12464,9 @@ async def list_shared_facts(
         limit=limit,
         offset=offset,
     )
-    facts = result["facts"]
-
-    # Fallback: search memory graph for fact-type memories
-    if _graph is not None and contact_id and len(facts) < limit:
-        try:
-            memories = await _graph.recall(
-                query=f"facts about {contact_id}",
-                limit=limit - len(facts),
-                person_id=contact_id,
-            )
-            for mem in memories:
-                mem_type = mem.get("type", "")
-                if mem_type in ("fact", "preference", "semantic"):
-                    # Check if already in facts (avoid duplicates)
-                    mem_content = mem.get("content", "")
-                    if not any(f["fact"] == mem_content for f in facts):
-                        facts.append({
-                            "id": mem.get("id", ""),
-                            "contact_id": contact_id,
-                            "fact": mem_content,
-                            "source": "memory_graph",
-                            "confidence": mem.get("strength", 0.8),
-                            "created_at": mem.get("created_at", ""),
-                            "expires_at": None,
-                            "metadata": None,
-                        })
-        except Exception as exc:
-            logger.debug("Memory graph fallback search failed: %s", exc)
-
     return SharedFactListResponse(
-        facts=[SharedFactResponse(**f) for f in facts],
-        total=len(facts),
+        facts=[SharedFactResponse(**f) for f in result["facts"]],
+        total=result["total"],
         limit=result["limit"],
         offset=result["offset"],
     )
@@ -13014,8 +12821,6 @@ async def extract_tom(
                 )
                 _append_p8_fact_record(
                     record, producer=_manual_p8_producer, origin="model")
-                await _mirror_fact_to_graph(f["fact"], f["contact_id"],
-                                            f["source"], f["confidence"], record=record)
 
     throttled = not _tom_extractor._can_extract(body.contact_id)
     return TomExtractResponse(

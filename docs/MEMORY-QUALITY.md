@@ -84,9 +84,11 @@ automatically. Their historical source enum and free-form metadata do not
 reliably distinguish owner curation from automated extraction. No curation or
 canonical source is invented for those records.
 
-Automatic context also excludes `tom:shared_fact` graph copies and older copies
-marked with shared-fact metadata. A mirror cannot bypass an expired, deleted,
-unlinked or outdated contact estimate. Unrelated graph memories keep their
+Shared-fact writes no longer create graph copies. Explicit fact listing uses
+only the canonical store; automatic recall reads its current source-checked
+view. Automatic context also excludes retained `tom:shared_fact` graph copies
+and copies marked with shared-fact metadata. A mirror cannot bypass an expired,
+deleted, unlinked or outdated contact estimate. Unrelated graph memories keep their
 existing behavior. No retained fact, mirror or original source is deleted or
 migrated by this selection change.
 
