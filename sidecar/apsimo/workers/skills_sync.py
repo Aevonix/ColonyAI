@@ -1,9 +1,6 @@
 """Report the agent's skill index to Colony.
 
-Installed as the ``colony-skills-sync`` console script (v0.20.0); the
-logic moved here unchanged from
-``plugins/hermes-plugin/poller/colony-skills-sync.py`` (v0.18.0),
-which remains as a thin back-compat wrapper.
+Installed as the ``apsimo-skills-sync`` console command.
 
 Scans the Hermes skills directory for SKILL.md files, parses the
 frontmatter (name / description / tags), and POSTs the index to
@@ -16,7 +13,7 @@ installing new skills. The TypeScript OpenClaw plugin ships the same
 sync built-in (src/hermes-skills.ts); this worker is for deployments
 using the Python Hermes plugin.
 
-Environment (unchanged from the v0.18 script):
+Environment:
   COLONY_URL          sidecar URL  (default http://127.0.0.1:7777)
   COLONY_API_KEY      API key      (default dev-mode-no-key)
   HERMES_SKILLS_DIR   skills tree  (default ~/.hermes/skills)
@@ -121,7 +118,7 @@ def report(observations: list) -> int:
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="colony-skills-sync",
+        prog="apsimo-skills-sync",
         description="Report the agent's installed skill index to Colony.",
     )
     parser.add_argument(
@@ -137,7 +134,7 @@ def main(argv: Optional[list] = None) -> int:
         print(f"No skills found under {base}")
         return 0
     if args.dry_run:
-        print("colony-skills-sync (dry run — nothing reported):")
+        print("apsimo-skills-sync (dry run — nothing reported):")
         for obs in observations:
             print(f"  - {obs['entity_id']}: {obs['payload'].get('description', '')}")
         print(f"Would report {len(observations)} skills from {base}")

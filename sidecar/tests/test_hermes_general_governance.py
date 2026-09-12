@@ -1570,24 +1570,8 @@ def test_no_direct_mutation_cron_or_process_global_event_paths_remain():
         assert forbidden not in sources
 
 
-def test_legacy_effect_pollers_are_inert_and_installer_cannot_enable_them():
-    """A cron that survives upgrade must land on an inert compatibility path."""
-
-    for relative in (
-        "poller/colony-initiative-poller.py",
-        "poller/colony-queue-worker.py",
-    ):
-        script = PLUGIN_DIR / relative
-        source = script.read_text(encoding="utf-8")
-        assert "LEGACY_EFFECT_WORKER_DISABLED = True" in source
-        assert "urlopen(" not in source
-        assert "apsimo.workers.queue_worker" not in source
-        result = subprocess.run(
-            [sys.executable, str(script)], text=True, capture_output=True,
-            timeout=5, check=False,
-        )
-        assert result.returncode == 78
-        assert "disabled" in (result.stdout + result.stderr).lower()
+def test_installer_only_uses_packaged_setup():
+    """The adapter installer uses the package rather than loose worker scripts."""
 
     installer = (PLUGIN_DIR / "install.sh").read_text(encoding="utf-8")
     assert "--poller" not in installer

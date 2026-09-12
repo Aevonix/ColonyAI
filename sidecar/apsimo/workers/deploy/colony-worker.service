@@ -30,7 +30,7 @@ Environment=COLONY_WORKER_POLL_SECS=30
 Environment=COLONY_WORKER_LLM_BASE_URL=%LLM_BASE_URL%
 Environment=COLONY_WORKER_LLM_MODEL=%LLM_MODEL%
 Environment=COLONY_WORKER_LLM_API_KEY=%LLM_API_KEY%
-ExecStart=%VENV_BIN%/colony-worker
+ExecStart=%VENV_BIN%/apsimo-worker
 Restart=on-failure
 RestartSec=10
 

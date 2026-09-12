@@ -3,7 +3,7 @@
 > **Status.** Two tiers, different maturity:
 > - **Supported:** local agent hosts and MCP coding tools connecting to one
 >   Colony over its HTTP/WebSocket API and sharing unified context; the
->   installable `colony-worker` daemon claiming typed jobs under the
+>   installable `apsimo-worker` daemon claiming typed jobs under the
 >   server-side WorkerGovernor; and the local identity anchor (colony_id,
 >   node keypair, signed node certificate).
 > - **Experimental — not production-ready:** the *remote* agent-connect
@@ -107,18 +107,17 @@ Config saved to: ~/.colony/agent.json
 
 Colony supports several agent paths out of the box:
 
-- **Hermes plugin** (`plugins/hermes-plugin/`) — mounts Colony into a Hermes
-  agent host. Install with `plugins/hermes-plugin/install.sh`; the poller and
-  queue-worker scripts (or the unified `colony-agent-bridge` daemon) forward
-  initiatives and `agent_action` jobs to the agent's webhook.
-- **MCP** (`colony mcp setup`) — configures a coding harness (Claude Code,
+- **Hermes plugin** (`plugins/hermes-plugin/`) — connects Apsimo to native
+  Hermes tools, context and turn capture. Install with `apsimo init`; the
+  adapter submits governed actions through the separate action mediator.
+- **MCP** (`apsimo mcp setup`) — configures a coding harness (Claude Code,
   Codex, Crush, OpenCode) to use Colony over the Model Context Protocol
   (stdio transport).
-- **colony-worker daemon** (`colony_sidecar/workers/colony_worker.py`,
-  console script `colony-worker`) — an installable, capability-typed worker
+- **apsimo-worker daemon** (`sidecar/apsimo/workers/colony_worker.py`,
+  console script `apsimo-worker`) — an installable, capability-typed worker
   that claims queued jobs and executes them with an LLM in a read/analyse
   posture. Stdlib-only, so it runs on hosts without the full sidecar stack.
-- **Python Agent SDK** (`colony_sidecar.agent.AgentClient`) — for custom
+- **Python Agent SDK** (`apsimo.agent.AgentClient`) — for custom
   agents; reads `~/.colony/agent.json` and connects via WebSocket (see below).
 
 ## Architecture Details
@@ -368,11 +367,12 @@ and reconnection with exponential backoff.
 
 ### Hermes plugin and workers
 
-For Hermes hosts, the plugin plus the `colony-agent-bridge` daemon (or the
-individual poller/queue-worker cron scripts) cover the same circuit without
-custom code: initiatives are forwarded to the agent's webhook, `agent_action`
-jobs are claimed from the task queue, and the skill index is synced back to
-Colony. See `plugins/hermes-plugin/poller/README.md`.
+The Hermes adapter uses native tool execution and the governed action
+mediator. Install it through `apsimo init`; see [HERMES-ADAPTER.md](HERMES-ADAPTER.md).
+The separate packaged workers are `apsimo-agent-bridge`,
+`apsimo-queue-worker` and `apsimo-skills-sync`. They run through installed
+commands or `python -m apsimo.workers.<module>`; no loose poller scripts
+are shipped with the adapter.
 
 ## Security Model
 

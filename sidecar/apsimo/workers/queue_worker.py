@@ -1,9 +1,6 @@
 """Claim Colony agent_action jobs and hand them to the agent.
 
-Installed as the ``colony-queue-worker`` console script (v0.20.0); the
-logic moved here unchanged from
-``plugins/hermes-plugin/poller/colony-queue-worker.py`` (v0.16.0),
-which remains as a thin back-compat wrapper.
+Installed as the ``apsimo-queue-worker`` console command.
 
 This is the execution half of the agent-as-sensor loop:
 
@@ -24,7 +21,7 @@ close the loop with plain curl — no special tooling needed:
   - complete the job:     POST {COLONY_URL}/v1/host/queue/jobs/{id}/complete
   - fail the job:         POST {COLONY_URL}/v1/host/queue/jobs/{id}/fail
 
-Environment (unchanged from the v0.16 script):
+Environment:
   COLONY_URL                sidecar URL       (default http://127.0.0.1:7777)
   COLONY_API_KEY            API key           (default dev-mode-no-key)
   COLONY_JOBS_WEBHOOK_URL   agent webhook     (default http://127.0.0.1:8644/webhooks/colony-jobs)
@@ -414,7 +411,7 @@ def run(cfg: Dict[str, Any]) -> int:
 
 def main(argv: Optional[list] = None) -> int:
     parser = argparse.ArgumentParser(
-        prog="colony-queue-worker",
+        prog="apsimo-queue-worker",
         description="Claim Colony agent_action jobs and hand them to the agent webhook.",
     )
     parser.add_argument(
@@ -426,7 +423,7 @@ def main(argv: Optional[list] = None) -> int:
 
     cfg = load_config()
     if args.dry_run:
-        print("colony-queue-worker (dry run — no network calls):")
+        print("apsimo-queue-worker (dry run — no network calls):")
         print(f"  colony_url:  {cfg['colony_url']}")
         print(f"  webhook_url: {cfg['webhook_url']}")
         print(f"  node_id:     {cfg['node_id']}")

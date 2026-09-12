@@ -23,7 +23,7 @@ unless a selected qualification explicitly requires a real model or service.
 | `sidecar/apsimo/` | The Python package: FastAPI sidecar, CLI, all subsystems |
 | `sidecar/apsimo/api/` | Pydantic schemas and routers: the single source of truth for the HTTP contract |
 | `sidecar/apsimo/intelligence/` | Graph memory, mind model, cognition components |
-| `sidecar/apsimo/workers/` | Worker daemons (`colony-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
+| `sidecar/apsimo/workers/` | Worker daemons (`apsimo-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
 | `sidecar/tests/` | Sidecar test suite, kept out of the installed product package |
 | `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `apsimo-memory` (memory provider), `feeds-manage` |
 | `docs/` | Public docs (harness integration, channel framework, feeds, prompts) |
@@ -106,7 +106,7 @@ layers solely to preserve historical names.
 
 ## Release flow
 
-1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the four adapter manifests under `plugins/hermes-plugin`, `plugins/apsimo-memory`, `compat/colony_hermes` and `compat/colony_memory`. Bump `hostworker/pyproject.toml` only for an independent hostworker release.
+1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the two adapter manifests under `plugins/hermes-plugin` and `plugins/apsimo-memory`. The release workflow also builds and publishes `apsimo-hostworker`; if its packaged contents changed, bump `hostworker/pyproject.toml` and the source version fallback in `hostworker/apsimo_hostworker/__init__.py` before tagging. Do not publish changed hostworker bytes under an existing version.
 2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z: title`, prose + bullets)
 3. Commit and tag: `git tag vX.Y.Z && git push --tags`
 4. CI (`.github/workflows/release.yml`) publishes to PyPI, pushes the Docker

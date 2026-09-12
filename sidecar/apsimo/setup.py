@@ -1684,14 +1684,14 @@ def run_autonomy_step(
 #: (for the `python -m` fallback) and cron schedule.
 WORKER_SPECS = (
     {
-        "name": "colony-queue-worker",
+        "name": "apsimo-queue-worker",
         "module": "apsimo.workers.queue_worker",
         "schedule": "*/5 * * * *",
         "blurb": "claims approved agent_action jobs every 5 minutes and hands "
                  "them to your agent (without it, auto-approved jobs sit QUEUED forever)",
     },
     {
-        "name": "colony-skills-sync",
+        "name": "apsimo-skills-sync",
         "module": "apsimo.workers.skills_sync",
         "schedule": "0 9 * * *",
         "blurb": "reports your agent's installed skill index to Apsimo once a "
