@@ -43,6 +43,7 @@ def main() -> None:
     init_p.add_argument("--quiet-hours", help="Optional local follow-up quiet window, HH:MM-HH:MM; grants no outreach permission")
     init_p.add_argument("--whatsapp-read-receipts", choices=["on", "off"], help="Set this Hermes profile's read receipts for accepted WhatsApp messages; omission preserves its setting")
     init_p.add_argument("--preferences-only", action="store_true", help="Update only an existing Hermes config preference; skip instance and model setup")
+    init_p.add_argument("--skills-only", action="store_true", help="Install or explicitly refresh owned bundled skills in one Hermes profile; no instance or model setup")
     init_p.add_argument("--preview", action="store_true", help="With --preferences-only, show changed preference paths without writing")
     init_p.add_argument("--model-url", help="One local OpenAI-compatible API root")
     init_p.add_argument("--model", help="Model identifier at that endpoint")
@@ -313,7 +314,7 @@ def main() -> None:
         code = run_init(root_dir=args.dir, args=args)
         if code != 0:
             sys.exit(code)
-        if args.preferences_only:
+        if args.preferences_only or args.skills_only:
             return
 
         # Initialize Apsimo identity if not already done

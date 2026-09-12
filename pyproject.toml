@@ -32,7 +32,7 @@ apsimo_hermes = "plugins/hermes-plugin"
 apsimo_memory = "plugins/apsimo-memory"
 
 [tool.setuptools.package-data]
-apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md"]
+apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md", "bundled_skills/*/SKILL.md"]
 apsimo_memory = ["plugin.yaml", "SKILL.md"]
 
 [tool.pytest.ini_options]

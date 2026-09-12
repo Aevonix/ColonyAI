@@ -50,6 +50,43 @@ through `hermes_agent.memory_providers`. Only the canonical `apsimo_hermes` and
 Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
 included in the adapter's private catalog package. The legacy source installer forwards to the guided, profile-aware installer.
 
+## Bundled research skill
+
+The adapter wheel includes `apsimo-deep-research`, an original research workflow
+for cited investigations and decision reports. It uses the available research
+tools without selecting a model or provider. New guided `apsimo init` attachments
+install it into the selected profile's native skill catalog.
+
+For an existing Hermes profile, install or explicitly refresh the bundled copy
+without instance setup, inference or configuration changes:
+
+```sh
+apsimo init --skills-only --hermes-home /path/to/selected/hermes-home
+```
+
+The command reads the installed `apsimo-hermes` distribution. Use
+`--adapter-wheel /path/to/apsimo_hermes-VERSION-py3-none-any.whl` to select an
+exact built artifact instead. For each packaged `apsimo-*` skill it writes
+`skills/<name>/SKILL.md` and its local `.apsimo-owned.json` hash record,
+retaining previous bytes in local backups on refresh. An unowned
+destination or modified bundled copy is preserved and reported as a conflict.
+Move a customized skill directory aside and give it a different name/path before
+installing the bundled revision. Other skills are untouched. An adapter refresh alone does
+not replace the profile's skill; run `--skills-only` explicitly for that update.
+
+Hermes advertises the name and short description in its compact skill index;
+`skills_list` discovers it and `skill_view(name="apsimo-deep-research")` loads
+the full instructions on demand. The installer does not inject the body into
+every prompt or enable otherwise disabled skill tools. Hermes 0.21.2 caches
+both the index in process memory and existing session prompts: use a fresh
+process **and** a new session after installation. For a running gateway, use
+its normal restart lifecycle and then a new conversation. No process is
+restarted by this command, and stored conversation prompts are not rewritten.
+
+Built-artifact tests exercise native discovery and deliver the loaded skill
+through the real Hermes tool loop into a controlled SDK request. This proves
+instruction delivery, not research quality on a particular model.
+
 ## Activation and current limits
 
 Installing the wheel makes the adapters discoverable. It does not change a

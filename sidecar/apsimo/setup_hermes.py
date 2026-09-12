@@ -569,14 +569,25 @@ def run(root_dir=None, args=None):
     try:
         receipt_choice = getattr(args, 'whatsapp_read_receipts', None)
         preferences_only = bool(getattr(args, 'preferences_only', False))
+        skills_only = bool(getattr(args, 'skills_only', False))
         preview = bool(getattr(args, 'preview', False))
-        if preferences_only:
+        if preferences_only or skills_only:
             home = setup._resolve_hermes_home(getattr(args, 'hermes_home', None))
             selected_python = None
         else:
             home, selected_python = _select_home(args, ask)
         if preview and not preferences_only:
             raise ValueError('--preview requires --preferences-only')
+        if skills_only:
+            if root_dir or receipt_choice or any(getattr(args, name, None) for name in (
+                    'preferences_only', 'preview', 'start', 'refresh_adapter', 'replace_memory_provider',
+                    'local_work', 'native_goals', 'native_reviews', 'model_url', 'model', 'agent_name',
+                    'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'owner_handle', 'encrypt',
+                    'passphrase', 'claim_genesis', 'mcp_harnesses', 'no_harness')):
+                raise ValueError('--skills-only cannot be combined with instance or preference changes')
+            from .setup_skills import prepare, install
+            install(prepare(home, _adapter_resources(getattr(args, 'adapter_wheel', None)), refresh=True))
+            return 0
         if preferences_only:
             if receipt_choice is None:
                 raise ValueError('--preferences-only requires --whatsapp-read-receipts on or off')
@@ -673,6 +684,8 @@ def run(root_dir=None, args=None):
         resources = _adapter_resources(getattr(args, 'adapter_wheel', None))
         _preflight_outbox(home, resources)
         binding = _adapter_binding(python, resources)
+        from .setup_skills import prepare as prepare_skills, install as install_skills
+        skill_updates = prepare_skills(home, resources)
         owner_name = ask('Your name', getattr(args, 'contact_name', None) or os.environ.get('USER', 'Owner'), True)
         owner_handles, owner_platforms = _owner_handles(args, ask, noninteractive)
         agent_name = ask('Agent name', getattr(args, 'agent_name', None) or 'Assistant', True)
@@ -858,6 +871,7 @@ def run(root_dir=None, args=None):
                 guiding = ('Guiding values: ' + ', '.join(agent_preferences['values']) + '.\n'
                            if agent_preferences['values'] else '')
                 create(home/'SOUL.md', f'# {agent_name}\n\nYou are {agent_name}, the personal assistant of {owner_name}.\n{guiding}Use retained evidence with its provenance; ask about uncertainty.\nYour opinions are revisable interpretations; distinguish them from facts and permissions.\nOwner consent is required for consequential external actions; an existing task-scoped consent covers only its stated scope.\n')
+            install_skills(skill_updates)
         except Exception:
             # Undo only this installation's exact bytes. Concurrent edits stay
             # intact, with original files still retained in the private state.

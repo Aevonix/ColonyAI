@@ -139,6 +139,8 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     assert principal['credentials'][0]['secret'] not in (home/'config.yaml').read_text()
     assert (home/'SOUL.md').read_text().startswith('# Orion')
     assert (state/'adapter/apsimo_hermes/evidence.py').is_file()
+    from apsimo.setup_skills import SKILL_NAME, SKILL_RESOURCE
+    assert (home/'skills'/SKILL_NAME/'SKILL.md').read_bytes() == setup_hermes._adapter_resources(args.adapter_wheel)[SKILL_RESOURCE]
     assert (state/'api-keyring.json').stat().st_mode & 0o777 == 0o600
     # Same selected home finds this instance without a separate global pointer.
     monkeypatch.delenv('APSIMO_STATE_DIR', raising=False)
@@ -151,6 +153,102 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     before = (home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes()
     assert setup.run_init(None, args) == 0
     assert before == ((home/'config.yaml').read_bytes(), (state/'api-keyring.json').read_bytes())
+
+
+def test_skills_only_installs_and_refreshes_owned_bytes_without_instance_or_model(args, monkeypatch):
+    from apsimo.setup_skills import SKILL_NAME, SKILL_RESOURCE
+    home = Path(args.hermes_home)
+    home.mkdir()
+    originals = {'config.yaml': b'model: {default: retained}\n', 'SOUL.md': b'Private identity',
+                 'skills/personal/SKILL.md': b'User-authored instructions'}
+    for relative, content in originals.items():
+        path = home/relative; path.parent.mkdir(parents=True, exist_ok=True); path.write_bytes(content)
+    only = SimpleNamespace(skills_only=True, hermes_home=str(home), adapter_wheel=args.adapter_wheel)
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Skills setup called a model'))
+    monkeypatch.setattr(setup_hermes, '_interpreter', lambda *a: pytest.fail('Skills setup changed runtime selection'))
+    assert setup.run_init(None, only) == 0
+    skill = home/'skills'/SKILL_NAME/'SKILL.md'
+    original = skill.read_bytes()
+    current = setup_hermes._adapter_resources(args.adapter_wheel)
+    monkeypatch.setattr(setup_hermes, '_adapter_resources', lambda *a: {**current, SKILL_RESOURCE: original+b'\nA new bundled revision.\n'})
+    assert setup.run_init(None, only) == 0
+    assert skill.read_bytes() == original+b'\nA new bundled revision.\n'
+    before = {path: path.read_bytes() for path in skill.parent.iterdir() if path.is_file()}
+    assert setup.run_init(None, only) == 0
+    assert before == {path: path.read_bytes() for path in skill.parent.iterdir() if path.is_file()}
+    assert all((home/name).read_bytes() == content for name, content in originals.items())
+    assert not (home/'apsimo').exists() and not (home/'.env').exists()
+
+
+def test_skills_only_cli_does_not_continue_into_identity_setup(args, monkeypatch):
+    from apsimo import cli
+    monkeypatch.setattr(cli.sys, 'argv', ['apsimo', 'init', '--skills-only',
+        '--hermes-home', args.hermes_home, '--adapter-wheel', args.adapter_wheel])
+    monkeypatch.setattr(cli, '_load_dotenv', lambda: pytest.fail('Skills-only loaded instance environment'))
+    monkeypatch.setattr(cli, '_cmd_init', lambda *a: pytest.fail('Skills-only initialized identity'))
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Skills-only called a model'))
+    cli.main()
+    assert not (Path(args.hermes_home)/'apsimo').exists()
+
+
+@pytest.mark.parametrize('collision', ['unowned', 'edited', 'symlink'])
+def test_skills_install_preserves_user_owned_or_edited_destinations(args, collision):
+    from apsimo.setup_skills import SKILL_NAME
+    home = Path(args.hermes_home)
+    skill = home/'skills'/SKILL_NAME/'SKILL.md'
+    only = SimpleNamespace(skills_only=True, hermes_home=str(home), adapter_wheel=args.adapter_wheel)
+    if collision == 'edited':
+        assert setup.run_init(None, only) == 0
+    else:
+        skill.parent.mkdir(parents=True)
+    if collision == 'symlink':
+        target = home/'personal.md'; target.write_bytes(b'Keep my research workflow')
+        skill.symlink_to(target)
+    else:
+        skill.write_bytes(b'Keep my research workflow')
+    before = {path: path.read_bytes() for path in home.rglob('*') if path.is_file()}
+    assert setup.run_init(None, only) == 1
+    assert before == {path: path.read_bytes() for path in home.rglob('*') if path.is_file()}
+
+
+def test_new_setup_detects_skill_collision_before_model_or_attachment(args, monkeypatch):
+    from apsimo.setup_skills import SKILL_NAME
+    home = Path(args.hermes_home)
+    skill = home/'skills'/SKILL_NAME/'SKILL.md'
+    skill.parent.mkdir(parents=True); skill.write_text('My own skill')
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Collision must precede inference'))
+    assert setup.run_init(None, args) == 1
+    assert skill.read_text() == 'My own skill'
+    assert not (home/'apsimo').exists() and not (home/'config.yaml').exists()
+
+
+def test_skill_install_rolls_back_a_failed_ownership_write(args, monkeypatch):
+    from apsimo.setup_skills import SKILL_NAME
+    write = setup._atomic_hermes_config_write
+    def fail_marker(path, before, after):
+        if path.name == '.apsimo-owned.json':
+            raise OSError('Fixture ownership write failure')
+        write(path, before, after)
+    monkeypatch.setattr(setup, '_atomic_hermes_config_write', fail_marker)
+    only = SimpleNamespace(skills_only=True, hermes_home=args.hermes_home, adapter_wheel=args.adapter_wheel)
+    assert setup.run_init(None, only) == 1
+    assert not (Path(args.hermes_home)/'skills'/SKILL_NAME).exists()
+
+
+def test_multiple_bundled_skills_validate_all_destinations_before_any_write(tmp_path):
+    from apsimo.setup_skills import BUNDLE_PREFIX, prepare, install
+    home = tmp_path/'profile'
+    resources = {BUNDLE_PREFIX+name+'/SKILL.md': ('Instructions for '+name).encode()
+                 for name in ('apsimo-first', 'apsimo-second')}
+    install(prepare(home, resources))
+    first, second = [home/'skills'/name/'SKILL.md' for name in ('apsimo-first', 'apsimo-second')]
+    second.write_bytes(b'My modified second skill')
+    before = {p: p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    candidate = {path: content+b' updated' for path, content in resources.items()}
+    with pytest.raises(ValueError, match='Locally modified'):
+        prepare(home, candidate, refresh=True)
+    assert before == {p: p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    assert first.read_bytes() == b'Instructions for apsimo-first'
 
 
 def test_enrolled_owner_accounts_resolve_through_the_generated_scoped_api(args, monkeypatch):
