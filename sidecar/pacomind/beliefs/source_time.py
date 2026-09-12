@@ -12,7 +12,9 @@ _MONTHS = {name.casefold(): i for i, name in enumerate(
     ("January", "February", "March", "April", "May", "June", "July", "August",
      "September", "October", "November", "December"), 1)}
 _DATE = r"\d{4}-\d{2}-\d{2}(?:T\d{2}:\d{2}(?::\d{2})?(?:Z|[+-]\d{2}:\d{2}))?"
-_MONTH_DATE = r"(?:" + "|".join(_MONTHS) + r")\s+\d{1,2},?\s+\d{4}"
+_MONTH = r"(?:" + "|".join(_MONTHS) + r")"
+_MONTH_DATE = (r"(?:" + _MONTH + r"\s+\d{1,2},?\s+\d{4}|"
+               r"\d{1,2}\s+" + _MONTH + r"\s+\d{4})")
 _TIME_ON_DATE = re.compile(
     r"(?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?"
     r"(?:\s+(?P<utc>UTC))?\s+on\s+(?P<date>.+)", re.I)

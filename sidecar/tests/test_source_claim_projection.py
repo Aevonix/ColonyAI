@@ -108,6 +108,9 @@ async def test_explicit_effective_date_preserves_historical_state(source_app, tm
     assert [row["value"] for row in current] == ["Lake"]
     assert current[0]["observed_at"] == "2026-03-02T09:00:00+00:00"
     assert current[0]["recorded_at"] != current[0]["observed_at"]
+    for expression in ('5 March 2026', '"5 March 2026"'):
+        historical = prepared(projection, f"Where was my office as of {expression}?")[0]["assertions"]
+        assert [row["value"] for row in historical] == ["River"]
 
 
 @pytest.mark.asyncio

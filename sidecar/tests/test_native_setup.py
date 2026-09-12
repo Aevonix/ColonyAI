@@ -192,7 +192,8 @@ def test_wizard_preserves_full_model_configuration_and_existing_chat(
     assert router._snapshot.roles['extraction'].deadline_seconds == 45
     if args.local_work:
         native.assert_called_once()
-        tools.assert_any_call('http://127.0.0.1:8125/v1', 'planner', 'fixture-planning-private-key')
+        tools.assert_any_call('http://127.0.0.1:8125/v1', 'planner', 'fixture-planning-private-key',
+                              extra_body={'temperature': 0.4, 'top_p': 0.92})
         worker = yaml.safe_load((home/'profiles/pacomind-drafts/config.yaml').read_text())
         assert worker['model']['default'] == 'planner'
         assert worker['model']['max_tokens'] == 6144
@@ -243,6 +244,68 @@ def test_supplied_configuration_requires_its_own_planning_role_before_attachment
     assert setup.run_init(None, args) == 1
     assert not Path(args.hermes_home).exists()
     assert json.loads(Path(args.model_config).read_text()) == supplied_model_config
+
+
+def test_fresh_and_retained_planning_probe_sends_selected_recipe_over_http(
+        args, supplied_model_config, monkeypatch):
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    from threading import Thread
+    from pacomind import setup_local_work
+
+    recipe = {'temperature': 0.35, 'chat_template_kwargs': {'enable_thinking': False}}
+    requests = []
+
+    class Endpoint(BaseHTTPRequestHandler):
+        def log_message(self, *args):
+            pass
+
+        def do_POST(self):
+            body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
+            requests.append(body)
+            status = 200
+            if 'tools' in body:
+                if any(body.get(key) != value for key, value in recipe.items()):
+                    status, response = 400, {'error': 'configured request recipe missing'}
+                else:
+                    response = {'choices': [{'message': {'tool_calls': [{'function': {
+                        'name': 'pacomind_setup_echo', 'arguments': '{"token":"pacomind-ready"}'}}]}}]}
+            else:
+                response = {'choices': [{'message': {'content': 'OK'}}]}
+            raw = json.dumps(response).encode()
+            self.send_response(status)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Content-Length', str(len(raw)))
+            self.end_headers()
+            self.wfile.write(raw)
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), Endpoint)
+    thread = Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        # The ordinary fixture substitutes HTTP; this case uses a real owned endpoint.
+        monkeypatch.setattr(httpx, 'post', httpx._api.post)
+        args.model_url = f'http://127.0.0.1:{server.server_port}/v1'
+        binding = supplied_model_config['modelPool']['deliberate']
+        binding.update(baseUrl=args.model_url, extraBody=recipe)
+        Path(args.model_config).write_text(json.dumps(supplied_model_config))
+        args.local_work = True
+        install = Mock()
+        monkeypatch.setattr(setup_local_work, 'install', install)
+        assert setup.run_init(None, args) == 0
+        args.model_config = None
+        assert setup.run_init(None, args) == 0
+        assert install.call_count == 2
+        probes = [body for body in requests if 'tools' in body]
+        assert len(probes) == 2
+        for body in probes:
+            assert body['model'] == 'planner'
+            assert all(body[key] == value for key, value in recipe.items())
+            assert 'extra_body' not in body
+            assert body['tool_choice']['function']['name'] == 'pacomind_setup_echo'
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
 
 
 def test_model_config_cli_forwards_the_private_path_without_starting_identity(monkeypatch):

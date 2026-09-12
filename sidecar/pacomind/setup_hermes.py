@@ -646,7 +646,8 @@ def run(root_dir=None, args=None):
                 from .router.native_policy import planning
                 from .setup_local_work import install, verify_tools
                 options, _ = asyncio.run(planning(json.loads((state/'.pacomind-llm-config.json').read_text())))
-                verify_tools(options['base_url'], options['model'], options['api_key'])
+                verify_tools(options['base_url'], options['model'], options['api_key'],
+                             **options['request_overrides'])
                 install(state)
                 print('Accepted local drafts use native Kanban. Restart this PacoMind instance and Hermes gateway to load the binding.')
             if getattr(args, 'native_goals', False):
@@ -730,7 +731,8 @@ def run(root_dir=None, args=None):
                 options, _ = asyncio.run(planning(supplied_models))
             except ValueError:
                 raise ValueError('--model-config needs an eligible explicit planning role for local drafts or native reviews') from None
-            verify_tools(options['base_url'], options['model'], options['api_key'])
+            verify_tools(options['base_url'], options['model'], options['api_key'],
+                         **options['request_overrides'])
         if native_goals or (supplied_models is None and (local_work or native_reviews)):
             from .setup_local_work import verify_tools
             verify_tools(endpoint, model, model_key)

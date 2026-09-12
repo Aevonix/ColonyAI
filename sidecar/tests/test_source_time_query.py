@@ -27,6 +27,7 @@ REPORT = ('The quartz archive comparison is recorded in this report: '
     'Inspect this report: "The camera recorded a visit at ' + STAMP + '."',
     'Inspect this report: “The camera recorded a visit at ' + STAMP + '.”',
     "Inspect this report: 'The camera recorded a visit at " + STAMP + ".'",
+    'Inspect this report: "The camera recorded a visit on 18 September 2026."',
 ])
 def test_supplied_report_dates_do_not_filter_observation_time(evidence):
     query = interpret_time_query(evidence, now=NOW)
@@ -42,6 +43,10 @@ def test_supplied_report_dates_do_not_filter_observation_time(evidence):
     ('What did the camera record in the last 2 hours?', 'observed_range', '2026-03-12T10:00:00+00:00'),
     ('What was recorded in the "last 2 hours"?', 'observed_range', '2026-03-12T10:00:00+00:00'),
     ('Where was my office as of March 5, 2026?', 'valid_range', '2026-03-05T00:00:00+00:00'),
+    ('Where was my office as of 18 September 2026?', 'valid_range', '2026-09-18T00:00:00+00:00'),
+    ('Where was my office as of "18 September 2026"?', 'valid_range', '2026-09-18T00:00:00+00:00'),
+    ('What was recorded on 5 March 2026?', 'observed_range', '2026-03-05T00:00:00+00:00'),
+    ('What was recorded since "5 March 2026"?', 'observed_range', '2026-03-05T00:00:00+00:00'),
     ('What tea should I bring later today?', 'current', NOW.isoformat()),
     ('What was recorded on 2026-03-11? Inspect this report: ' + REPORT,
      'observed_range', '2026-03-11T00:00:00+00:00'),
@@ -53,11 +58,16 @@ def test_explicit_temporal_requests_keep_their_existing_window(query_text, mode,
     assert (query.mode, query.start) == (mode, start)
     if query_text == 'What was recorded at ' + STAMP + '?':
         assert query.end == '2026-03-12T09:14:30.000001+00:00'
+    if query_text == 'What was recorded since "5 March 2026"?':
+        assert query.end == NOW.isoformat()
 
 
 @pytest.mark.parametrize('query_text', [
     'office before 2026-03-12',
     'office between March 1, 2026 and March 5, 2026',
+    'office on 1 March 2026 or 5 March 2026',
+    'office on "1 March 2026" or "March 5, 2026"',
+    'office between 1 March 2026 and 5 March 2026',
     'office last month',
     'office "last month"',
 ])
