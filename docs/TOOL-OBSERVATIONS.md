@@ -27,6 +27,12 @@ request that made the nomination. It then reads that call's original message
 from Hermes. The model cannot supply the original text, identity, timestamp or
 hash through the nomination arguments.
 
+For an original invoked through Hermes' deferred `tool_call`, the adapter uses
+the native single-local-call normalization to match the underlying executed tool
+and arguments. The SDK wrapper and native result keep the same call ID. Ambiguous
+IDs, unsupported batches and altered wrapper arguments are not eligible; the
+existing session scope and exact-original checks still apply.
+
 The existing source ledger stores the result as a tool quotation, with its
 native profile identity, session, task, turn, API request, call and message IDs,
 recorded timestamp and raw-content hash. The reason is marked as model-authored

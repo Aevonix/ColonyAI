@@ -71,7 +71,8 @@ def native(source_app, monkeypatch, tmp_path):
     context.hooks['pre_llm_call'](**call_context, platform='cli', sender_id='owner', user_message=INSTRUCTION,
         conversation_history=[{'role':'user','content':INSTRUCTION}])
     messages = [{'role':'user','content':INSTRUCTION}]
-    def request(request_id='api-2', *, anthropic=False, responses=False, deferred=False, tools=True):
+    def request(request_id='api-2', *, anthropic=False, responses=False, deferred=False, tools=True,
+                before_middleware=None):
         payload = {'messages': copy.deepcopy(messages), 'tools':[{'type':'function','function':
             context.tools['apsimo_memory_retain_observation']['schema']}]}
         if deferred:
@@ -91,6 +92,8 @@ def native(source_app, monkeypatch, tmp_path):
             payload['input'] = _chat_messages_to_responses_input(payload.pop('messages'))
             payload['tools'] = _responses_tools(payload['tools'])
             payload['instructions'] = 'Stable identity.'
+        if before_middleware is not None:
+            before_middleware(payload)
         return native_middleware.apply_llm_request_middleware(payload,
             **call_context, api_request_id=request_id,
             api_mode='anthropic_messages' if anthropic else 'chat_completions')
@@ -201,6 +204,114 @@ def test_actual_native_deferred_catalog_and_completed_call_offer_bounded_hint(na
     assert 'tool_describe' in hints[0] and 'tool_call' in hints[0]
     assert 'not saved memories' in hints[0] and RESULT not in hints[0]
     assert n.messages == before and n.retain()['source_recorded']
+
+
+@pytest.mark.parametrize('legacy_arguments', [False, True])
+@pytest.mark.parametrize('api_format', ['chat', 'anthropic', 'responses'])
+def test_native_deferred_original_dispatch_persistence_and_nomination(native, monkeypatch, legacy_arguments, api_format):
+    from unittest.mock import MagicMock, patch
+    from run_agent import AIAgent
+    from agent.tool_executor import execute_tool_calls_sequential
+    from tools import tool_search
+    n = native
+    schema = {'type': 'function', 'function': {'name': 'fixture_observe',
+        'description': 'Controlled local observation.',
+        'parameters': {'type': 'object', 'properties': {'item': {'type': 'string'}}}}}
+    configuration = tool_search.ToolSearchConfig.from_raw({'enabled': 'on', 'defer': ['fixture_observe']})
+    monkeypatch.setattr(tool_search, 'load_config_readonly', lambda: configuration)
+    monkeypatch.setattr('model_tools.get_tool_definitions', lambda **kwargs: [schema])
+    monkeypatch.setattr('model_tools.check_toolset_requirements', lambda **kwargs: {})
+    monkeypatch.setattr('hermes_cli.plugins.discover_plugins', lambda **kwargs: None)
+    monkeypatch.setattr('agent.model_metadata.get_model_context_length', lambda *args, **kwargs: 65536)
+    monkeypatch.setattr('agent.model_metadata._resolve_custom_endpoint_context_length', lambda *args, **kwargs: 65536)
+    with patch('agent.process_bootstrap.OpenAI'), patch('agent.model_metadata.fetch_model_metadata', return_value={}):
+        agent = AIAgent(api_key='fixture', base_url='http://127.0.0.1:1/v1', provider='openai',
+            model='fixture/model', session_id='native-session', session_db=n.db, quiet_mode=True,
+            skip_context_files=True, skip_memory=True, skip_background_review=True, platform='cli')
+    agent._current_turn_id, agent._current_api_request_id = 'native-turn', 'api-1'
+    agent._subdirectory_hints.check_tool_call = MagicMock(return_value='')
+    agent._end_session_on_close = False
+    calls = []
+    def dispatch(name, args, task_id, **kwargs):
+        calls.append((name, copy.deepcopy(args), task_id, kwargs['tool_call_id']))
+        return RESULT
+    monkeypatch.setattr('model_tools.handle_function_call', dispatch)
+    arguments = {'item': 'copper synchronization'}
+    # 0.21.1 advertises the single-call shape; 0.21.2 additionally advertises calls[].
+    bridge = next(schema['function'] for schema in tool_search.bridge_tool_schemas(1)
+                  if schema['function']['name'] == 'tool_call')
+    use_calls = not legacy_arguments and 'calls' in bridge['parameters']['properties']
+    wrapper = ({'calls': [{'name': 'fixture_observe', 'arguments': arguments}]} if use_calls else
+               {'name': 'fixture_observe', 'arguments': json.dumps(arguments) if legacy_arguments else arguments})
+    call = {'id': 'deferred-original', 'type': 'function',
+            'function': {'name': 'tool_call', 'arguments': json.dumps(wrapper)}}
+    n.messages.append({'role': 'assistant', 'content': None, 'tool_calls': [call]})
+    assistant = SimpleNamespace(tool_calls=[SimpleNamespace(id=call['id'], type='function',
+        function=SimpleNamespace(**call['function']))])
+    try:
+        execute_tool_calls_sequential(agent, assistant, n.messages, 'native-task', finalize=False)
+        assert calls == [('fixture_observe', arguments, 'native-task', 'deferred-original')]
+        row = n.db._conn.execute("SELECT id,content,tool_name FROM messages WHERE tool_call_id=? AND role='tool'",
+                                 ('deferred-original',)).fetchone()
+        assert row['content'] == RESULT and row['tool_name'] == 'fixture_observe'
+        assert n.messages[-2]['tool_calls'][0]['function']['name'] == 'tool_call'
+        request_options = {'deferred': True, 'anthropic': api_format == 'anthropic',
+                           'responses': api_format == 'responses'}
+        original_messages = copy.deepcopy(n.messages)
+        changed_args = copy.deepcopy(wrapper)
+        (changed_args['calls'][0] if use_calls else changed_args)['arguments'] = {'item': 'different input'}
+        for replacement in (
+            changed_args,
+            {'calls': [{'name': 'fixture_observe', 'arguments': arguments}] * 2},
+            {'calls': [{'name': 'fixture_other', 'arguments': arguments}]},
+            {'calls': [{'name': 'fixture_observe', 'arguments': 'invalid JSON'}]},
+            {'calls': [{'name': 'tool_call', 'arguments': arguments}]},
+            {'calls': [{'name': 'connectors__fixture__read', 'arguments': arguments}]},
+        ):
+            n.messages[-2]['tool_calls'][0]['function']['arguments'] = json.dumps(replacement)
+            rejected = n.request(**request_options).payload
+            assert 'apsimo-observation-candidates-v1' not in str(rejected), replacement
+            assert not n.retain('deferred-original')['accepted'], replacement
+        n.messages[:] = copy.deepcopy(original_messages)
+        for duplicate_result in (False, True):
+            def duplicate(payload):
+                # Inject after conversion: native Anthropic conversion repairs
+                # duplicate history IDs before the actual SDK middleware sees them.
+                if api_format == 'anthropic':
+                    kind = 'tool_result' if duplicate_result else 'tool_use'
+                    row = next(row for row in payload['messages']
+                               if any(block.get('type') == kind for block in row.get('content', [])
+                                      if isinstance(block, dict)))
+                    row['content'].append(copy.deepcopy(next(b for b in row['content'] if b.get('type') == kind)))
+                else:
+                    rows = payload['input'] if api_format == 'responses' else payload['messages']
+                    field = 'type' if api_format == 'responses' else 'role'
+                    kind = (('function_call_output' if duplicate_result else 'function_call')
+                            if api_format == 'responses' else ('tool' if duplicate_result else 'assistant'))
+                    row = next(row for row in rows if row.get(field) == kind)
+                    rows.append(copy.deepcopy(row))
+            assert 'apsimo-observation-candidates-v1' not in str(n.request(
+                **request_options, before_middleware=duplicate).payload)
+            assert not n.retain('deferred-original')['accepted']
+        assert not [item for item in n.outbox.snapshot() if item['turn_id'].startswith('native-observation:')]
+        request = n.request(**request_options).payload
+        assert '"call_id": "deferred-original"' in str(request)
+        receipt = n.retain('deferred-original')
+        assert receipt['accepted'] and receipt['source_recorded'], receipt
+        assert receipt['selected_call']['message_id'] == row['id']
+        assert receipt['selected_call']['tool_name'] == 'fixture_observe'
+        assert receipt['selected_call']['result_sha256'] == hashlib.sha256(RESULT.encode()).hexdigest()
+        assert 'copper synchronization' in n.recall()['body']
+        # This transport correction must not weaken the existing erase dependency.
+        observation = next(item['payload']['observation'] for item in n.outbox.snapshot()
+                           if item['turn_id'] == receipt['source_id'])
+        n.ledger.erase_sources(contact_id='cid-owner', turn_ids=[observation['origin']['source_id']])
+        again = n.retain('deferred-original')
+        assert again['state'] == 'erased' and not again['source_recorded']
+        assert 'copper synchronization' not in n.recall().get('body', '')
+    finally:
+        agent._session_db = None  # The fixture owns this database connection.
+        agent.close()
 
 
 def test_actual_native_responses_conversion_places_hint_in_instructions(native):
