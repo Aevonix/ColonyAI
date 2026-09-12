@@ -1,35 +1,14 @@
-"""Scheduled agent workers (v0.20.0).
-
-Covers:
-- the packaged worker modules (apsimo.workers.*): import, config
-  resolution from env, --dry-run main() paths (no network), and the pure
-  scan/claim/payload helpers
-- the wizard's cron helpers: command construction (console script vs
-  ``python -m`` fallback), cron line construction (env-file prefix, log
-  redirection), crontab merge idempotency, and the install path with an
-  injected ``run``
-"""
+"""Packaged workers: configuration, claims, dry runs and service entrypoints."""
 
 from __future__ import annotations
 
-import sys
 import plistlib
 import tomllib
 import urllib.request
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
-from apsimo import setup as wizard
-from apsimo.setup import (
-    WORKER_SPECS,
-    build_cron_lines,
-    build_worker_command,
-    install_cron_jobs,
-    merge_crontab,
-    run_workers_step,
-)
 from apsimo.workers import colony_worker, queue_worker, skills_sync
 
 
@@ -252,22 +231,12 @@ def test_skills_sync_main_no_skills_no_network(tmp_path, monkeypatch, capsys):
 
 
 # ---------------------------------------------------------------------------
-# Cron command / line construction
-# ---------------------------------------------------------------------------
-
-def _which_none(name):
-    return None
-
-
-def _which_console(name):
-    return f"/usr/local/bin/{name}" if name.startswith("apsimo-") else None
-
 
 def test_worker_install_commands_are_published():
     sidecar = Path(__file__).resolve().parents[1]
     scripts = tomllib.loads((sidecar / "pyproject.toml").read_text())["project"]["scripts"]
-    for spec in WORKER_SPECS:
-        assert scripts[spec["name"]] == spec["module"] + ":main"
+    assert scripts["apsimo-queue-worker"] == "apsimo.workers.queue_worker:main"
+    assert scripts["apsimo-skills-sync"] == "apsimo.workers.skills_sync:main"
     deploy = sidecar / "apsimo/workers/deploy"
     plist = plistlib.loads((deploy / "colony-worker.plist").read_bytes())
     executable = plist["ProgramArguments"][0].split("/")[-1]
@@ -276,256 +245,3 @@ def test_worker_install_commands_are_published():
     command = next(line.split("=", 1)[1] for line in service.splitlines()
                    if line.startswith("ExecStart="))
     assert scripts[command.split("/")[-1]] == "apsimo.workers.colony_worker:main"
-
-
-def test_build_worker_command_prefers_console_script():
-    cmd = build_worker_command(
-        "apsimo-queue-worker", "apsimo.workers.queue_worker",
-        which=_which_console,
-    )
-    assert cmd == "/usr/local/bin/apsimo-queue-worker"
-
-
-def test_build_worker_command_falls_back_to_module():
-    cmd = build_worker_command(
-        "apsimo-queue-worker", "apsimo.workers.queue_worker",
-        which=_which_none, python="/opt/venv/bin/python",
-    )
-    assert cmd == "/opt/venv/bin/python -m apsimo.workers.queue_worker"
-
-
-def test_build_worker_command_default_python_is_current_interpreter():
-    cmd = build_worker_command("apsimo-skills-sync",
-                               "apsimo.workers.skills_sync",
-                               which=_which_none)
-    assert cmd.startswith(sys.executable + " -m ")
-
-
-def test_build_cron_lines_console_script(tmp_path):
-    lines = build_cron_lines(
-        env_file="/home/me/colony/.env",
-        log_dir="/home/me/.colony/logs",
-        workdir="/home/me/.colony",
-        which=_which_console,
-    )
-    assert len(lines) == len(WORKER_SPECS) == 2
-    qw, sync = lines
-    assert qw.startswith("*/5 * * * * ")
-    assert sync.startswith("0 9 * * * ")
-    # env-file prefix: cd + exported source of the wizard's .env
-    for line in lines:
-        assert "cd /home/me/.colony && set -a; . /home/me/colony/.env; set +a;" in line
-    # commands + per-worker log redirection
-    assert "/usr/local/bin/apsimo-queue-worker" in qw
-    assert qw.endswith(">> /home/me/.colony/logs/cron-apsimo-queue-worker.log 2>&1")
-    assert "/usr/local/bin/apsimo-skills-sync" in sync
-    assert sync.endswith(">> /home/me/.colony/logs/cron-apsimo-skills-sync.log 2>&1")
-
-
-def test_build_cron_lines_module_fallback():
-    lines = build_cron_lines(
-        env_file="/e/.env", log_dir="/l", workdir="/w",
-        which=_which_none, python="/opt/venv/bin/python",
-    )
-    assert "/opt/venv/bin/python -m apsimo.workers.queue_worker" in lines[0]
-    assert "/opt/venv/bin/python -m apsimo.workers.skills_sync" in lines[1]
-
-
-# ---------------------------------------------------------------------------
-# Crontab merge (idempotency)
-# ---------------------------------------------------------------------------
-
-def _lines(which=_which_console):
-    return build_cron_lines(env_file="/e/.env", log_dir="/l", workdir="/w",
-                            which=which, python="/opt/venv/bin/python")
-
-
-def test_merge_into_empty_crontab_adds_both():
-    merged, added = merge_crontab("", _lines())
-    assert added == _lines()
-    assert merged == "\n".join(_lines()) + "\n"
-
-
-def test_merge_preserves_existing_entries():
-    existing = "MAILTO=root\n0 3 * * * /usr/local/bin/backup.sh\n"
-    merged, added = merge_crontab(existing, _lines())
-    assert merged.startswith(existing)
-    assert len(added) == 2
-    assert merged.endswith("\n")
-
-
-def test_merge_is_idempotent():
-    merged, added = merge_crontab("", _lines())
-    assert added
-    merged2, added2 = merge_crontab(merged, _lines())
-    assert added2 == []
-    assert merged2 == merged
-
-
-def test_merge_skips_worker_already_referenced_in_other_form():
-    # Hand-installed `python -m` entry must block the console-script line
-    # for the same worker (and vice versa) — never schedule a worker twice.
-    existing = "*/2 * * * * /opt/venv/bin/python -m apsimo.workers.queue_worker\n"
-    merged, added = merge_crontab(existing, _lines(which=_which_console))
-    assert len(added) == 1
-    assert "apsimo-skills-sync" in added[0]
-    assert merged.count("queue_worker") + merged.count("apsimo-queue-worker") == 1
-
-
-def test_merge_skips_each_worker_independently():
-    existing = "0 9 * * * /usr/local/bin/apsimo-skills-sync >> /l/x.log 2>&1\n"
-    merged, added = merge_crontab(existing, _lines())
-    assert len(added) == 1
-    assert "apsimo-queue-worker" in added[0]
-
-
-# ---------------------------------------------------------------------------
-# install_cron_jobs (injected subprocess runner)
-# ---------------------------------------------------------------------------
-
-class FakeRun:
-    """Record crontab invocations; emulate read (-l) and write (-)."""
-
-    def __init__(self, existing="", read_rc=0, write_rc=0):
-        self.existing = existing
-        self.read_rc = read_rc
-        self.write_rc = write_rc
-        self.written = None
-        self.calls = []
-
-    def __call__(self, cmd, **kwargs):
-        self.calls.append(cmd)
-        if cmd == ["crontab", "-l"]:
-            return SimpleNamespace(returncode=self.read_rc,
-                                   stdout=self.existing, stderr="")
-        if cmd == ["crontab", "-"]:
-            self.written = kwargs.get("input")
-            return SimpleNamespace(returncode=self.write_rc, stdout="",
-                                   stderr="permission denied" if self.write_rc else "")
-        raise AssertionError(f"unexpected command {cmd}")
-
-
-def test_install_cron_jobs_writes_merged_crontab():
-    fake = FakeRun(existing="0 3 * * * /usr/local/bin/backup.sh\n")
-    added = install_cron_jobs(_lines(), run=fake)
-    assert len(added) == 2
-    assert fake.written.startswith("0 3 * * * /usr/local/bin/backup.sh\n")
-    assert "apsimo-queue-worker" in fake.written
-    assert "apsimo-skills-sync" in fake.written
-
-
-def test_install_cron_jobs_no_crontab_yet_treated_as_empty():
-    fake = FakeRun(existing="no crontab for user\n", read_rc=1)
-    added = install_cron_jobs(_lines(), run=fake)
-    assert len(added) == 2
-    assert "no crontab for user" not in fake.written
-
-
-def test_install_cron_jobs_already_installed_skips_write():
-    first = FakeRun()
-    install_cron_jobs(_lines(), run=first)
-    rerun = FakeRun(existing=first.written)
-    added = install_cron_jobs(_lines(), run=rerun)
-    assert added == []
-    assert rerun.written is None
-    assert ["crontab", "-"] not in rerun.calls
-
-
-def test_install_cron_jobs_write_failure_raises():
-    fake = FakeRun(write_rc=1)
-    with pytest.raises(RuntimeError, match="permission denied"):
-        install_cron_jobs(_lines(), run=fake)
-
-
-# ---------------------------------------------------------------------------
-# run_workers_step (wizard UX, scripted answers)
-# ---------------------------------------------------------------------------
-
-def make_ask(answers):
-    queue = list(answers)
-    return lambda prompt_text: queue.pop(0) if queue else ""
-
-
-@pytest.fixture
-def step_env(monkeypatch, tmp_path):
-    """Linux platform, crontab present, console scripts absent, tmp HOME dirs."""
-    monkeypatch.setenv("COLONY_HOME", str(tmp_path / "colony-home"))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "colony-home" / "data"))
-    monkeypatch.setattr(wizard.platform, "system", lambda: "Linux")
-    env_path = tmp_path / "colony" / ".env"
-    env_path.parent.mkdir(parents=True)
-    env_path.write_text("COLONY_API_KEY=k\n")
-    return env_path
-
-
-def _step_which(name):
-    return "/usr/bin/crontab" if name == "crontab" else None
-
-
-def test_workers_step_installs_cron_on_yes(step_env, tmp_path, capsys):
-    fake = FakeRun()
-    run_workers_step(step_env, ask=make_ask(["y", "y"]), run=fake, which=_step_which)
-    out = capsys.readouterr().out
-    assert "Installed 2 crontab entries" in out
-    assert "apsimo.workers.queue_worker" in fake.written
-    assert "apsimo.workers.skills_sync" in fake.written
-    # env file is sourced with export, from the state-dir parent
-    assert f". {step_env.resolve()}; set +a;" in fake.written
-    assert f"cd {tmp_path / 'colony-home'} && set -a" in fake.written
-    # logs land under $COLONY_HOME/logs and the dir was created
-    assert f"{tmp_path}/colony-home/logs/cron-apsimo-queue-worker.log" in fake.written
-    assert (tmp_path / "colony-home" / "logs").is_dir()
-
-
-def test_workers_step_rerun_is_idempotent(step_env, capsys):
-    first = FakeRun()
-    run_workers_step(step_env, ask=make_ask(["y", "y"]), run=first, which=_step_which)
-    rerun = FakeRun(existing=first.written)
-    run_workers_step(step_env, ask=make_ask(["y", "y"]), run=rerun, which=_step_which)
-    assert rerun.written is None
-    assert "already installed" in capsys.readouterr().out
-
-
-def test_workers_step_agent_elsewhere_prints_manual_lines(step_env, capsys):
-    fake = FakeRun()
-    run_workers_step(step_env, ask=make_ask(["n"]), run=fake, which=_step_which)
-    out = capsys.readouterr().out
-    assert fake.calls == []  # no crontab interaction at all
-    assert "crontab -e" in out
-    assert "*/5 * * * *" in out and "0 9 * * *" in out
-    assert "apsimo.workers.queue_worker" in out
-
-
-def test_workers_step_no_crontab_prints_manual_lines(step_env, capsys):
-    fake = FakeRun()
-    run_workers_step(step_env, ask=make_ask(["y"]), run=fake, which=lambda name: None)
-    out = capsys.readouterr().out
-    assert fake.calls == []
-    assert "crontab not found" in out
-    assert "*/5 * * * *" in out
-
-
-def test_workers_step_unsupported_platform_prints_manual_lines(
-    step_env, monkeypatch, capsys
-):
-    monkeypatch.setattr(wizard.platform, "system", lambda: "Windows")
-    fake = FakeRun()
-    run_workers_step(step_env, ask=make_ask(["y"]), run=fake, which=_step_which)
-    out = capsys.readouterr().out
-    assert fake.calls == []
-    assert "unsupported platform" in out
-
-
-def test_workers_step_install_failure_degrades_to_manual(step_env, capsys):
-    fake = FakeRun(write_rc=1)
-    run_workers_step(step_env, ask=make_ask(["y", "y"]), run=fake, which=_step_which)
-    out = capsys.readouterr().out
-    assert "Crontab install failed" in out
-    assert "crontab -e" in out  # manual fallback printed
-
-
-def test_workers_step_non_interactive_defaults_to_install(step_env, capsys):
-    fake = FakeRun()
-    run_workers_step(step_env, non_interactive=True, run=fake, which=_step_which)
-    assert fake.written is not None
-    assert "apsimo-queue-worker" in capsys.readouterr().out

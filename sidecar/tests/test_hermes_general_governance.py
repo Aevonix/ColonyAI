@@ -1583,10 +1583,8 @@ def test_installed_plugin_carries_authoritative_catalog(tmp_path, monkeypatch):
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    from apsimo.setup import _hermes_plugin_files
-    for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], hermes_home):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+    from adapter_fixture import copy_adapter_sources
+    copy_adapter_sources(hermes_home)
     installed = hermes_home / "plugins" / "apsimo"
     for relative in (
         "apsimo_hostworker/__init__.py",
@@ -1896,12 +1894,10 @@ def test_memory_coexistence_latches_fail_closed(monkeypatch):
 
 
 def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path):
-    from apsimo.setup import _hermes_plugin_files
+    from adapter_fixture import copy_adapter_sources
 
     home = tmp_path / "selected"
-    for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], home):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+    copy_adapter_sources(home)
     monkeypatch.setenv("HERMES_HOME", str(home))
     # The copied layout need not have an installed apsimo_memory wheel, and
     # cannot accidentally read one instead of its own sibling implementation.

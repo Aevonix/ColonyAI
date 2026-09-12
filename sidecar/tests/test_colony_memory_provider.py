@@ -1230,12 +1230,10 @@ def test_native_setup_updates_existing_secret_name_without_adding_an_alias(
 def test_copied_provider_uses_actual_sibling_helper_without_installed_adapter(
         monkeypatch, tmp_path, layout):
     import builtins
-    from apsimo.setup import _hermes_plugin_files
+    from adapter_fixture import copy_adapter_sources
     home = tmp_path / 'profile'
     home.mkdir()
-    for content, destination in _hermes_plugin_files(_PROVIDER_PATH.parents[2], home):
-        destination.parent.mkdir(parents=True, exist_ok=True)
-        destination.write_bytes(content)
+    copy_adapter_sources(home)
     if layout != 'apsimo':
         (home / 'plugins/apsimo').rename(home / 'plugins' / layout)
     memory = home / 'plugins/apsimo-memory'

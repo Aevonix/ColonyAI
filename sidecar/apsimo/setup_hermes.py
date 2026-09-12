@@ -583,7 +583,7 @@ def run(root_dir=None, args=None):
                     'preferences_only', 'preview', 'start', 'refresh_adapter', 'replace_memory_provider',
                     'local_work', 'native_goals', 'native_reviews', 'model_url', 'model', 'agent_name',
                     'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'owner_handle', 'encrypt',
-                    'passphrase', 'claim_genesis', 'mcp_harnesses', 'no_harness')):
+                    'passphrase', 'claim_genesis')):
                 raise ValueError('--skills-only cannot be combined with instance or preference changes')
             from .setup_skills import prepare, install
             install(prepare(home, _adapter_resources(getattr(args, 'adapter_wheel', None)), refresh=True))
@@ -595,8 +595,7 @@ def run(root_dir=None, args=None):
                     'start', 'refresh_adapter', 'replace_memory_provider', 'local_work',
                     'native_goals', 'native_reviews', 'model_url', 'model', 'adapter_wheel', 'agent_name',
                     'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'owner_handle', 'encrypt',
-                    'passphrase', 'claim_genesis', 'mcp_harnesses', 'no_harness')) or (
-                    getattr(args, 'host_framework', None) not in (None, 'hermes')):
+                    'passphrase', 'claim_genesis')):
                 raise ValueError('--preferences-only cannot be combined with instance or setup options')
             _write_receipt_preference(home, receipt_choice, preview)
             return 0
@@ -899,12 +898,12 @@ def run(root_dir=None, args=None):
             configure(state, install=True)
         print(f'Private agent configured in {home}; state in {state}.')
         print('Adapter loading: ' + binding['mode'] + ' (canonical artifact bytes verified).')
-        print('Canonical memory capture and recollection are enabled for new Hermes sessions.')
+        print('Canonical memory capture and recollection are configured for new Hermes sessions.')
         if owner_handles:
             print('Owner accounts enrolled for: ' + ', '.join(owner_platforms) + '. Channel configuration and delivery still belong to Hermes.')
         print('Hermes hook output spill allowance is at least 65536 characters or already disabled; retrieval budgets are unchanged.')
         print('Source memory, temporal claims, contacts, commitments and self state persist without a graph.')
-        print('Graph/vector recall and consequential background work are optional and currently disabled.')
+        print('Optional graph processing, semantic indexing and consequential background work are disabled.')
         if local_work:
             print('Accepted local drafts use the native Kanban board and dedicated worker profile.')
             print('Keep the selected Hermes gateway running. Its dispatch ticks refresh the planning role for future attempts.')

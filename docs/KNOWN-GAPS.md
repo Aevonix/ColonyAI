@@ -65,12 +65,6 @@ general self-improvement simply by recording a successful review.
   Neo4j memory graph is a different subsystem; its records are not a substitute
   for canonical source memory. Changing databases does not fix memory admission
   quality or recover missing provenance.
-- `apsimo persona setup` still exists but is outside the supported guided setup.
-  Current installations use `apsimo init`. Its host step only logs configured
-  identity/overlay/plugin paths, and setup reports those settings as unapplied.
-  Remove obsolete manifest machinery when its current consumers are resolved;
-  preserving every older persona layout is not a public requirement. Private
-  identity data still needs an explicit disposition before a store is removed.
 - **ResponseGuard applied-output receipts**: guarded candidates now carry an
   exact candidate digest, and the proactive send path honors enforce verdicts,
   but the audit store records evaluations rather than durable proof of the

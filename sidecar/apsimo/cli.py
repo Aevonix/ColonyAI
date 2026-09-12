@@ -1,4 +1,4 @@
-"""Apsimo CLI, also available through the legacy ``colony`` alias."""
+"""Command-line setup, operation and diagnostics for Apsimo."""
 
 from __future__ import annotations
 
@@ -32,9 +32,8 @@ def main() -> None:
     init_p.add_argument("--claim-genesis", action="store_true", help="Claim Genesis status (first Apsimo only)")
     # Non-interactive mode flags
     init_p.add_argument("--non-interactive", "-n", action="store_true", help="Run without prompts (requires all required flags)")
-    # Harness configuration (new approach)
-    init_p.add_argument("--mcp-harnesses", help="Connect coding harnesses via MCP (comma-separated: claude-code,codex,crush,opencode)")
-    init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect agent harness via plugin (OpenClaw support was removed in v0.21.14)")
+    # Hermes profile attachment
+    init_p.add_argument("--agent-harness", choices=["hermes"], help="Connect an existing Hermes installation")
     init_p.add_argument("--hermes-home", default=None, help="Selected Hermes home; guided setup lists native profiles, noninteractive defaults to HERMES_HOME or ~/.hermes")
     init_p.add_argument("--hermes-python", help="Python interpreter of an existing supported Hermes installation")
     init_p.add_argument("--agent-name", help="Name for a new private identity; existing SOUL is preserved")
@@ -50,16 +49,10 @@ def main() -> None:
     init_p.add_argument("--adapter-wheel", help="Use this canonical apsimo-hermes wheel instead of the installed distribution")
     init_p.add_argument("--refresh-adapter", action="store_true", help="Refresh an existing stopped instance's adapter from the selected package; retain private state")
     init_p.add_argument("--replace-memory-provider", action="store_true", help="Explicitly replace selection of another memory provider; retain its files and a config backup")
-    init_p.add_argument("--no-harness", action="store_true", help="Skip all harness setup (standalone mode)")
-    # Backward compatibility
-    init_p.add_argument("--host-framework", choices=["openclaw", "hermes", "claude-code", "codex", "crush", "standalone"], help="Host framework (deprecated: use --agent-harness or --mcp-harnesses)")
     init_p.add_argument("--contact-name", help="Contact name for this user")
     init_p.add_argument("--owner-handle", action="append", metavar="CHANNEL=SENDER_ID", help="Enroll your exact Hermes sender ID when creating a private instance; repeat for each account")
     init_p.add_argument("--bind", default="127.0.0.1", help="Sidecar bind address (0.0.0.0 for all interfaces)")
     init_p.add_argument("--port", type=int, default=7777, help="Sidecar port")
-    init_p.add_argument("--tier", type=int, choices=range(0, 8), metavar="TIER", help="Embedding tier (0-7)")
-    init_p.add_argument("--neo4j-password", default="", help="Neo4j password (empty to skip)")
-    init_p.add_argument("--skip-model-download", action="store_true", help="Defer embedding model download to first start")
     init_p.add_argument("--start", action="store_true", help="Start sidecar after init")
     init_p.add_argument("--local-work", action="store_true", help="Enable explicitly accepted local drafts through the selected Hermes scheduler")
     init_p.add_argument("--native-goals", action="store_true", help="Opt in to native persistent task tools on the existing Hermes profile; its gateway must be running")
@@ -183,33 +176,6 @@ def main() -> None:
     restore_p.add_argument("--force-identity", action="store_true", help="Allow restoring onto a different colony identity")
     mm_p.add_argument("--safety", default="basic", choices=["off", "basic", "strict"], help="Image safety level")
     mm_p.add_argument("--skip-download", action="store_true", help="Skip model download")
-
-    # --- persona ---
-    persona_p = sub.add_parser("persona", help="Manage persona deployment")
-    persona_sub = persona_p.add_subparsers(dest="persona_command")
-
-    persona_setup = persona_sub.add_parser("setup", help="Legacy manifest deployment; use apsimo init for new installations")
-    persona_setup.add_argument("repo", help="Path to persona repo containing persona.yaml")
-    persona_setup.add_argument("--config", default=None, help="Variables YAML file (non-interactive)")
-
-    persona_validate = persona_sub.add_parser("validate", help="Validate a persona manifest (dry run)")
-    persona_validate.add_argument("repo", help="Path to persona repo containing persona.yaml")
-
-    persona_services = persona_sub.add_parser("services", help="Manage persona services")
-    persona_services.add_argument("action", choices=["status", "start", "stop", "restart", "install", "uninstall"])
-    persona_services.add_argument("service_name", nargs="?", default=None, help="Specific service name (for restart)")
-
-    persona_backup_p = persona_sub.add_parser("backup", help="Backup Apsimo + persona state")
-    persona_backup_p.add_argument("--output", "-o", default=None, help="Output directory")
-    persona_backup_p.add_argument("--encrypt", action="store_true", help="Encrypt backup")
-    persona_backup_p.add_argument("--passphrase", default=None, help="Encryption passphrase")
-
-    persona_restore_p = persona_sub.add_parser("restore", help="Restore persona from backup archive")
-    persona_restore_p.add_argument("archive", help="Path to backup archive")
-    persona_restore_p.add_argument("--passphrase", default=None, help="Decryption passphrase")
-    persona_restore_p.add_argument("--force-identity", action="store_true", help="Allow identity mismatch")
-
-    persona_sub.add_parser("uninstall", help="Stop services, remove overlays, deregister channels")
 
     # --- secrets ---
     secrets_p = sub.add_parser("secrets", help="Manage the encrypted secrets store (connector credentials, API keys)")
@@ -339,10 +305,6 @@ def main() -> None:
             print("❌ A user service is managing this sidecar.")
             print("  Use 'apsimo service stop' and 'apsimo service start' instead,")
             sys.exit(1)
-
-        # Check and start Neo4j if needed (both foreground and daemon mode)
-        if os.environ.get("COLONY_GRAPH_ENABLED", "true").lower() not in {"0", "false", "off"}:
-            _check_and_start_neo4j()
 
         if args.detach:
             _cmd_start_daemon(host, port, args.force)
@@ -663,9 +625,6 @@ def main() -> None:
 
     elif args.command == "benchmark":
         _cmd_benchmark(args)
-
-    elif args.command == "persona":
-        _cmd_persona(args)
 
     elif args.command == "secrets":
         _load_dotenv()
@@ -1259,7 +1218,6 @@ def _cmd_key(args) -> None:
         print("  Usage: apsimo key {info|generate|set-passphrase|manifest|claim-genesis}")
 
 
-
 def _is_loopback_host(host: str) -> bool:
     """True if the bind host only accepts local connections."""
     h = (host or "").strip().lower()
@@ -1446,186 +1404,6 @@ def _cleanup_orphans(kill: bool = False) -> int:
                 pass
     
     return len(orphans)
-
-
-def _neo4j_health_check(password: str, timeout_s: int = 5) -> tuple[bool, str]:
-    """Check if Neo4j is healthy (connect + auth + query). Returns (success, error_message)."""
-    from neo4j import GraphDatabase
-    from neo4j.exceptions import AuthError, ServiceUnavailable
-    
-    try:
-        driver = GraphDatabase.driver(
-            "bolt://localhost:7687",
-            auth=("neo4j", password),
-            connection_timeout=timeout_s
-        )
-        with driver.session() as session:
-            session.run("RETURN 1").single()
-        driver.close()
-        return True, ""
-    except AuthError:
-        return False, "auth_failed"
-    except ServiceUnavailable:
-        return False, "not_responding"
-    except Exception as e:
-        return False, str(e)
-
-
-def _neo4j_poll_health(password: str, timeout_s: int = 30) -> tuple[bool, str]:
-    """Poll Neo4j health until ready or timeout. Returns (success, error_message)."""
-    timeout_s = int(os.environ.get("COLONY_NEO4J_STARTUP_TIMEOUT", timeout_s))
-    
-    for i in range(1, timeout_s + 1):
-        success, error = _neo4j_health_check(password, timeout_s=2)
-        if success:
-            return True, ""
-        if error == "auth_failed":
-            # Auth failure is immediate, no point retrying
-            return False, error
-        if i < timeout_s:
-            print(f"  Waiting for Neo4j ({i}/{timeout_s}s)...")
-        time.sleep(1)
-    
-    return False, "timeout"
-
-
-def _check_and_start_neo4j() -> bool:
-    """Check if Neo4j is running, start it if needed. Returns True if Neo4j is available."""
-    from pathlib import Path
-
-    # Check if Docker is available
-    try:
-        result = subprocess.run(["docker", "--version"], capture_output=True, timeout=5)
-        if result.returncode != 0:
-            return False
-    except Exception:
-        return False
-    
-    # Check for Neo4j credentials in .env
-    env_path = Path.home() / ".env"
-    neo4j_password = None
-    if env_path.exists():
-        try:
-            for line in env_path.read_text().splitlines():
-                if line.startswith("NEO4J_PASSWORD="):
-                    neo4j_password = line.split("=", 1)[1].strip()
-                    break
-        except Exception:
-            pass
-    
-    if not neo4j_password:
-        # No credentials configured, skip Neo4j
-        return False
-    
-    # Check container state
-    container_running = False
-    container_exists = False
-    
-    try:
-        result = subprocess.run(
-            ["docker", "ps", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=10
-        )
-        container_running = "neo4j-colony" in result.stdout
-    except Exception:
-        pass
-    
-    if not container_running:
-        try:
-            result = subprocess.run(
-                ["docker", "ps", "-a", "--filter", "name=neo4j-colony", "--format", "{{.Names}}"],
-                capture_output=True, text=True, timeout=10
-            )
-            container_exists = "neo4j-colony" in result.stdout
-        except Exception:
-            pass
-    
-    # Scenario 1: Container already running
-    if container_running:
-        print("  Neo4j container already running")
-        success, error = _neo4j_health_check(neo4j_password)
-        if success:
-            print("  ✅ Neo4j ready")
-            return True
-        
-        # Quick check failed, try restart
-        print("  Neo4j health check failed, restarting...")
-        try:
-            subprocess.run(["docker", "restart", "neo4j-colony"], capture_output=True, timeout=30)
-        except Exception:
-            pass
-        
-        success, error = _neo4j_poll_health(neo4j_password)
-        if success:
-            print("  ✅ Neo4j recovered after restart")
-            return True
-        
-        if error == "auth_failed":
-            print("  ❌ Neo4j auth failed — password in .env doesn't match container")
-            print("     Reset: docker rm -f neo4j-colony && apsimo init")
-        else:
-            print("  ❌ Neo4j not responding after restart")
-            print("     Check logs: docker logs neo4j-colony")
-            print("     Reset: docker rm -f neo4j-colony && apsimo init")
-        print("  ⚠️ Graph memory degraded")
-        return False
-    
-    # Scenario 2: Container exists but stopped
-    if container_exists:
-        print("  Starting Neo4j container...")
-        try:
-            subprocess.run(["docker", "start", "neo4j-colony"], capture_output=True, timeout=30)
-        except Exception:
-            pass
-        
-        success, error = _neo4j_poll_health(neo4j_password)
-        if success:
-            print("  ✅ Neo4j ready")
-            return True
-        
-        if error == "auth_failed":
-            print("  ❌ Neo4j auth failed — password in .env doesn't match container")
-            print("     Reset: docker rm -f neo4j-colony && apsimo init")
-        else:
-            print("  ❌ Neo4j not ready after 30s")
-            print("     Check logs: docker logs neo4j-colony")
-        print("  ⚠️ Graph memory degraded")
-        return False
-    
-    # Scenario 3: No container, create new one
-    print("  Creating Neo4j container...")
-    neo4j_data = Path.home() / ".colony" / "neo4j-data"
-    neo4j_data.mkdir(parents=True, exist_ok=True)
-    
-    try:
-        cmd = [
-            "docker", "run", "-d",
-            "--name", "neo4j-colony",
-            "-p", "7474:7474",
-            "-p", "7687:7687",
-            "-e", f"NEO4J_AUTH=neo4j/{neo4j_password}",
-            "-v", f"{neo4j_data}:/data",
-            "neo4j:5.15"
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-        if result.returncode != 0:
-            print(f"  ⚠️ Failed to create Neo4j container: {result.stderr.strip()}")
-            print("  ⚠️ Graph memory degraded")
-            return False
-    except Exception as exc:
-        print(f"  ⚠️ Failed to create Neo4j container: {exc}")
-        print("  ⚠️ Graph memory degraded")
-        return False
-    
-    success, error = _neo4j_poll_health(neo4j_password)
-    if success:
-        print("  ✅ Neo4j ready")
-        return True
-    
-    print("  ❌ Neo4j not ready after 30s")
-    print("     Check logs: docker logs neo4j-colony")
-    print("  ⚠️ Graph memory degraded")
-    return False
 
 
 def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
@@ -2480,208 +2258,6 @@ def _load_dotenv() -> None:
     load_environment()
     from apsimo.environment import apply_environment_aliases
     apply_environment_aliases()
-
-
-def _cmd_persona(args) -> None:
-    """Handle persona subcommands."""
-    _load_dotenv()
-
-    cmd = getattr(args, "persona_command", None)
-    if not cmd:
-        print("Usage: apsimo persona [setup|validate|services|backup|restore|uninstall]")
-        return
-
-    state_dir = os.environ.get("COLONY_STATE_DIR", str(Path.home() / ".colony" / "data"))
-
-    if cmd == "validate":
-        from apsimo.persona.manifest import load_manifest
-        try:
-            manifest = load_manifest(args.repo)
-        except Exception as e:
-            print(f"  Manifest error: {e}")
-            raise SystemExit(1)
-        from apsimo.persona.engine import PersonaEngine
-        engine = PersonaEngine(manifest, Path(args.repo), state_dir=Path(state_dir))
-        issues = engine.validate()
-        if issues:
-            print("  Validation issues:")
-            for issue in issues:
-                print(f"    - {issue}")
-            raise SystemExit(1)
-        print(f"  Persona '{manifest.name}' v{manifest.version} is valid")
-        print(f"  Services: {len(manifest.services)}")
-        print(f"  Companion apps: {len(manifest.companion_apps)}")
-        print(f"  Tunnels: {len(manifest.tunnels)}")
-        print(f"  Secrets: {len(manifest.secrets)}")
-        print(f"  Variables: {len(manifest.variables)}")
-
-    elif cmd == "setup":
-        print("Legacy persona setup is deprecated for new installations; use apsimo init. "
-              "Existing manifest deployments and their backup/restore data remain supported.", file=sys.stderr)
-        from apsimo.persona.manifest import load_manifest
-        try:
-            manifest = load_manifest(args.repo)
-        except Exception as e:
-            print(f"  Manifest error: {e}")
-            raise SystemExit(1)
-
-        provided_vars = None
-        provided_secrets = None
-        if args.config:
-            try:
-                import yaml
-                config_data = yaml.safe_load(Path(args.config).read_text())
-                provided_vars = config_data.get("variables", {})
-                provided_secrets = config_data.get("secrets", {})
-            except Exception as e:
-                print(f"  Config file error: {e}")
-                raise SystemExit(1)
-
-        colony_url = f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}"
-        api_key = os.environ.get("COLONY_API_KEY", "")
-
-        from apsimo.persona.engine import PersonaEngine
-        engine = PersonaEngine(
-            manifest, Path(args.repo),
-            state_dir=Path(state_dir),
-            colony_url=colony_url,
-            colony_api_key=api_key,
-        )
-        summary = engine.setup(
-            variables=provided_vars,
-            secrets=provided_secrets,
-            interactive=args.config is None,
-        )
-        if "errors" in summary:
-            print("  Setup failed:")
-            for err in summary["errors"]:
-                print(f"    - {err}")
-            raise SystemExit(1)
-        if summary.get("warnings"):
-            print(f"  Persona '{manifest.name}' setup finished with unapplied settings")
-            for warning in summary["warnings"]:
-                print(f"  {warning}")
-        else:
-            print(f"  Persona '{manifest.name}' setup complete")
-        print(f"  Steps: {', '.join(summary.get('steps', []))}")
-
-    elif cmd == "services":
-        active_persona = _find_active_persona(state_dir)
-        if not active_persona:
-            print("  No active persona found")
-            raise SystemExit(1)
-        manifest, repo_path, engine = active_persona
-
-        action = args.action
-        if action == "status":
-            statuses = engine.services_status()
-            for s in statuses:
-                print(f"  {s['name']}: {s['status']}")
-        elif action == "start":
-            results = engine.services_start()
-            for r in results:
-                print(f"  {r['name']}: {r['result']}")
-        elif action == "stop":
-            results = engine.services_stop()
-            for r in results:
-                print(f"  {r['name']}: {r['result']}")
-        elif action == "install":
-            engine._install_services()
-            print("  Service definitions installed")
-        elif action == "uninstall":
-            results = engine.services_uninstall()
-            for r in results:
-                print(f"  {r['name']}: {r['result']}")
-
-    elif cmd == "backup":
-        from apsimo.backup import create_full_backup
-
-        active = _find_active_persona(state_dir)
-        host_paths = []
-        if active:
-            _, _, engine = active
-            manifest = engine._manifest
-            if manifest.backup:
-                host_paths = manifest.backup.host_state + manifest.backup.custom
-
-        passphrase = None
-        if args.passphrase:
-            passphrase = args.passphrase.encode()
-        elif args.encrypt:
-            import getpass
-            passphrase = getpass.getpass("Backup passphrase: ").encode()
-
-        output_dir = args.output or os.path.expanduser("~/colony-backups")
-        archive = create_full_backup(
-            state_dir, output_dir,
-            passphrase=passphrase,
-            include_host_paths=host_paths if host_paths else None,
-        )
-        print(f"  Persona backup saved to {archive}")
-
-    elif cmd == "restore":
-        from apsimo.backup import restore_full_backup
-
-        passphrase = None
-        if args.passphrase:
-            passphrase = args.passphrase.encode()
-        elif args.archive.endswith(".enc"):
-            import getpass
-            passphrase = getpass.getpass("Backup passphrase: ").encode()
-
-        summary = restore_full_backup(
-            args.archive, state_dir,
-            passphrase=passphrase,
-            force_identity=getattr(args, "force_identity", False),
-        )
-        print(f"  Restored colony: {summary['colony_id']}")
-        print(f"  Databases: {', '.join(summary.get('databases', []))}")
-        print("  Reconcile current authority, erasures and completed effects before starting services.")
-
-    elif cmd == "uninstall":
-        active = _find_active_persona(state_dir)
-        if not active:
-            print("  No active persona found")
-            return
-        _, _, engine = active
-        results = engine.services_uninstall()
-        for r in results:
-            print(f"  {r['name']}: {r['result']}")
-        print("  Persona uninstalled")
-
-    else:
-        print("Usage: apsimo persona [setup|validate|services|backup|restore|uninstall]")
-
-
-def _find_active_persona(state_dir: str):
-    """Find the active persona from saved state. Returns (manifest, repo_path, engine) or None."""
-    persona_base = Path.home() / ".colony" / "persona"
-    if not persona_base.is_dir():
-        return None
-
-    for persona_dir in persona_base.iterdir():
-        if not persona_dir.is_dir():
-            continue
-        manifest_snapshot = persona_dir / "manifest.json"
-        if manifest_snapshot.exists():
-            try:
-                from apsimo.persona.manifest import PersonaManifest
-                from apsimo.persona.engine import PersonaEngine
-
-                data = json.loads(manifest_snapshot.read_text())
-                manifest = PersonaManifest.model_validate(data)
-
-                repo_path = Path(".")
-                engine = PersonaEngine(
-                    manifest, repo_path,
-                    state_dir=Path(state_dir),
-                    colony_url=f"http://{os.environ.get('COLONY_SIDECAR_HOST', '127.0.0.1')}:{os.environ.get('COLONY_SIDECAR_PORT', '7777')}",
-                    colony_api_key=os.environ.get("COLONY_API_KEY", ""),
-                )
-                return manifest, repo_path, engine
-            except Exception:
-                continue
-    return None
 
 
 if __name__ == "__main__":

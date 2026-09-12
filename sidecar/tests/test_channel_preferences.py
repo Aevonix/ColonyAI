@@ -115,8 +115,7 @@ def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path,
 
 @pytest.mark.parametrize('options', [
     {'start': True}, {'refresh_adapter': True}, {'model': 'fixture'},
-    {'native_goals': True}, {'local_work': True}, {'no_harness': True},
-    {'mcp_harnesses': 'fixture'}, {'host_framework': 'standalone'},
+    {'native_goals': True}, {'local_work': True},
 ])
 def test_preference_only_rejects_setup_combinations_before_writes(tmp_path, options):
     from apsimo import setup

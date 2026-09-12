@@ -12,6 +12,8 @@ import httpx
 import pytest
 import yaml
 
+from dotenv import dotenv_values
+
 from apsimo import setup, setup_hermes
 from apsimo.util.instance import load_environment
 from apsimo.environment import apply_environment_aliases
@@ -122,7 +124,7 @@ def test_new_private_instance_uses_canonical_resources_and_scoped_authority(args
     assert setup.run_init(None, args) == 0
     state = home/'apsimo'
     config = yaml.safe_load((home/'config.yaml').read_text())
-    env = setup._load_existing_env(state/'.env')
+    env = dotenv_values(state/'.env', interpolate=False)
     assert config['memory']['provider'] == 'apsimo-memory'
     assert config['plugins']['enabled'] == ['apsimo']
     assert config['plugins']['apsimo']['instance_dir'] == str(state)
@@ -411,7 +413,7 @@ def test_guiding_values_and_time_preferences_roundtrip_privately(args, monkeypat
     monkeypatch.setenv('TOKEN', 'must-not-substitute')
     assert setup.run_init(None, args) == 0
     home = Path(args.hermes_home); state = home/'apsimo'
-    env = setup._load_existing_env(state/'.env')
+    env = dotenv_values(state/'.env', interpolate=False)
     expected = ['Be candid', 'Respect # evidence', 'Read "carefully"', 'Literal ${TOKEN}']
     assert json.loads(env['APSIMO_AGENT_VALUES']) == expected
     assert env['APSIMO_AGENT_TIMEZONE'] == 'Europe/Paris'
@@ -446,7 +448,7 @@ def test_native_goals_opt_in_and_existing_instance_reentry_preserve_state(args, 
     assert config['kanban']['dispatch_in_gateway'] is True
     assert config['auxiliary']['goal_judge'] == {
         'provider':'custom', 'model':args.model, 'base_url':args.model_url}
-    assert json.loads(setup._load_existing_env(state/'.env')['APSIMO_HERMES_WORK_BOARDS']) == ['default']
+    assert json.loads(dotenv_values(state/'.env', interpolate=False)['APSIMO_HERMES_WORK_BOARDS']) == ['default']
     assert not (home/'kanban.db').exists() and not (home/'profiles').exists()
     assert 'Apsimo does not start or restart it' in capsys.readouterr().out
     paths = [home/'config.yaml', home/'SOUL.md', home/'.env', state/'.env', state/'contacts.db',
@@ -527,7 +529,7 @@ def test_native_goals_preserve_explicit_tools_judge_and_board_selection(args, mo
     assert after['toolsets'] == ['file', 'kanban']
     assert after['platform_toolsets'] == {'cli':['file', 'kanban'], 'telegram':['web']}
     assert after['auxiliary'] == config['auxiliary'] and after['model'] == config['model']
-    assert json.loads(setup._load_existing_env(state/'.env')['APSIMO_HERMES_WORK_BOARDS']) == ['existing']
+    assert json.loads(dotenv_values(state/'.env', interpolate=False)['APSIMO_HERMES_WORK_BOARDS']) == ['existing']
     assert all(path.read_bytes() == data for path, data in before.items())
 
 
@@ -1065,50 +1067,3 @@ def test_installed_probe_checks_canonical_metadata_and_module_bytes(tmp_path):
     (site/'apsimo_hermes/client.py').write_bytes(b'# Different installed implementation\n')
     with pytest.raises(ValueError, match='incomplete or different'):
         setup_hermes._adapter_binding(python, resources)
-
-
-def test_legacy_init_preserves_world_history(tmp_path, monkeypatch):
-    from apsimo.world_model.store import WorldModelStore
-    from apsimo.world_model.entities import BaseEntity
-
-    monkeypatch.setattr(os, 'environ', dict(os.environ))
-    monkeypatch.setenv('LITELLM_LOCAL_MODEL_COST_MAP', 'True')
-    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
-    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
-    database = tmp_path/'world.db'
-    monkeypatch.setenv('WORLD_MODEL_SQLITE_PATH', str(database))
-    async def existing_history():
-        world = WorldModelStore()
-        await world.connect()
-        try:
-            await world.upsert_entity(BaseEntity(id='retained-project', name='Existing project',
-                entity_type='project', properties={'record': 'retained observation'}))
-        finally:
-            await world.close()
-    asyncio.run(existing_history())
-    before = database.read_bytes()
-    (tmp_path/'.env').write_text('COLONY_EMBED_PROVIDER=skip\nCOLONY_EMBED_MODEL=unused\n')
-    monkeypatch.setattr(setup, '_check_python', lambda: (True, '3.12'))
-    monkeypatch.setattr(setup, '_check_docker', lambda: (None, 'unavailable'))
-    monkeypatch.setattr(setup, '_handle_docker_setup', lambda *args: False)
-    monkeypatch.setattr(setup, '_check_neo4j', lambda: (False, 'unavailable'))
-    monkeypatch.setattr(setup, '_check_port', lambda *args: False)
-    monkeypatch.setattr(setup, '_prompt', lambda prompt, default, *args: '' if 'password' in prompt.lower() else default)
-    monkeypatch.setattr(setup, 'run_autonomy_step', lambda *args: {})
-    monkeypatch.setattr(setup, 'run_workers_step', lambda *args: None)
-    monkeypatch.setattr(setup, '_offer_doctor_run', lambda *args, **kwargs: None)
-    monkeypatch.setattr(setup.time, 'sleep', lambda *args: None)
-    commands = []
-    def run(command, **kwargs):
-        assert command[1:4] in (['-m', 'pip', 'install'], ['-m', 'apsimo', 'start'], ['-m', 'apsimo', 'doctor'])
-        commands.append(command)
-        return SimpleNamespace(returncode=0, stdout='', stderr='')
-    monkeypatch.setattr(setup.subprocess, 'run', run)
-    monkeypatch.setattr(httpx, 'post', lambda *args, **kwargs: httpx.Response(400, json={}))
-    monkeypatch.setattr(httpx, 'get', lambda *args, **kwargs: httpx.Response(200, json={'capabilities': []}))
-    args = SimpleNamespace(no_harness=True, non_interactive=True, mcp_harnesses=None,
-        agent_harness=None, host_framework=None, contact_name=None, tier=None,
-        bind='127.0.0.1', port=7777)
-    assert setup.run_init(str(tmp_path), args) == 0
-    assert any(command[3] == 'start' for command in commands)
-    assert database.read_bytes() == before

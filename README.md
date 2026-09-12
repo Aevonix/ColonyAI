@@ -176,7 +176,7 @@ Install matching packages in a private environment:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.4.5" "apsimo-hermes[native-memory]==1.4.5"
+python -m pip install --upgrade "apsimo[hermes]" "apsimo-hermes[native-memory]"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
