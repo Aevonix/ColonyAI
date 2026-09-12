@@ -1,7 +1,7 @@
 """Shared phone gateway resolution.
 
 Replaces the three hardcoded _PHONE_GATEWAYS tuples scattered across
-contacts/store.py, identity/resolver.py, and contacts/world_bridge.py.
+contacts/store.py and identity/resolver.py.
 
 Reads from the channel store when available; falls back to a built-in
 set so the system works before any channels are registered.

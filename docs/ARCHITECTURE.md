@@ -142,6 +142,11 @@ boundary. Other existing domains still own separate databases; a backup of
 several databases is not one atomic snapshot. Local adapters also use SQLite
 for durable delivery outboxes.
 
+Contacts, verified handles and owner corrections belong to the contact database.
+Startup does not create or prune contacts from Neo4j Person nodes, and contact
+updates do not mirror relationship scores into that graph. Removing an external
+graph node must not remove a person's canonical identity or permission history.
+
 Lance is an optional, replaceable semantic index. A deployment can start with
 lexical source recall and add embeddings later. Original image bytes retain
 content hashes and source-ledger ownership independently of generated captions.

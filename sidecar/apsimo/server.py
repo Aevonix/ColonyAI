@@ -1433,6 +1433,19 @@ def _scheduler_health_check(autonomy_loop) -> dict:
             "autonomy_running": bool(getattr(autonomy_loop, "_running", False))}
 
 
+async def _initialize_contacts_store():
+    """Open the canonical contact store without graph backfill or pruning."""
+    from apsimo.contacts.config import ContactsConfig
+    from apsimo.contacts.store import SQLiteContactStore
+
+    config = ContactsConfig.from_env()
+    store = SQLiteContactStore(config=config)
+    await store.connect()
+    set_contacts_store(store)
+    logger.info("ContactsStore initialized (path=%s)", config.sqlite_path)
+    return store
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Initialize subsystems on startup, tear down on shutdown."""
@@ -2526,35 +2539,9 @@ async def lifespan(app: FastAPI):
     # --- 8. Contacts ---
     contacts_store = None
     try:
-        from apsimo.contacts.config import ContactsConfig
-        from apsimo.contacts.store import SQLiteContactStore
-        contacts_config = ContactsConfig.from_env()
-        contacts_store = SQLiteContactStore(config=contacts_config, graph=graph)
-        await contacts_store.connect()
-        set_contacts_store(contacts_store)
-        logger.info("ContactsStore initialized (path=%s)", contacts_config.sqlite_path)
+        contacts_store = await _initialize_contacts_store()
     except Exception as exc:
         logger.warning("ContactsStore init failed: %s", exc)
-
-    # --- 8b. Contact-World Model Bridge ---
-    if contacts_store is not None and graph is not None:
-        try:
-            from apsimo.contacts.world_bridge import WorldModelContactBridge
-            bridge = WorldModelContactBridge(graph=graph, store=contacts_store)
-            # Backfill all substantive Person nodes on startup
-            backfill_stats = await bridge.backfill_all_people()
-            logger.info(
-                "WorldModelContactBridge initialized — backfill created=%d linked=%d skipped=%d",
-                backfill_stats["created"], backfill_stats["linked"], backfill_stats["skipped"],
-            )
-            # Prune shadow contacts whose Person node no longer exists
-            pruned = await bridge.prune_orphaned_shadows()
-            if pruned:
-                logger.info("Pruned %d orphaned shadow contacts", pruned)
-        except Exception as exc:
-            logger.warning("WorldModelContactBridge init failed: %s", exc)
-    else:
-        logger.info("WorldModelContactBridge skipped — contacts_store or graph unavailable")
 
     # --- 8d. Relationship profiler (standing + psyche + approach briefs) ---
     if contacts_store is not None:

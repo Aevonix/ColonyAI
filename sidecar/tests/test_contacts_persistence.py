@@ -46,3 +46,75 @@ async def test_contacts_survive_reconnect(tmp_path):
     by_handle = await store2.resolve_handle("whatsapp", "12345@lid")
     assert by_handle is not None and by_handle.contact_id == contact.contact_id
     await store2.close()
+
+
+@pytest.mark.asyncio
+async def test_startup_preserves_corrected_contacts_without_graph(tmp_path, monkeypatch):
+    from apsimo import server
+    from apsimo.api.routers import host
+
+    monkeypatch.setenv("COLONY_CONTACTS_DB", str(tmp_path / "contacts.db"))
+    monkeypatch.setattr(host, "_contacts_store", None)
+    store = await server._initialize_contacts_store()
+    target = await store.create(
+        display_name="Morgan", import_source="world_model", trust_tier="trusted",
+        notes="Owner corrected the identity; preserve this contact.",
+    )
+    await store.update(target.contact_id, person_node_id="person-without-graph-node")
+    provisional = await store.create(display_name="Unknown sender")
+    await store.add_handle(provisional.contact_id, "sms", "+12125550123", verified=True)
+    correction = await store.correct_handle_identity(
+        operation_id="owner-contact-correction", performed_by="owner-test",
+        gateway="sms", address="+12125550123",
+        expected_contact_id=provisional.contact_id, contact_id=target.contact_id,
+        evidence_refs=["source:owner-confirmation"], affected_source_ids=["turn:one"],
+    )
+    assert correction["authority_granted"] is False
+    await store.update_relationship_score(target.contact_id, 0.35)
+    expected_contacts = {c.contact_id: c.to_dict() for c in await store.list()}
+    expected_evidence = await store.identity_evidence(target.contact_id)
+    expected_audit = await store.get_audit_log(target.contact_id)
+    await store.close()
+
+    # Exercise the same initialization boundary used by the server twice.
+    # A missing graph node must never delete the corrected canonical identity.
+    for _ in range(2):
+        store = await server._initialize_contacts_store()
+        try:
+            assert host._contacts_store is store
+            assert {c.contact_id: c.to_dict() for c in await store.list()} == expected_contacts
+            assert await store.identity_evidence(target.contact_id) == expected_evidence
+            assert await store.get_audit_log(target.contact_id) == expected_audit
+            contact = await store.resolve_messaging_handle(
+                "whatsapp", "12125550123@s.whatsapp.net",
+            )
+            assert contact.contact_id == target.contact_id
+            assert contact.relationship_score == 0.35
+        finally:
+            await store.close()
+
+
+@pytest.mark.asyncio
+async def test_import_reuses_existing_contact_without_graph(tmp_path):
+    from apsimo.contacts.importer import SQLiteContactImporter
+
+    store = SQLiteContactStore(ContactsConfig(sqlite_path=str(tmp_path / "contacts.db")))
+    await store.connect()
+    try:
+        contact = await store.create(
+            given_name="Morgan", import_source="world_model", trust_tier="trusted",
+        )
+        await store.update(contact.contact_id, person_node_id="missing-graph-person")
+        await store.add_handle(contact.contact_id, "imessage", "+12125550123", verified=True)
+        result = await SQLiteContactImporter(store).import_from_csv(
+            "given_name,phone,email\nMorgan,+12125550123,morgan@example.test\n",
+        )
+        assert (result.created, result.merged, result.failed) == (0, 1, 0)
+        assert result.records[0].contact_id == contact.contact_id
+        retained = await store.get(contact.contact_id)
+        assert retained.trust_tier == "trusted"
+        assert retained.person_node_id == "missing-graph-person"
+        assert len(await store.list()) == 1
+        assert (await store.resolve_handle("email", "morgan@example.test")).contact_id == contact.contact_id
+    finally:
+        await store.close()
