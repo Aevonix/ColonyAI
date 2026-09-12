@@ -136,6 +136,32 @@ def test_no_previous_request_is_advertised_as_fresh_after_failure(module, monkey
     assert module.replace_context(result) == original
 
 
+def test_late_work_response_with_input_lineage_withholds_quote_and_provenance(module, monkeypatch):
+    # Replace only this module's clock, not the process-wide time module.
+    clock = [10.0]
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
+    calls = []
+    def get(path, **kwargs):
+        calls.append(path)
+        assert kwargs['timeout'] == .25
+        assert kwargs['_deadline_monotonic'] == 10.25
+        clock[0] = 10.251
+        value = response('Use the lamp maintenance record I supplied.').json()
+        value['input_provenance'] = {
+            'contact_id': 'owner', 'watermark': 0,
+            'source_refs': [{'source_id': 'original-input', 'source_version': 'a' * 64}],
+            'unannotated_input_refs': [{'source_id': 'original-input', 'input_message_hash': 'b' * 64}],
+        }
+        return httpx.Response(200, request=httpx.Request('GET', 'http://localhost' + path), json=value)
+    original = {'messages': [{'role': 'user', 'content': 'What are you doing?'}]}
+    result, provenance = module.RequestWork(SimpleNamespace(get=get)).prepare(original, scope())
+    assert calls == ['/v1/host/executions']
+    assert provenance is None
+    assert 'Use the lamp maintenance record I supplied.' not in json.dumps(result)
+    assert 'Current shared work is unavailable' in json.dumps(result)
+    assert module.replace_context(result) == original
+
+
 def test_projection_retains_operational_evidence_without_task_or_draft_prose():
     report_hash = 'a' * 64
     view = {'items': [], 'local_work': {'available': True, 'items': [], 'recent': [

@@ -100,6 +100,9 @@ async def test_telemetry_distinguishes_legacy_scoped_denials_and_hides_material(
     grants = ContactGrantRegistry(tmp_path / "contact-grants.json")
     graph = _Graph()
     monkeypatch.setattr(host, "_graph", graph)
+    monkeypatch.setattr(host, "_p8_runtime", None)
+    monkeypatch.setattr(host, "_goals_store", None)
+    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("COLONY_API_KEY", LEGACY_SECRET)
     monkeypatch.setenv("COLONY_API_KEYRING_PATH", str(keyring))
 
@@ -123,19 +126,19 @@ async def test_telemetry_distinguishes_legacy_scoped_denials_and_hides_material(
         scoped = await client.post(
             "/v1/host/memory/search",
             headers=_headers(),
-            json={"identity": {"host_id": "test"}, "query": "alpha"},
+            json={"identity": {"host_id": "test"}, "query": "alpha", "person_id": OWNER, "session_id": "s1"},
         )
         denied_scope = await client.post(
-            "/v1/host/memory/write",
+            "/v1/host/memory/sources/forget",
             headers=_headers(),
-            json={"identity": {"host_id": "test"}, "content": "no"},
+            json={"contact_id": OWNER, "source_ids": ["unknown"]},
         )
         mismatch_headers = _headers()
         mismatch_headers["X-Colony-Principal"] = "body-claimed-principal"
         mismatch = await client.post(
             "/v1/host/memory/search",
             headers=mismatch_headers,
-            json={"identity": {"host_id": "test"}, "query": "alpha"},
+            json={"identity": {"host_id": "test"}, "query": "alpha", "person_id": OWNER, "session_id": "s1"},
         )
         legacy = await client.get(
             "/v1/host/goals",

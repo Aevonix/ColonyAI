@@ -29,7 +29,7 @@ class _DeadBackendGraph:
 
     Mirrors the live failure: the client object exists (so the sidecar
     considers memory "wired") but every operation raises, and
-    driver.verify_connectivity() — the /memory/status availability
+    driver.verify_connectivity() — the remaining graph-read availability
     determination — fails.
     """
 
@@ -208,23 +208,12 @@ async def test_safety_check_populates_gate_context(app, monkeypatch):
 @pytest.mark.asyncio
 async def test_memory_endpoints_distinguish_backend_down(app, dead_graph):
     async with _client(app) as client:
-        search = await client.post("/v1/host/memory/search", json={
-            "identity": {"host_id": "t"}, "query": "anything",
-        })
-        assert search.status_code == 503
-        assert search.json()["detail"]["code"] == "memory_backend_unavailable"
-
         read = await client.post("/v1/host/memory/read", json={
             "identity": {"host_id": "t"},
         })
         assert read.status_code == 503
         assert read.json()["detail"]["code"] == "memory_backend_unavailable"
 
-        write = await client.post("/v1/host/memory/write", json={
-            "identity": {"host_id": "t"}, "content": "remember this",
-        })
-        assert write.status_code == 503
-        assert write.json()["detail"]["code"] == "memory_backend_unavailable"
 
 
 # ---------------------------------------------------------------------------
@@ -291,22 +280,20 @@ async def test_world_extract_plain_text_is_clear_400(app, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 8. Doctor covers graph/memory backend reachability
+# 8. Doctor covers canonical source-store availability
 # ---------------------------------------------------------------------------
 
-def test_doctor_flags_unreachable_graph_backend(monkeypatch):
+def test_doctor_flags_unavailable_source_store(monkeypatch):
     from apsimo import doctor
 
-    assert "server-memory-graph" in doctor.SERVER_CHECK_NAMES
+    assert "server-source-memory" in doctor.SERVER_CHECK_NAMES
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "contact-fixture")
 
     def _fake(url, api_key="", timeout=10.0):
-        assert url.endswith("/v1/host/memory/status")
-        return 200, {
-            "wired": False, "graph_wired": True, "neo4j_connected": False,
-            "embeddings_ready": True, "vector_store_ready": True,
-        }
+        assert url.endswith("/v1/host/memory/sources/claims/status?contact_id=contact-fixture")
+        raise OSError("source store unavailable")
 
     monkeypatch.setattr(doctor, "_http_get", _fake)
-    result = doctor.check_server_memory_graph("http://x", "k", 5.0)
+    result = doctor.check_server_source_memory("http://x", "k", 5.0)
     assert result.status == doctor.FAIL
-    assert "UNREACHABLE" in result.detail
+    assert "Scoped source status unavailable: OSError" in result.detail

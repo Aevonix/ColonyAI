@@ -1,178 +1,115 @@
-"""Shared-facts -> memory-graph backfill (U7): explicit admin endpoint that
-mirrors facts stored before the create-time mirror existed.
+"""Shared-facts CRUD remains canonical after retiring graph backfill."""
 
-Locks: 501 when stores are unwired, dry_run counts without writing, live run
-mirrors serially and counts per-fact failures without aborting, and
-single-flight (409 while a run is in progress)."""
-
-from __future__ import annotations
-
-import asyncio
-import os
-import tempfile
-from contextlib import asynccontextmanager
-
-import pytest
 from httpx import ASGITransport, AsyncClient
+import pytest
 
-from apsimo.api.routers import host as host_mod
+from apsimo.api.routers import host
 from apsimo.tom.facts import SharedFactsStore
+from test_turn_source_evidence import source_app
 
 
-class _RecordingGraph:
-    """Fake ColonyGraph capturing store_memory calls."""
-
-    def __init__(self, fail_on: set | None = None, gate: asyncio.Event | None = None):
+class GraphProbe:
+    def __init__(self):
         self.calls = []
-        self._fail_on = fail_on or set()
-        self._gate = gate
 
     async def store_memory(self, **kwargs):
-        if self._gate is not None:
-            await self._gate.wait()
-        self.calls.append(kwargs)
-        if kwargs["content"] in self._fail_on:
-            raise RuntimeError("embedding unavailable")
-        return f"mem-{len(self.calls)}"
+        self.calls.append(('write', kwargs))
+        return 'graph-copy'
+
+    async def recall(self, **kwargs):
+        self.calls.append(('read', kwargs))
+        return [{
+            'id': 'stale-graph-copy', 'type': 'fact', 'strength': .99,
+            'content': 'The hydrofoil departure is stale.',
+            'created_at': '2026-01-01T00:00:00+00:00',
+        }]
 
 
-@asynccontextmanager
-async def _app(graph, facts_store):
-    from fastapi import FastAPI
-    prev_graph, prev_facts = host_mod._graph, host_mod._facts_store
-    prev_state = dict(host_mod._facts_backfill_state)
-    host_mod._graph = graph
-    host_mod._facts_store = facts_store
-    host_mod._facts_backfill_state.clear()
-    host_mod._facts_backfill_state["running"] = False
-    app = FastAPI()
-    app.include_router(host_mod.router)
+@pytest.mark.asyncio
+@pytest.mark.parametrize('graph_available', [False, True])
+async def test_fact_crud_filters_and_pagination_use_only_canonical_rows(
+        source_app, tmp_path, monkeypatch, graph_available):
+    store = SharedFactsStore(str(tmp_path / 'facts.db'))
+    graph = GraphProbe()
+    monkeypatch.setattr(host, '_facts_store', store)
+    monkeypatch.setattr(host, '_tom2_store', None)
+    monkeypatch.setattr(host, '_graph', graph if graph_available else None)
     try:
-        async with AsyncClient(
-            transport=ASGITransport(app=app), base_url="http://test",
-        ) as client:
-            yield client
-    finally:
-        host_mod._graph = prev_graph
-        host_mod._facts_store = prev_facts
-        host_mod._facts_backfill_state.clear()
-        host_mod._facts_backfill_state.update(prev_state)
-
-
-@pytest.fixture
-def facts_store():
-    with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
-        path = f.name
-    s = SharedFactsStore(path)
-    yield s
-    s.close()
-    os.unlink(path)
-
-
-async def _wait_done(timeout=5.0):
-    for _ in range(int(timeout / 0.01)):
-        if not host_mod._facts_backfill_state.get("running"):
-            return
-        await asyncio.sleep(0.01)
-    raise AssertionError("backfill did not finish")
-
-
-@pytest.mark.asyncio
-async def test_501_when_facts_store_missing():
-    async with _app(_RecordingGraph(), None) as client:
-        resp = await client.post("/v1/host/mind/facts/backfill", json={})
-        assert resp.status_code == 501
-
-
-@pytest.mark.asyncio
-async def test_501_when_graph_missing(facts_store):
-    async with _app(None, facts_store) as client:
-        resp = await client.post("/v1/host/mind/facts/backfill", json={})
-        assert resp.status_code == 501
-
-
-@pytest.mark.asyncio
-async def test_dry_run_default_counts_without_writing(facts_store):
-    for i in range(3):
-        facts_store.create_fact(contact_id="c1", fact=f"fact {i}", confidence=0.9)
-    graph = _RecordingGraph()
-    async with _app(graph, facts_store) as client:
-        resp = await client.post("/v1/host/mind/facts/backfill", json={})
-        assert resp.status_code == 200
-        body = resp.json()
-        # dry_run is the DEFAULT — an empty request never mutates the graph
-        assert body == {"dry_run": True, "started": False, "total": 3}
+        async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
+            records = []
+            for i in range(3):
+                response = await client.post('/v1/host/mind/facts', json={
+                    'contact_id': 'contact-a', 'fact': f'The hydrofoil desk has marker {i}.',
+                    'source': 'told_by_contact', 'confidence': .9,
+                    'metadata': {'observation': i},
+                })
+                assert response.status_code == 201, response.text
+                records.append(response.json())
+            store.create_fact(contact_id='contact-a', fact='Low confidence estimate.', confidence=.2)
+            store.create_fact(contact_id='contact-a', fact='Expired observation.', source='told_by_contact',
+                              expires_at='2020-01-01T00:00:00+00:00')
+            store.create_fact(contact_id='contact-b', fact='Another contact has a private fact.')
+            params = {'contact_id': 'contact-a', 'source': 'told_by_contact',
+                      'min_confidence': .8, 'limit': 2}
+            first = await client.get('/v1/host/mind/facts', params=params)
+            second = await client.get('/v1/host/mind/facts', params={**params, 'offset': 2})
+            assert first.status_code == second.status_code == 200
+            assert first.json()['total'] == second.json()['total'] == 3
+            pages = first.json()['facts'] + second.json()['facts']
+            assert {row['id'] for row in pages} == {row['id'] for row in records}
+            assert all(row['metadata']['observation'] in range(3) for row in pages)
+            route = '/v1/host/mind/facts/' + records[0]['id']
+            changed = await client.patch(route, json={'fact': 'The hydrofoil desk is amber.'})
+            assert changed.status_code == 200, changed.text
+            read = await client.get(route)
+            assert read.json()['fact'] == 'The hydrofoil desk is amber.'
+            assert read.json()['metadata'] == {'observation': 0}
+            assert (await client.delete(route)).status_code == 204
+            assert (await client.get(route)).status_code == 404
+            remaining = await client.get('/v1/host/mind/facts', params=params)
+            assert remaining.json()['total'] == 2
+            assert records[0]['id'] not in {row['id'] for row in remaining.json()['facts']}
+            assert 'stale-graph-copy' not in repr(remaining.json())
+            # The obsolete operation cannot start a background graph write.
+            retired = await client.post('/v1/host/mind/facts/backfill', json={'dry_run': False})
+            assert retired.status_code == 405
+            assert (await client.get('/v1/host/mind/facts/backfill')).status_code == 404
         assert graph.calls == []
+    finally:
+        store.close()
 
 
 @pytest.mark.asyncio
-async def test_min_confidence_and_limit_filter(facts_store):
-    facts_store.create_fact(contact_id="c1", fact="low", confidence=0.2)
-    facts_store.create_fact(contact_id="c1", fact="high-1", confidence=0.9)
-    facts_store.create_fact(contact_id="c1", fact="high-2", confidence=0.9)
-    async with _app(_RecordingGraph(), facts_store) as client:
-        resp = await client.post("/v1/host/mind/facts/backfill",
-                                 json={"min_confidence": 0.5})
-        assert resp.json()["total"] == 2
-        resp = await client.post("/v1/host/mind/facts/backfill",
-                                 json={"min_confidence": 0.5, "limit": 1})
-        assert resp.json()["total"] == 1
+async def test_manual_extraction_keeps_model_provenance_without_graph_copy(source_app, tmp_path, monkeypatch):
+    class Extractor:
+        async def extract_facts(self, text, contact_id, **kwargs):
+            return [{'contact_id': contact_id, 'fact': 'The contact may know the hydrofoil desk.',
+                     'source': 'inferred', 'confidence': .7,
+                     'model_provenance': {'model_id': 'fixture-extractor'},
+                     'memory_quality': {'classification': 'contact_knowledge_estimate'}}]
 
+        def _can_extract(self, contact_id):
+            return True
 
-@pytest.mark.asyncio
-async def test_live_run_mirrors_each_fact(facts_store):
-    for i in range(4):
-        facts_store.create_fact(contact_id=f"c{i}", fact=f"fact {i}",
-                                source="explicit", confidence=0.8)
-    graph = _RecordingGraph()
-    async with _app(graph, facts_store) as client:
-        resp = await client.post("/v1/host/mind/facts/backfill",
-                                 json={"dry_run": False, "sleep_ms": 0})
-        assert resp.status_code == 200
-        assert resp.json() == {"dry_run": False, "started": True, "total": 4}
-        await _wait_done()
-        status = (await client.get("/v1/host/mind/facts/backfill")).json()
-    assert len(graph.calls) == 4
-    assert status["processed"] == 4
-    assert status["mirrored"] == 4
-    assert status["failed"] == 0
-    assert status["finished_at"]
-    # The mirror path is _mirror_fact_to_graph: fact memories, tom source uri
-    for call in graph.calls:
-        assert call["memory_type"] == "fact"
-        assert call["source_uri"] == "tom:shared_fact"
-        assert call["metadata"]["shared_fact"] is True
-
-
-@pytest.mark.asyncio
-async def test_per_fact_failure_counted_and_run_continues(facts_store):
-    for name in ("good-1", "bad", "good-2"):
-        facts_store.create_fact(contact_id="c1", fact=name, confidence=0.8)
-    graph = _RecordingGraph(fail_on={"bad"})
-    async with _app(graph, facts_store) as client:
-        await client.post("/v1/host/mind/facts/backfill",
-                          json={"dry_run": False, "sleep_ms": 0})
-        await _wait_done()
-        status = (await client.get("/v1/host/mind/facts/backfill")).json()
-    assert status["processed"] == 3
-    assert status["mirrored"] == 2
-    assert status["failed"] == 1
-    assert status["running"] is False
-
-
-@pytest.mark.asyncio
-async def test_second_invocation_409_while_running(facts_store):
-    facts_store.create_fact(contact_id="c1", fact="slow fact", confidence=0.8)
-    gate = asyncio.Event()
-    graph = _RecordingGraph(gate=gate)
-    async with _app(graph, facts_store) as client:
-        first = await client.post("/v1/host/mind/facts/backfill",
-                                  json={"dry_run": False, "sleep_ms": 0})
-        assert first.status_code == 200
-        second = await client.post("/v1/host/mind/facts/backfill",
-                                   json={"dry_run": False, "sleep_ms": 0})
-        assert second.status_code == 409
-        gate.set()
-        await _wait_done()
-        third = await client.post("/v1/host/mind/facts/backfill", json={})
-        assert third.status_code == 200  # lock released after completion
+    store = SharedFactsStore(str(tmp_path / 'facts.db'))
+    graph = GraphProbe()
+    monkeypatch.setattr(host, '_facts_store', store)
+    monkeypatch.setattr(host, '_tom_extractor', Extractor())
+    monkeypatch.setattr(host, '_graph', graph)
+    try:
+        async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
+            response = await client.post('/v1/host/tom/extract', json={
+                'contact_id': 'contact-a', 'conversation_text': 'We discussed the hydrofoil desk.',
+                'extract_affect': False})
+            assert response.status_code == 200, response.text
+            assert len(response.json()['facts']) == 1
+            fact = store.list_facts(contact_id='contact-a')['facts'][0]
+            assert fact['metadata'] == {
+                'model_provenance': {'model_id': 'fixture-extractor'},
+                'memory_quality': {'classification': 'contact_knowledge_estimate'},
+                'automatic_projection': True,
+            }
+            assert store.automatic_view().list_facts(contact_id='contact-a')['total'] == 0
+        assert graph.calls == []
+    finally:
+        store.close()

@@ -137,37 +137,20 @@ class MemoryReadResponse(BaseModel):
     source: Optional[Dict[str, Any]] = None
 
 
-class MemoryWriteRequest(BaseModel):
-    identity: HostIdentity
-    context: Optional[HostTurnContext] = None
-    content: str
-    type: Optional[str] = None
-    person_id: Optional[str] = None
-    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
-    entities: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    strength: Optional[float] = None
-    source_type: Optional[str] = "inference"
-    source_uri: Optional[str] = None
-    source_version: Optional[str] = None
-    content_hash: Optional[str] = None
-
-
-class MemoryWriteResponse(BaseModel):
-    id: str
-    accepted: bool
-
-
 class MemorySearchRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     identity: HostIdentity
-    query: str
-    limit: Optional[int] = None
-    min_score: Optional[float] = None
-    min_confidence: Optional[float] = 0.1
-    person_id: Optional[str] = None
-    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
-    types: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
+    person_id: str = Field(min_length=1, max_length=256)
+    session_id: str = Field(min_length=1, max_length=256)
+    query: str = Field(min_length=1, max_length=4096)
+    limit: int = Field(default=5, ge=1, le=20, strict=True)
+    timezone: Optional[str] = Field(default=None, max_length=128)
+
+    @model_validator(mode='after')
+    def exact_scope(self):
+        if not self.person_id.strip() or not self.session_id.strip():
+            raise ValueError('memory search requires an exact participant and session')
+        return self
 
 
 class RerankRequest(BaseModel):
@@ -189,20 +172,12 @@ class RerankResponse(BaseModel):
 
 
 class MemorySearchResponse(BaseModel):
-    entries: List[MemoryEntry] = []
-
-
-class MemoryReconcileRequest(BaseModel):
-    identity: HostIdentity
-    dry_run: Optional[bool] = False
-
-
-class MemoryReconcileResponse(BaseModel):
-    files_checked: int = 0
-    memories_verified: int = 0
-    memories_staled: int = 0
-    memories_superseded: int = 0
-    errors: List[str] = []
+    content: str
+    count: int = Field(ge=0, le=20)
+    source_refs: List[Dict[str, str]]
+    watermark: int = Field(ge=0)
+    retrieval: Dict[str, str]
+    annotation_checks: List[SourceAnnotationCheck] = Field(default_factory=list, max_length=20)
 
 
 class MemoryConflictEntry(BaseModel):
@@ -283,16 +258,6 @@ class ContextAssembleResponse(BaseModel):
     notices: Optional[List[str]] = None
     projection_attestation: Optional[ContextProjectionAttestation] = None
     source_erasure_watermark: Optional[int] = None
-
-
-class MemoryFlushRequest(BaseModel):
-    identity: HostIdentity
-    reason: Optional[str] = None
-
-
-class MemoryFlushResponse(BaseModel):
-    accepted: bool
-    job_id: Optional[str] = None
 
 
 class MemoryEmbedRequest(BaseModel):
@@ -439,6 +404,7 @@ class ReasoningTurnResponse(BaseModel):
 
 class ToolInvokeRequest(BaseModel):
     identity: HostIdentity
+    context: Optional[HostTurnContext] = None
     name: str = Field(..., max_length=MAX_NAME_LEN)
     arguments: Dict[str, Any] = Field(default_factory=dict)
 
@@ -528,6 +494,27 @@ class SourceReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     source_id: str = Field(min_length=1, max_length=256)
     source_version: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SourceAnnotationCheck(BaseModel):
+    """Exact candidate membership and correction set already supplied to a model."""
+    model_config = ConfigDict(extra='forbid')
+    source_refs: List[SourceReference] = Field(min_length=1, max_length=512)
+    message_hashes: Dict[str, List[str]]
+    annotation_ids: List[str] = Field(max_length=512)
+
+    @model_validator(mode='after')
+    def exact_membership(self):
+        import re
+        identifiers = {ref.source_id for ref in self.source_refs}
+        if len(identifiers) != len(self.source_refs) or set(self.message_hashes) != identifiers:
+            raise ValueError('annotation checks require exact source membership')
+        if any(len(hashes) > 512 or any(not re.fullmatch('[0-9a-f]{64}', value) for value in hashes)
+               for hashes in self.message_hashes.values()):
+            raise ValueError('invalid annotation message hashes')
+        if any(not value or len(value) > 256 for value in self.annotation_ids):
+            raise ValueError('invalid annotation source IDs')
+        return self
 
 
 class SourceInputReference(BaseModel):

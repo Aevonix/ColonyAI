@@ -93,6 +93,11 @@ The agent can open original tool results linked to a recalled request. These
 records describe the observation at the time; current state may require a fresh
 check. Source access and correct interpretation are measured separately.
 
+Explicit memory search uses the same source records, correction handling and
+selection budget as automatic recall. Search returns excerpts with links to
+the originals. Source reads distinguish when a record was reported, observed
+and stored; none of these timestamps establishes that an old rule still applies.
+
 **Source records outlive search indexes.** SQLite supports the minimum
 installation. Optional Lance indexes support semantic search and can be replaced
 when embedding models change. A separate optional Neo4j memory graph remains

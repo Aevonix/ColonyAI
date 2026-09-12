@@ -20,6 +20,36 @@ bounded lexical candidates from their existing scoped view.
 They are labeled unverified estimates, not canonical source quotations. See
 [memory quality](MEMORY-QUALITY.md) for candidate limits and fallback behavior.
 
+Explicit `POST /v1/host/memory/search` uses the same canonical collector and
+selector as automatic context. Supply an authenticated participant, exact
+session and query, with an optional result limit from 1 to 20. The response
+contains bounded `content`, `count`, exact `source_refs`, an erasure `watermark`,
+retrieval status and correction-set checks. It returns excerpts rather than a
+claim that a complete source was opened. Existing source-read tools can open
+those exact references. Empty results are successful reads; an unavailable
+canonical store or selector returns HTTP 503. Semantic failure keeps current
+lexical evidence and reports the semantic degradation.
+
+Search receives no graph candidates. Automatic context temporarily retains its
+existing graph input outside the canonical helper. Source claims, attributed
+corrections, media descriptions and scoped contact estimates retain their
+existing ranking, temporal interpretation and shared context budget.
+
+The existing source-freshness POST accepts the search response's
+`annotation_checks` alongside its exact source references. It returns aligned
+`annotation_checks_current` booleans separately from source byte and ownership
+validity. A newly appended correction invalidates the older selected excerpt
+even when the source bytes did not change. Independent checks let a fresh search
+recover in the same turn. No new service, store or model call is needed.
+Sidecar reasoning binds this tool to the authenticated request's participant and
+session, requires `memory:search`, and rejects model-provided scope selectors.
+Unbound internal invocations report unavailable instead of searching globally.
+
+Canonical turn ingestion records what participants said and what tools actually
+observed. Owner corrections use the attributed source-annotation API; erasure
+uses source-forget. The search and source-read APIs project that evidence.
+Periodic availability checks only read these surfaces and create no memories.
+
 The normal source transaction queues projection in the existing turn ledger.
 The existing source worker embeds at most 16 chunks per pass, persists its
 cursor and retries failures with backoff. A restart resumes those jobs. Caption

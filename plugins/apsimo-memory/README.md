@@ -83,9 +83,18 @@ model-visible catalog is exactly:
 
 Person selectors are removed from the schemas. Direct calls are available only
 for the explicitly configured owner/system lane until scoped versions of those
-tool endpoints exist. Queue tools, approvals, memory writes, memory mirroring,
-and pre-compression signal writes remain disabled. Standalone installs may use
-the fallback turn writer; it still requires an exact per-turn participant.
+tool endpoints exist. Queue tools, approvals and pre-compression signal writes
+remain disabled. Standalone installs may use the fallback turn writer; it still
+requires an exact per-turn participant.
+
+Explicit memory search belongs to the general adapter's `colony_memory_search`
+tool, which searches canonical evidence and supplies references for opening the
+original sources. This provider has no separate graph search or write tools.
+Ordinary conversation capture preserves the actual user and assistant messages.
+Editing a native memory file does not create another owner statement in Apsimo.
+Removal still reconciles an exact source through canonical forgetting and
+reports the server's reconciliation result. Before context compression, the
+provider can checkpoint direct conversation evidence to the same source ledger.
 
 `catalog_attestation()` is the machine-readable admission contract. A true
 `provider_governance_ready` covers this provider's privacy/prompt boundary.

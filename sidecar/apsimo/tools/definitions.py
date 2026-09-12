@@ -16,27 +16,24 @@ COLONY_CORE_TOOLS: list[dict[str, Any]] = [
     {
         "name": "colony_memory_search",
         "description": (
-            "Search Colony's memory graph for relevant context about a person, topic, or past conversation. "
-            "Returns ranked memories with timestamps and relevance scores."
+            "Search canonical source evidence for this invocation's participant and session. "
+            "Returns bounded excerpts, corrections and exact source references."
         ),
         "parameters": {
             "type": "object",
             "properties": {
                 "query": {
-                    "type": "string",
+                    "type": "string", "minLength": 1, "maxLength": 4096,
                     "description": "The search query — can be a topic, person name, or question",
-                },
-                "person_id": {
-                    "type": "string",
-                    "description": "Optional person ID to scope the search to conversations with that person",
                 },
                 "limit": {
                     "type": "integer",
                     "description": "Maximum number of results to return (default: 5)",
-                    "default": 5,
+                    "minimum": 1, "maximum": 20, "default": 5,
                 },
             },
             "required": ["query"],
+            "additionalProperties": False,
         },
     },
     {

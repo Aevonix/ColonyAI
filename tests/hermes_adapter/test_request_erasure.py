@@ -63,6 +63,25 @@ from agent.turn_context import compose_user_api_content, append_notes_to_multimo
 from hermes_state import SessionDB
 provider=load_memory_provider('apsimo-memory'); manager=MemoryManager(); manager.add_provider(provider)
 manager.initialize_all('original', hermes_home=str(home))
+# Native memory-file changes still commit locally and notify the real provider,
+# but do not fabricate canonical owner testimony or call a graph write route.
+from tools.memory_tool import MemoryStore, memory_tool
+file_store=MemoryStore()
+file_store.load_from_disk()
+before_file_edit_calls=len(wire)
+with patch.object(provider,'on_memory_write',wraps=provider.on_memory_write) as notified:
+    for operation in [
+        {'action':'add','target':'memory','content':'Assistant interpretation of an example.'},
+        {'action':'replace','target':'memory','old_text':'Assistant interpretation of an example.',
+         'content':'Revised assistant interpretation of an example.'},
+    ]:
+        file_result=memory_tool(**operation,store=file_store)
+        assert json.loads(file_result)['success'] is True,file_result
+        manager.notify_memory_tool_write(file_result,operation)
+    assert notified.call_count==2
+assert len(wire)==before_file_edit_calls
+with ledger._connect() as connection:
+    assert connection.execute('SELECT count(*) FROM turn_sources').fetchone()[0]==1
 recalled=provider.prefetch('orchard badge', session_id='original')
 assert fact in recalled and 'native-erasure-source' in recalled and 'colony-recall-v1' in recalled, recalled
 temporal_only='[colony-recall-v1 {"contact_id":"contact-a","watermark":0}]\n## Current Time [priority 100]\nOld clock\n[/colony-recall-v1]'

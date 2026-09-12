@@ -107,6 +107,7 @@ class ReasoningLoop:
         system_prompt: str | None = None,
         context: dict[str, Any] | None = None,
         actor_policy: ToolActorPolicy | None = None,
+        memory_search=None,
     ) -> ReasoningResult:
         """Run a single reasoning turn with tool iteration.
 
@@ -252,6 +253,7 @@ class ReasoningLoop:
                     session_id=session_id,
                     allowed_tools=allowed_tool_names,
                     actor_policy=actor_policy,
+                    **({"memory_search": memory_search} if memory_search is not None else {}),
                 )
             except Exception as exc:
                 logger.error("%s tool execution failed: %s", log_prefix, exc)

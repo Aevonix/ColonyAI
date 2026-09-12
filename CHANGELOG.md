@@ -1,5 +1,30 @@
 # Changelog
 
+## v1.4.7 - canonical memory search
+
+Explicit search now reads canonical source records, using the same scoped
+lexical and optional semantic candidates, corrections, ranking and context
+budget as automatic recall. Search excerpts carry source references that the
+agent can open. A correction or erasure invalidates an earlier search result
+before the next model request; a fresh search can recover in the same turn.
+An unavailable backend is reported separately from a search with no matches.
+
+Original source reads now expose their report and storage times. The observation
+directory exposes the native observation time separately. Five first native
+model conversations opened the original evidence and retained its lineage.
+Four matched the frozen expectations; the fifth had an ambiguous expected
+answer. Its policy's older edition date did not establish that the policy was
+outdated. That case is inconclusive, and these trials do not establish reliable
+ordinary recall.
+
+Shared contact facts now use their canonical store without graph mirroring,
+backfill or fallback listing. Unused graph memory write, flush, reconcile and
+status routes are removed, along with duplicate provider search/write tools.
+Native memory file edits no longer mirror into the graph. Ordinary source
+capture and canonical forgetting remain. Setup diagnostics read canonical
+source status, and periodic integration health checks no longer create memories.
+Other graph consumers remain pending retirement.
+
 ## v1.4.6 - source navigation and independent contacts
 
 The existing memory reader can list recorded tool observations belonging to a

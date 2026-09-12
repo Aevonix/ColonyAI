@@ -451,8 +451,10 @@ def test_profile_deselection_and_existing_instance_are_isolated(provider_mod, mo
     standalone = _make_provider(provider_mod, _FakeHttpx(), monkeypatch)
     assert owned._turn_writer_enabled() is False
     assert standalone._turn_writer_enabled() is True
-    assert "colony_write_memory" not in {s["name"] for s in owned.get_tool_schemas()}
-    assert "colony_write_memory" in {s["name"] for s in standalone.get_tool_schemas()}
+    for provider in (owned, standalone):
+        names = {s["name"] for s in provider.get_tool_schemas()}
+        assert not {"colony_write_memory", "colony_search_memory"} & names
+        assert set(provider_mod.GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES) <= names
 
 
 def test_profile_ownership_honors_native_json_and_explicit_writer_precedence(provider_mod, monkeypatch, tmp_path):
@@ -491,7 +493,7 @@ def test_general_plugin_handoff_never_advertises_hidden_memory_write_tool(
     assert set(re.findall(r"\bcolony_[a-z_]+\b", block)) <= visible
 
 
-def test_standalone_handoff_retains_registered_memory_write_tool(
+def test_standalone_handoff_does_not_advertise_retired_graph_tools(
         provider_mod, monkeypatch, tmp_path):
     monkeypatch.delenv("COLONY_GENERAL_PLUGIN_ACTIVE", raising=False)
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -503,10 +505,35 @@ def test_standalone_handoff_retains_registered_memory_write_tool(
     block = provider._last_session_block()
     visible = {schema["name"] for schema in provider.get_tool_schemas()}
 
-    assert "colony_write_memory" in visible
-    assert "colony_write_memory" in block
+    assert not {"colony_write_memory", "colony_search_memory"} & visible
+    assert "colony_write_memory" not in block
+    assert "do not re-save this brief as an owner statement" in block
     assert "Preserve the standalone research thread." in block
     assert set(re.findall(r"\bcolony_[a-z_]+\b", block)) <= visible
+
+
+@pytest.mark.parametrize("general_active", [False, True])
+@pytest.mark.parametrize("action", ["add", "replace"])
+def test_native_file_edits_never_become_new_owner_evidence(
+        provider_mod, monkeypatch, general_active, action):
+    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1" if general_active else "0")
+    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "enabled")
+    fake = _FakeHttpx()
+    provider = _make_provider(provider_mod, fake, monkeypatch)
+    provider._session_id = "exact-session"
+    monkeypatch.setattr(provider, "_prefetch_contact", lambda: "cid-base")
+
+    result = provider.on_memory_write(
+        action, "MEMORY.md", "An assistant's edited interpretation.",
+        metadata={"old_text": "An earlier interpretation.", "kind": "fact"},
+    )
+
+    assert result is None  # This hook makes no persistence receipt.
+    for name, args in (("colony_write_memory", {"content": "edited interpretation"}),
+                       ("colony_search_memory", {"query": "interpretation"})):
+        assert not hasattr(provider, "_tool_" + name)
+        assert "error" in json.loads(provider.handle_tool_call(name, args))
+    assert fake.requests == []
 
 
 def test_standalone_memory_provider_uses_stable_v2_turn_id(
@@ -524,6 +551,8 @@ def test_standalone_memory_provider_uses_stable_v2_turn_id(
     assert len(puts) == 1
     assert puts[0]["url"].endswith("/v2/host/turns/turn%2F1")
     assert puts[0]["json"]["context"]["turn_id"] == "turn/1"
+    assert puts[0]["json"]["user_message"] == {"role": "user", "content": "hello"}
+    assert puts[0]["json"]["assistant_message"] == {"role": "assistant", "content": "hi"}
 
 
 # --- U14: prefetch cached-query match ---------------------------------------
@@ -1074,6 +1103,7 @@ def test_catalog_attests_read_only_prompt_and_provider_privacy(
 
     assert catalog["provider_governance_ready"] is True
     assert catalog["general_plugin_governance_ready"] is False
+    assert catalog["posture"]["memory_write_hook"] == "canonical_source_erasure_only"
     assert catalog["guest_context_runtime_prerequisite"] == {
         "readiness_endpoint": "/v1/host/context/projection-readiness",
         "response_schema": "ContextProjectionAttestationV1",

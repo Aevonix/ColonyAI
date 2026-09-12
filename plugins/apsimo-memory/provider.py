@@ -194,7 +194,6 @@ _QUEUE_MUTATION_TOOLS = frozenset({
 })
 _GENERAL_PLUGIN_MUTATION_TOOLS = frozenset({
     "colony_resolve_commitment",
-    "colony_write_memory",
     "colony_record_affect",
     "colony_initiative_feedback",
 }) | _QUEUE_MUTATION_TOOLS
@@ -341,48 +340,6 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
         },
     },
     {
-        "name": "colony_write_memory",
-        "description": (
-            "Write a fact, preference, or insight to Apsimo's persistent memory. "
-            "Use when you learn something worth remembering across sessions."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "content": {
-                    "type": "string",
-                    "description": "The memory text to persist",
-                },
-                "kind": {
-                    "type": "string",
-                    "enum": ["preference", "fact", "goal", "insight", "commitment"],
-                    "description": "Memory category",
-                    "default": "fact",
-                },
-                "person_id": {
-                    "type": "string",
-                    "description": "Optional person this relates to",
-                },
-                "entities": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Related entities",
-                },
-                "tags": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": "Tags for categorization",
-                },
-                "confidence": {
-                    "type": "number",
-                    "description": "Confidence 0-1 (default: 0.8)",
-                    "default": 0.8,
-                },
-            },
-            "required": ["content"],
-        },
-    },
-    {
         "name": "colony_list_goals",
         "description": (
             "List the user's goals with their status and progress. "
@@ -432,28 +389,6 @@ _COLONY_TOOL_SCHEMAS: List[Dict[str, Any]] = [
                 },
             },
             "required": ["valence", "arousal"],
-        },
-    },
-    {
-        "name": "colony_search_memory",
-        "description": (
-            "Search Apsimo's memory graph for relevant context. "
-            "Returns ranked memories with relevance scores."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "query": {
-                    "type": "string",
-                    "description": "Search query",
-                },
-                "limit": {
-                    "type": "integer",
-                    "description": "Max results (default: 5)",
-                    "default": 5,
-                },
-            },
-            "required": ["query"],
         },
     },
     # v0.13.0 — Task queue tools
@@ -702,7 +637,7 @@ def catalog_attestation() -> Dict[str, Any]:
             "reply_thread_projection": (
                 "disabled_pending_transport_attested_endpoint"
             ),
-            "memory_write_hook": "source_erasure_enabled_other_writes_disabled_in_general_plugin_mode",
+            "memory_write_hook": "canonical_source_erasure_only",
             "pre_compress_write_hook": "durable_source_checkpoint_v2",
         },
         "provider_governance_ready": True,
@@ -994,19 +929,11 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
             return ""
         if not txt:
             return ""
-        if self._tool_available("colony_write_memory"):
-            persistence = (
-                "At the start of the session, fold anything still live (open commitments, "
-                "threads, things you are waiting on) into durable memory with "
-                "colony_write_memory so it persists. "
-            )
-        else:
-            persistence = (
-                "Conversation turns are persisted automatically by the canonical Apsimo "
-                "turn writer. Use this brief to resume anything still live (open "
-                "commitments, threads, things you are waiting on), and use only tools "
-                "actually registered for this turn. "
-            )
+        persistence = (
+            "Let the canonical Apsimo turn writer retain ordinary conversation; "
+            "do not re-save this brief as an owner statement. Use it to resume "
+            "open commitments and threads with tools registered for this turn. "
+        )
         return (
             "\n\n## Where you left off (last-session handoff)\n"
             "This is your rotating last-session store from before the overnight reset. Treat it as your "
@@ -2117,36 +2044,6 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
-    def _tool_colony_write_memory(self, args: dict) -> str:
-        denial = self._mutation_denial("colony_write_memory")
-        if denial:
-            return json.dumps({"error": denial})
-        try:
-            with httpx.Client(timeout=5) as client:
-                payload = {
-                    "identity": {"host_id": "hermes"},
-                    "context": {
-                        "session_id": self._session_id,
-                        "contact_id": self._contact_id,
-                    },
-                    "content": args["content"],
-                    "type": args.get("kind", "fact"),
-                    "person_id": args.get("person_id", self._contact_id),
-                    "entities": args.get("entities", []),
-                    "tags": args.get("tags", []),
-                    "strength": args.get("confidence", 0.8),
-                }
-                resp = client.post(
-                    f"{self.sidecar_url}/v1/host/memory/write",
-                    headers=self._headers(),
-                    json=payload,
-                    timeout=5,
-                )
-                resp.raise_for_status()
-                return json.dumps(resp.json())
-        except Exception as exc:
-            return json.dumps({"error": str(exc)})
-
     def _tool_colony_list_goals(self, args: dict) -> str:
         status = args.get("status", "active")
         try:
@@ -2183,25 +2080,6 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
                 )
                 resp.raise_for_status()
                 return json.dumps({"success": True})
-        except Exception as exc:
-            return json.dumps({"error": str(exc)})
-
-    def _tool_colony_search_memory(self, args: dict) -> str:
-        try:
-            with httpx.Client(timeout=5) as client:
-                payload = {
-                    "identity": {"host_id": "hermes"},
-                    "query": args["query"],
-                    "limit": args.get("limit", 5),
-                }
-                resp = client.post(
-                    f"{self.sidecar_url}/v1/host/memory/search",
-                    headers=self._headers(),
-                    json=payload,
-                    timeout=5,
-                )
-                resp.raise_for_status()
-                return json.dumps(resp.json())
         except Exception as exc:
             return json.dumps({"error": str(exc)})
 
@@ -2476,7 +2354,11 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
         logger.debug("Apsimo: turn %d started (session=%s)", turn_number, self._session_id)
 
     def on_memory_write(self, action: str, target: str, content: str, metadata: Optional[Dict[str, Any]] = None) -> None:
-        """Mirror writes; source removal remains active in coexistence mode."""
+        """Reconcile removal with canonical sources; never mirror native file edits.
+
+        Ordinary turns retain their actual user/assistant authorship through
+        turn capture. An assistant's add/replace edit is not new user evidence.
+        """
         if action == "remove":
             contact = self._prefetch_contact()
             old_text = (metadata or {}).get("old_text")
@@ -2505,37 +2387,6 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
             except Exception:
                 self._last_erasure = {"state": "failed", "scope": "canonical_turn_sources"}
             return
-        if not self._turn_writer_enabled():
-            return
-        contact_id = self._prefetch_contact()
-        if not contact_id:
-            logger.debug(
-                "Apsimo on_memory_write skipped: no exact turn participant"
-            )
-            return
-        metadata = metadata or {}
-        kind = metadata.get("kind", "fact")
-        try:
-            with httpx.Client(timeout=3) as client:
-                payload = {
-                    "identity": {"host_id": "hermes"},
-                    "context": {
-                        "session_id": self._session_id,
-                        "contact_id": contact_id,
-                    },
-                    "content": content,
-                    "type": kind,
-                    "person_id": contact_id,
-                    "tags": ["hermes-memory-write", action, target],
-                }
-                client.post(
-                    f"{self.sidecar_url}/v1/host/memory/write",
-                    headers=self._headers(),
-                    json=payload,
-                    timeout=3,
-                )
-        except Exception as exc:
-            logger.debug("Apsimo on_memory_write mirror failed: %s", exc)
 
     def on_pre_compress(
         self, messages: List[Dict[str, Any]], *, require_checkpoint: bool = False,

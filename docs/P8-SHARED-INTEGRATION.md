@@ -48,19 +48,20 @@ using that request's sealed exact viewer. A viewer-bearing read re-projects
 current facts, so legacy topics, deleted/expired facts, changed envelopes,
 projection errors, and autonomy cache reads cannot become stored authority.
 
-SharedFacts are also mirrored into the graph for ordinary semantic recall.
-While P8 is attached, startup installs one graph-wide hard policy for the
-current `tom:shared_fact` source URI and the legacy `shared_fact` metadata
-marker. It applies during `recall()` and `read_memories()` hydration before
+SharedFacts use their canonical store for explicit reads and current scoped
+context. Fact writes and manual extraction do not create graph mirrors. While
+other graph consumers remain, P8 startup excludes existing copies with the
+`tom:shared_fact` source URI or `shared_fact` metadata marker. It applies during
+`recall()` and `read_memories()` hydration before
 confidence/relevance ranking or reranking, so model tools, synthesis,
 background thinkers, normal memory reads, and the research pipeline all share
 the same boundary. Research borrows this configured graph and never creates or
 closes a policy-free live client. Multimodal searches over the `memories`
 collection boundedly oversample, hydrate ambiguous vector IDs against the
 authoritative graph, filter, and then trim; non-graph image vectors remain
-available. A host-side mirror filter remains as defense in depth. The typed P8
-section is the mirrors' only content path; other graph memories retain their
-existing exact-person recall behavior. If the governed startup graph is
+available. The host also filters these mirrors. Current typed facts reach
+context through P8 projection rather than retained graph copies; other graph
+memories retain their existing exact-person recall behavior. If the governed startup graph is
 unavailable while P8 is attached, research graph gathering and ambiguous
 multimodal memory text fail empty; they never create a policy-free fallback
 client.

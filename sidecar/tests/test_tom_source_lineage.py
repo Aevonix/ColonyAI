@@ -1,7 +1,7 @@
-"""Canonical ingress avoids duplicate facts; older linked facts still erase.
+"""Canonical ingress, contact-fact lineage and erasure work without a graph.
 
-The API and SQLite stores are real; extraction and graph I/O are controlled.
-The graph read fence is the production implementation, not a fixture oracle.
+The API, SQLite stores and source visibility checks are real. No model or
+external database is required by this fixture.
 """
 import asyncio
 from types import SimpleNamespace
@@ -10,7 +10,6 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 
 from apsimo.api.routers import host
-from apsimo.intelligence.graph.client import ColonyGraph
 from apsimo.tom.facts import SharedFactsStore
 from apsimo.turns import TurnIdempotencyLedger
 from apsimo.turns.idempotency import SourceErased
@@ -18,34 +17,6 @@ from test_turn_source_evidence import source_app, envelope, recalled
 
 
 FACT = "The test hydrofoil departs Friday at nine."
-
-
-class Graph:
-    _source_projection_erased = staticmethod(ColonyGraph._source_projection_erased)
-    _filter_erased_source_memories = ColonyGraph._filter_erased_source_memories
-
-    def __init__(self):
-        self.rows = {}
-        self.cleanup_fails = False
-
-    async def record_turn(self, *args, **kwargs):
-        pass  # Isolate the additional ToM mirror from the separate turn summary.
-
-    async def store_memory(self, **kwargs):
-        if self._source_projection_erased(kwargs.get("source_uri")):
-            return ""
-        key = kwargs["content_hash"]
-        self.rows[key] = dict(kwargs, id=key, type="fact", strength=0.9, relevance=0.9)
-        return key
-
-    async def recall(self, query, *, person_id=None, **kwargs):
-        return [r for r in self.rows.values() if r["person_id"] == person_id and "hydrofoil" in query.lower()]
-
-    async def delete_source_memories(self, turn_ids):
-        if self.cleanup_fails:
-            raise OSError("graph unavailable")
-        selected = {"turn:" + value for value in turn_ids}
-        self.rows = {k: r for k, r in self.rows.items() if r["source_uri"] not in selected}
 
 
 class Extractor:
@@ -72,12 +43,12 @@ class Extractor:
 def runtime(source_app, monkeypatch, tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / "turn-idempotency.db")
     facts = SharedFactsStore(str(tmp_path / "facts.db"), source_ledger=ledger)
-    graph, extractor, tasks = Graph(), Extractor(), []
+    extractor, tasks = Extractor(), []
     monkeypatch.setattr(host, "_facts_store", facts)
     monkeypatch.setattr(host, "_affect_store", SimpleNamespace())
     monkeypatch.setattr(host, "_engagement_store", None)
     monkeypatch.setattr(host, "_tom_extractor", extractor)
-    monkeypatch.setattr(host, "_graph", graph)
+    monkeypatch.setattr(host, "_graph", None)
 
     def spawn(coro):
         if coro.cr_code.co_name == "_run_tom_extraction":
@@ -87,7 +58,7 @@ def runtime(source_app, monkeypatch, tmp_path):
         coro.close()  # No unrelated cognition/network background jobs in this fixture.
 
     monkeypatch.setattr(host, "_spawn_task", spawn)
-    yield SimpleNamespace(app=source_app, ledger=ledger, facts=facts, graph=graph, extractor=extractor, tasks=tasks)
+    yield SimpleNamespace(app=source_app, ledger=ledger, facts=facts, extractor=extractor, tasks=tasks)
     for task in tasks:
         if not task.done():
             task.cancel()
@@ -113,12 +84,11 @@ async def forget(client, turn_id="turn-a"):
     return response.json()
 
 
-async def retained_linked_fact(runtime, turn="turn-a"):
-    """A pre-cutover projection, not a new automatic knowledge path."""
+def linked_fact(runtime, turn="turn-a"):
+    """A contact estimate retains exact support independently of its wording."""
     lineage, _ = runtime.facts.source_input(turn, "contact-a")
     record = runtime.facts.create_fact(contact_id="contact-a", fact=FACT, source="told_by_contact",
         source_lineage=lineage, metadata={"model_provenance": {"model_id": "old-neutral-model"}})
-    await host._mirror_fact_to_graph(FACT, "contact-a", "told_by_contact", .8, record=record)
     return record
 
 
@@ -126,27 +96,23 @@ async def retained_linked_fact(runtime, turn="turn-a"):
 async def test_ordinary_contact_knowledge_has_lineage_without_becoming_world_fact(runtime):
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         body = await ingest(client, runtime)
-        assert runtime.facts.list_facts()["total"] == 0 and runtime.graph.rows == {}
-        record = await retained_linked_fact(runtime)
+        assert runtime.facts.list_facts()["total"] == 0
+        record = linked_fact(runtime)
         assert record["source_lineage"]["turn_id"] == "turn-a"
         assert len(record["source_lineage"]["message_hashes"]) == 2
         assert record["metadata"]["model_provenance"]["model_id"] == "old-neutral-model"
         assert runtime.extractor.texts == []
-        # A later backfill must not reclassify this estimate as a world fact.
-        estimate = dict(record, metadata={"automatic_projection": True})
-        assert not await host._mirror_fact_to_graph(FACT, "contact-a", "told_by_contact", 0.8, record=estimate)
         assert FACT in await recalled(client, session="voice-session")
         assert await recalled(client, contact="contact-b") == ""
         result = await forget(client)
-        assert result["shared_facts_cleanup"] == result["graph_cleanup"] == "complete"
+        assert result["shared_facts_cleanup"] == "complete"
         assert runtime.facts._conn.execute("SELECT count(*) FROM shared_facts").fetchone()[0] == 0
-        assert runtime.graph.rows == {}
         assert await recalled(client, session="voice-session") == ""
         replay = await client.put("/v2/host/turns/turn-a", json=body)
         assert replay.json()["skipped_reason"] == "source_erased"
         with pytest.raises(SourceErased):
             runtime.facts.source_input("turn-a", "contact-a")
-        assert runtime.facts.list_facts()["total"] == 0 and runtime.graph.rows == {}
+        assert runtime.facts.list_facts()["total"] == 0
 
 
 @pytest.mark.asyncio
@@ -156,60 +122,53 @@ async def test_ordinary_ingress_does_not_start_retired_affect_extraction(runtime
         assert runtime.tasks == [] and runtime.extractor.texts == []
         await forget(client)
         assert runtime.facts.list_facts()["total"] == 0
-        assert runtime.graph.rows == {}
         assert await recalled(client, session="voice-session") == ""
 
 
 @pytest.mark.asyncio
-async def test_independent_same_wording_and_legacy_support_survive(runtime):
-    legacy = runtime.facts.create_fact(contact_id="contact-a", fact=FACT)
-    await host._mirror_fact_to_graph(FACT, "contact-a", "shared_context", 0.8, record=legacy)
+async def test_independent_same_wording_and_unlinked_fact_survive(runtime):
+    unlinked = runtime.facts.create_fact(contact_id="contact-a", fact=FACT)
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         await ingest(client, runtime, "turn-a", "session-a")
         await ingest(client, runtime, "turn-b", "session-b")
-        await retained_linked_fact(runtime, "turn-a")
-        await retained_linked_fact(runtime, "turn-b")
-        assert len(runtime.graph.rows) == 3
+        linked_fact(runtime, "turn-a")
+        linked_fact(runtime, "turn-b")
+        assert runtime.facts.list_facts()["total"] == 3
         await forget(client)
         survivors = runtime.facts.list_facts()["facts"]
-        assert len(survivors) == 2 and runtime.facts.get_fact(legacy["id"]) == legacy
-        assert {r["source_uri"] for r in runtime.graph.rows.values()} == {"tom:shared_fact", "turn:turn-b"}
+        assert len(survivors) == 2 and runtime.facts.get_fact(unlinked["id"]) == unlinked
+        assert {r["source_lineage"]["turn_id"] for r in survivors if r.get("source_lineage")} == {"turn-b"}
         assert FACT in await recalled(client, session="voice-session")
 
 
 @pytest.mark.asyncio
-async def test_failed_cleanup_hides_rows_and_blocks_late_backfill(runtime, monkeypatch):
+async def test_failed_cleanup_hides_rows_and_blocks_late_writes(runtime, monkeypatch):
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url="http://test") as client:
         await ingest(client, runtime)
-        record = await retained_linked_fact(runtime)
+        record = linked_fact(runtime)
         purge = runtime.facts.purge_erased_sources
         def unavailable(*args, **kwargs):
             raise OSError("facts unavailable")
         monkeypatch.setattr(runtime.facts, "purge_erased_sources", unavailable)
-        runtime.graph.cleanup_fails = True
         result = await forget(client)
-        assert result["shared_facts_cleanup"] == result["graph_cleanup"] == "pending"
+        assert result["shared_facts_cleanup"] == "pending"
         assert runtime.facts._conn.execute("SELECT count(*) FROM shared_facts").fetchone()[0] == 1
-        assert len(runtime.graph.rows) == 1
         assert runtime.facts.get_fact(record["id"]) is None
         assert runtime.facts.list_facts()["total"] == 0
         assert await recalled(client, session="voice-session") == ""
-        # Captured backfill jobs and late extraction cannot recreate the erased support.
-        assert not await host._mirror_fact_to_graph(FACT, "contact-a", "told_by_contact", 0.8, record=record)
+        # Late extraction cannot recreate erased support.
         with pytest.raises(SourceErased):
             runtime.facts.create_fact(contact_id="contact-a", fact=FACT, source_lineage=record["source_lineage"])
-        # Even an old writer bypassing the write fence remains hidden on reopen.
+        # An out-of-band write remains hidden on reopen.
         runtime.facts._conn.execute("UPDATE shared_facts SET id='late-old-writer'")
         runtime.facts._conn.commit()
         reopened = SharedFactsStore(runtime.facts._db_path, source_ledger=runtime.ledger)
         assert reopened.list_facts()["total"] == 0
         reopened.close()
         monkeypatch.setattr(runtime.facts, "purge_erased_sources", purge)
-        runtime.graph.cleanup_fails = False
         result = await forget(client)
-        assert result["shared_facts_cleanup"] == result["graph_cleanup"] == "complete"
+        assert result["shared_facts_cleanup"] == "complete"
         assert runtime.facts._conn.execute("SELECT count(*) FROM shared_facts").fetchone()[0] == 0
-        assert runtime.graph.rows == {}
 
 
 def test_partial_checkpoint_and_missing_origin_never_gain_person_fact(runtime):

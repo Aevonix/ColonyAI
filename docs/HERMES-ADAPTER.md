@@ -415,6 +415,15 @@ instruction. It lists four retained original tool references per page. Open
 relevant references with `view="source"` to read what the tools actually returned.
 Selection reasons are model-authored navigation hints and may be wrong.
 
+Every source page exposes the selected record's `reported_at` and `recorded_at`
+outside its paginated content, with `evidence_basis: "retained_record"`.
+Missing report times remain unknown. A directory's outer times describe its
+originating instruction; an entry's `observed_at` is the original native tool
+time and its `recorded_at` is ingestion. Neither opening nor recent ingestion
+makes an older document current. Source versions and read revisions identify
+retained evidence, not the current state of its subject. Use supported historical
+or stable facts directly; current-state advice needs evidence that applies now.
+
 This directory follows only the current observation writer's first origin
 reference, with current participant scope, source revisions and native result
 digests checked. A shared session or another dependency does not establish that

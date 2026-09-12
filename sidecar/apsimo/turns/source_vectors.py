@@ -239,7 +239,7 @@ class SourceVectors:
         generation = self.store.catalog.read_generation(self.store.identity)
         table = await self.store._table(Collection.CONVERSATIONS, generation=generation)
         if 'scope_key' not in (await table.schema()).names:
-            return [], []
+            raise IncompatibleIndex('Source index has no participant scope projection; lexical recall remains available')
         keys = [_scope_key('person', contact_id, session_id), _scope_key('session', contact_id, session_id)]
         vector = await asyncio.wait_for(self.pipeline.embed_query(query), 5)
         hits = await self.store.search(Collection.CONVERSATIONS, vector, limit=min(25, max(1, limit)),

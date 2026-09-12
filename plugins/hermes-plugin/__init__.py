@@ -1,11 +1,10 @@
 """Governed Apsimo sidecar integration for Hermes.
 
-The general plugin is deliberately a narrow transport adapter.  It exposes
-private legacy reads only to a transport-attested owner/system turn, converts
-every enabled model-requested effect into an immutable
-``HermesToolActionIntentV1``, and writes
-one participant-bound turn observation. Apsimo's memory provider remains the
-canonical context path for guests.
+The plugin binds canonical memory search and source reads to the current
+transport participant. Private operational reads require an attested owner or
+system turn. Enabled model-requested effects become ``HermesToolActionIntentV1``
+requests, and completed turns produce one participant-bound observation.
+Apsimo's memory provider supplies automatic recall.
 
 Import normalizes canonical environment aliases without external I/O.
 Registration reads configuration and initializes the private local turn outbox;
@@ -47,6 +46,7 @@ from . import followups as followup_tools
 from . import source_forget
 from . import source_annotate
 from . import source_read
+from . import memory_search
 from .tool_observations import ToolObservations
 from . import input_provenance
 from .task_controller import configured_tasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
@@ -273,10 +273,10 @@ _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "colony_memory_search",
-        "description": "Search private legacy memory in an attested owner/system scope.",
+        "description": "Search canonical memory evidence for the current participant. Returns excerpts and source references; open a source to inspect the retained original.",
         "parameters": _parameters({
             "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
-            "query": {"type": "string"},
+            "query": {"type": "string", "minLength": 1, "maxLength": 4096},
         }, ("query",)),
     },
     {
@@ -1536,6 +1536,8 @@ class _ToolDispatcher:
                     ),
                     "status": "unavailable",
                 })
+            if name == 'colony_memory_search':
+                return memory_search.handle(clean_args, scope, self._client, self._request_memory, preserved)
             if scope.authority_lane not in {"owner", "system"}:
                 reason = (
                     "contact resolution failed"
@@ -1759,20 +1761,6 @@ class _ToolDispatcher:
                 if args.get("status"):
                     params["status"] = args["status"]
                 response = self._client.get("/v1/host/initiatives", params=params, timeout=5)
-            elif name == "colony_memory_search":
-                response = self._client.post(
-                    "/v1/host/memory/search",
-                    json={
-                        "identity": {"host_id": "hermes"},
-                        "context": {
-                            "session_id": scope.session_id,
-                            "contact_id": scope.contact_id,
-                        },
-                        "query": str(args.get("query", "")),
-                        "limit": int(args.get("limit", 5) or 5),
-                    },
-                    timeout=5,
-                )
             elif name == "colony_query_entities":
                 response = self._client.post(
                     "/v1/host/world/entities/query",

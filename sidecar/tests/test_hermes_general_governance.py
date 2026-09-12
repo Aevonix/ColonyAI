@@ -116,8 +116,6 @@ class _Client:
             if self.guard_error is not None:
                 raise self.guard_error
             return _Response(self.guard_verdict)
-        if path == "/v1/host/memory/search":
-            return _Response({"memories": [{"id": "memory-owner"}]})
         if path == "/v1/host/world/entities/query":
             body = kwargs.get("json") or {}
             if not isinstance(body.get("identity"), dict) or not body["identity"].get("host_id"):
@@ -598,35 +596,35 @@ def test_concurrent_reordered_senders_keep_exact_handler_context(runtime):
     assert by_call["call-guest"]["context"]["authority_lane"] == "guest"
 
 
-def test_legacy_private_reads_require_exact_owner_and_never_fallback(runtime):
+def test_private_world_reads_require_exact_owner_and_never_fallback(runtime):
     _module, context, client, _mediator = runtime
     _pre(context, session="s-guest", task="t-guest", turn="turn-guest",
          platform="sms", sender="+15550002")
     denied = _json(_tool(
-        context, "colony_memory_search", {"query": "owner secret"},
+        context, "colony_query_entities", {"query": "owner secret"},
         session="s-guest", task="t-guest", turn="turn-guest", call="read-guest",
     ))
     assert denied["status"] == "denied"
-    assert not [call for call in client.calls if call["path"] == "/v1/host/memory/search"]
+    assert not [call for call in client.calls if call["path"] == "/v1/host/world/entities/query"]
 
     _pre(context, session="s-missing", task="t-missing", turn="turn-missing",
          platform="sms", sender="+19999999")
     missing = _json(_tool(
-        context, "colony_memory_search", {"query": "owner secret"},
+        context, "colony_query_entities", {"query": "owner secret"},
         session="s-missing", task="t-missing", turn="turn-missing", call="read-missing",
     ))
     assert missing["status"] == "denied"
     assert "resolution" in missing["reason"]
-    assert not [call for call in client.calls if call["path"] == "/v1/host/memory/search"]
+    assert not [call for call in client.calls if call["path"] == "/v1/host/world/entities/query"]
 
     _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
          platform="sms", sender="+15550001")
     allowed = _json(_tool(
-        context, "colony_memory_search", {"query": "my memory"},
+        context, "colony_query_entities", {"query": "my organization"},
         session="s-owner", task="t-owner", turn="turn-owner", call="read-owner",
     ))
-    assert allowed["memories"][0]["id"] == "memory-owner"
-    reads = [call for call in client.calls if call["path"] == "/v1/host/memory/search"]
+    assert allowed["entities"][0]["id"] == "entity-owner"
+    reads = [call for call in client.calls if call["path"] == "/v1/host/world/entities/query"]
     assert len(reads) == 1
 
 

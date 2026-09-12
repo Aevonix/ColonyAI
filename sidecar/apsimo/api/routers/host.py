@@ -63,6 +63,7 @@ from apsimo.api.schemas.host import (
     ScopePromoteRequest,
     ScopeResponse,
     SourceReference,
+    SourceAnnotationCheck,
     SourceInputReference,
     ResponseGuardCheckRequest,
     ContextAssembleRequest,
@@ -108,12 +109,8 @@ from apsimo.api.schemas.host import (
     MemoryEmbedRequest,
     MemoryEmbedResponse,
     MemoryEntry,
-    MemoryFlushRequest,
-    MemoryFlushResponse,
     MemoryReadRequest,
     MemoryReadResponse,
-    MemoryReconcileRequest,
-    MemoryReconcileResponse,
     MemoryConflictEntry,
     MemoryConflictsResponse,
     MemorySearchRequest,
@@ -121,8 +118,6 @@ from apsimo.api.schemas.host import (
     MemoryVerifyRequest,
     MemoryVerifyResponse,
     MemoryStatsResponse,
-    MemoryWriteRequest,
-    MemoryWriteResponse,
     RerankRequest,
     RerankResponse,
     RerankResult,
@@ -678,8 +673,7 @@ async def health() -> HostHealthResponse:
     memory_backend_down = False
     if _graph is not None:
         # "Wired" alone only means the client object was constructed. Probe
-        # the backend (same determination as /memory/status) so health never
-        # advertises a memory capability whose store is unreachable.
+        # the backend before advertising this graph-backed capability.
         if await _graph_backend_reachable():
             notes["memory"] = "ColonyGraph wired (backend reachable)"
         else:
@@ -687,10 +681,10 @@ async def health() -> HostHealthResponse:
             caps = [c for c in caps if c != "memory"]
             notes["memory"] = (
                 "ColonyGraph wired but backend UNREACHABLE — "
-                "memory reads/writes are failing"
+                "graph-backed reads are unavailable; canonical source search is independent"
             )
     else:
-        notes["memory"] = "ColonyGraph not wired — memory endpoints return stubs"
+        notes["memory"] = "Graph-backed reads unavailable; canonical source search is independent"
     if _response_gate is not None:
         notes["response_gate"] = "ResponseGate wired"
     else:
@@ -1282,9 +1276,8 @@ def _validate_skill_id(skill_id: str) -> None:
 async def _graph_backend_reachable() -> bool:
     """Whether the wired graph's backend actually answers.
 
-    The single availability determination for memory honesty — the same
-    probe /memory/status reports as ``neo4j_connected``. False when no
-    graph is wired at all.
+    The remaining graph-backed reads and health checks share this probe.
+    False when no graph is wired at all.
     """
     if _graph is None:
         return False
@@ -1368,33 +1361,6 @@ async def memory_read(
         return MemoryReadResponse(entries=[])
 
 
-@router.get("/memory/status")
-async def memory_status():
-    """Diagnostic for memory subsystem wiring."""
-    neo4j_connected = False
-    embeddings_ready = False
-    vector_store_ready = False
-
-    if _graph is not None:
-        try:
-            await _graph.driver.verify_connectivity()
-            neo4j_connected = True
-        except Exception:
-            pass
-        embeddings_ready = _graph._embed_fn is not None
-        vector_store_ready = _graph._vector_store is not None
-
-    wired = neo4j_connected and embeddings_ready and vector_store_ready
-    return {
-        "wired": wired,
-        # distinguishes "no graph configured" from "configured but down"
-        "graph_wired": _graph is not None,
-        "neo4j_connected": neo4j_connected,
-        "embeddings_ready": embeddings_ready,
-        "vector_store_ready": vector_store_ready,
-    }
-
-
 @router.get("/memory/distill-preview")
 async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
     """Shadow distill previews: while COLONY_DISTILL_TURNS is off, every stored
@@ -1412,122 +1378,43 @@ async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
     return {"enabled": enabled, "count": len(items), "preview": items}
 
 
-@router.post("/memory/write", response_model=MemoryWriteResponse)
-async def memory_write(
-    body: MemoryWriteRequest,
-    request: Request = None,
-) -> MemoryWriteResponse:
-    person_id = resolve_request_person(
-        request,
-        claimed_person_id=body.person_id,
-        context_person_id=(body.context.contact_id if body.context else None),
-        audience=body.audience,
-    )
-    body.person_id = person_id
-    if body.context is not None and person_id is not None:
-        body.context.contact_id = person_id
-    if _graph is None:
-        # Degrade gracefully to match the pattern used by the rest of
-        # the router (list_insights, list_briefings, etc.): when the
-        # underlying store isn't wired, accept the call and mark the
-        # write as not persisted rather than raising 501.
-        return MemoryWriteResponse(id="", accepted=False)
-    try:
-        memory_id = await _graph.store_memory(
-            content=body.content,
-            person_id=person_id,
-            memory_type=body.type or "episodic",
-            entities=body.entities or [],
-            importance=body.strength if body.strength is not None else 1.0,
-            metadata={"tags": body.tags} if body.tags else None,
-            source_type=body.source_type or "inference",
-            source_uri=body.source_uri,
-            source_version=body.source_version,
-            content_hash=body.content_hash,
-        )
-        return MemoryWriteResponse(
-            id=memory_id or str(uuid.uuid4()),
-            accepted=True,
-        )
-    except Exception as exc:
-        logger.warning("memory_write failed: %s", exc)
-        await _raise_if_graph_unreachable("memory_write")
-        return MemoryWriteResponse(id="error", accepted=False)
-
-
 @router.post("/memory/search", response_model=MemorySearchResponse)
-async def memory_search(
-    body: MemorySearchRequest,
-    request: Request = None,
-) -> MemorySearchResponse:
-    person_id = resolve_request_person(
-        request,
-        claimed_person_id=body.person_id,
-        audience=body.audience,
-    )
-    body.person_id = person_id
-    if _graph is None:
-        return MemorySearchResponse(entries=[])
+async def memory_search(body: MemorySearchRequest, request: Request) -> MemorySearchResponse:
+    """Search current canonical evidence for an authenticated participant."""
+    person = resolve_request_person(request, claimed_person_id=body.person_id)
+    viewer = _p8_viewer_for_request(request, person)
+    projection = _context_projection_attestation(contact_id=person, viewer=viewer)
+    canonical_only = projection.projection_backend == "canonical_sources"
     try:
-        results = await _graph.recall(
-            query=body.query,
-            limit=body.limit or 10,
-            min_confidence=body.min_confidence if body.min_confidence is not None else 0.1,
-            person_id=person_id,
-        )
-        entries = [
-            MemoryEntry(
-                id=str(e.get("id", "")),
-                content=str(e.get("content", "")),
-                type=e.get("type"),
-                strength=float(e["strength"]) if "strength" in e and e["strength"] is not None else None,
-                person_id=e.get("person_id"),
-                entities=e.get("entities"),
-                tags=e.get("tags"),
-                created_at=str(e["created_at"]) if "created_at" in e and e["created_at"] is not None else None,
-                score=float(e["relevance"]) if "relevance" in e and e["relevance"] is not None else None,
-            )
-            for e in results
-        ]
-        return MemorySearchResponse(entries=entries)
+        facts = None if canonical_only or _facts_store is None else _facts_store.automatic_view()
+        if _p8_runtime is not None:
+            facts = _p8_runtime.projected_facts_view(
+                viewer, now=datetime.now(timezone.utc), source_linked_only=True)
+        from apsimo.turns import get_turn_idempotency_ledger
+        from apsimo.vector import get_store, get_pipeline
+        from apsimo.memory.search import collect_sources, select_memory
+        from apsimo.util.temporal import resolve_communication_timezone
+        ledger = get_turn_idempotency_ledger(get_state_dir())
+        collected = await collect_sources(ledger, query=body.query, contact_id=person,
+            session_id=body.session_id, vector_store=get_store(), embedding_pipeline=get_pipeline())
+        contact_tz = None
+        if not canonical_only and _contacts_store is not None:
+            try:
+                contact = await _contacts_store.get(person)
+                contact_tz = getattr(contact, "timezone", None)
+            except Exception:
+                logger.debug("contact timezone unavailable for memory search", exc_info=True)
+        packet = await select_memory(collected, query=body.query, selector=_memory_context_selector(),
+            contact_facts=facts, contact_facts_allowed=not canonical_only,
+            timezone_name=resolve_communication_timezone(
+                contact_tz, body.timezone or ("UTC" if canonical_only else None)), limit=body.limit)
+        return MemorySearchResponse(**packet.public())
     except Exception as exc:
-        logger.warning("memory_search failed: %s", exc)
-        await _raise_if_graph_unreachable("memory_search")
-        return MemorySearchResponse(entries=[])
-
-
-@router.post("/memory/flush", response_model=MemoryFlushResponse)
-async def memory_flush(body: MemoryFlushRequest) -> MemoryFlushResponse:
-    if _graph is None:
-        return MemoryFlushResponse(accepted=False)
-    try:
-        await _graph.flush(reason=body.reason)
-        return MemoryFlushResponse(accepted=True)
-    except Exception as exc:
-        logger.warning("memory_flush failed: %s", exc)
-        return MemoryFlushResponse(accepted=False)
-
-
-@router.post("/memory/reconcile", response_model=MemoryReconcileResponse)
-async def memory_reconcile(body: MemoryReconcileRequest) -> MemoryReconcileResponse:
-    if _graph is None:
-        return MemoryReconcileResponse()
-    try:
-        from apsimo.intelligence.graph.reconciler import FileReconciler
-        reconciler = FileReconciler(_graph)
-        result = await reconciler.reconcile(dry_run=body.dry_run or False)
-        return MemoryReconcileResponse(
-            files_checked=result["files_checked"],
-            memories_verified=result["memories_verified"],
-            memories_staled=result["memories_staled"],
-            memories_superseded=result["memories_superseded"],
-            errors=result["errors"],
-        )
-    except Exception as exc:
-        logger.warning("memory_reconcile failed: %s", exc)
-        return MemoryReconcileResponse(
-            errors=[str(exc)],
-        )
+        logger.warning("canonical memory search failed (%s)", type(exc).__name__)
+        raise HTTPException(status_code=503, detail={
+            "code": "memory_backend_unavailable",
+            "message": "Canonical memory could not be read or selected",
+        }) from None
 
 
 @router.get("/memory/conflicts", response_model=MemoryConflictsResponse)
@@ -2516,16 +2403,15 @@ async def context_assemble(
 
     # --- Memory: authorized candidates, one selection and one budget ---
     if _canonical_person_allowed and query_text:
-        from apsimo.memory.recall import source_candidates
-        beliefs, quotations, source_hits, semantic_media = [], [], [], []
-        source_ledger = None
+        from apsimo.memory.search import collect_sources, select_memory
+        beliefs = []
         if not _canonical_only and _graph is not None:
             try:
                 candidates_fn = getattr(_graph, "recall_candidates", None)
                 recall_kwargs = {
                     "query": query_text,
                     "limit": 25 if callable(candidates_fn) else 5,
-                    "person_id": body.context.contact_id if body.context else None,
+                    "person_id": body.context.contact_id,
                 }
                 if _p8_runtime is not None or callable(candidates_fn):
                     recall_kwargs["exclude_source_uris"] = ["tom:shared_fact"]
@@ -2533,126 +2419,41 @@ async def context_assemble(
                 beliefs = _p8_filter_graph_recall(await recall_fn(**recall_kwargs))
             except Exception as exc:
                 logger.warning("context_assemble memory search failed: %s", exc)
-
-        # Source text is a candidate producer, not a separate injection path.
-        # Checkpoints additionally require the original session because native
-        # compression history does not attest every earlier speaker's identity.
-        if body.context and body.context.contact_id:
-            try:
-                from apsimo.turns import get_turn_idempotency_ledger
-                if (Path(get_state_dir()) / "turn-idempotency.db").exists():
-                    source_ledger = get_turn_idempotency_ledger(get_state_dir())
-                    source_hits = source_ledger.search_sources(
-                        query_text, contact_id=body.context.contact_id,
-                        session_id=body.context.session_id, limit=10)
-                    try:
-                        from apsimo.turns.source_vectors import SourceVectors, merge_source_hits
-                        from apsimo.vector import get_store, get_pipeline
-                        semantic_hits, semantic_media = await SourceVectors(
-                            source_ledger, get_store(), get_pipeline()).search(query_text,
-                            contact_id=body.context.contact_id, session_id=body.context.session_id, limit=15)
-                        source_hits = merge_source_hits(source_hits, semantic_hits)
-                    except Exception as exc:
-                        logger.debug("source semantic recall unavailable (%s); retaining lexical evidence", type(exc).__name__)
-                    quotations = source_candidates(source_hits)
-            except Exception as exc:
-                logger.warning("source evidence recall failed (%s)", type(exc).__name__)
-
         try:
-            # Redacted source turns invalidate their entire graph summary.
-            # Source search separately excludes erased message excerpts while
-            # retaining unrelated quotations from a partially redacted turn.
+            from apsimo.turns import get_turn_idempotency_ledger
+            from apsimo.vector import get_store, get_pipeline
+            source_ledger = (get_turn_idempotency_ledger(get_state_dir())
+                if (Path(get_state_dir()) / "turn-idempotency.db").exists() else None)
+            collected = await collect_sources(source_ledger, query=query_text,
+                contact_id=body.context.contact_id, session_id=body.context.session_id,
+                vector_store=get_store(), embedding_pipeline=get_pipeline())
+            # Existing graph input remains caller-owned until its retirement.
             erased_filter = (getattr(_graph, "_filter_erased_source_memories", None)
                              if not _canonical_only else None)
             if not _canonical_only and callable(erased_filter):
                 beliefs = await erased_filter(beliefs)
-            from apsimo.beliefs.source_time import interpret_time_query, filter_unstructured
-            from apsimo.util import temporal as memory_temporal
             contact_tz = None
-            if not _canonical_only and _contacts_store is not None and body.context.contact_id:
+            if not _canonical_only and _contacts_store is not None:
                 try:
                     contact = await _contacts_store.get(body.context.contact_id)
                     contact_tz = getattr(contact, "timezone", None)
                 except Exception:
                     logger.debug("contact timezone unavailable for memory recall", exc_info=True)
-            time_query = interpret_time_query(
-                query_text, now=memory_temporal.now_utc(),
-                timezone_name=memory_temporal.resolve_communication_timezone(
-                    contact_tz, body.context.timezone or ("UTC" if _canonical_only else None)))
-            if source_ledger is not None:
-                from apsimo.beliefs.source_projection import SourceClaimProjection
-                from apsimo.memory.selection import current_work_query
-                beliefs, quotations = SourceClaimProjection(source_ledger).prepare_context(
-                    beliefs, source_hits, contact_id=body.context.contact_id,
-                    session_id=body.context.session_id, time_query=time_query,
-                    classify_work_replies=current_work_available and current_work_query(query_text))
-                from apsimo.turns.media import SourceMedia
-                media_hits = SourceMedia(source_ledger).search(
-                    query_text, contact_id=body.context.contact_id, session_id=body.context.session_id)
-                media_by_id = {row['id']: row for row in media_hits + semantic_media}
-                quotations.extend(filter_unstructured(list(media_by_id.values()), time_query))
-            else:
-                beliefs = filter_unstructured(beliefs, time_query)
-            if not _canonical_only and _tom_context_facts is not None:
-                try:
-                    # The projected view preserves envelope and current-source
-                    # checks. A fact needs query overlap before any fail-open
-                    # reranker path; confidence alone never makes it relevant.
-                    from apsimo.memory.recall import contact_fact_candidates
-                    fact_result = _tom_context_facts.list_facts(
-                        contact_id=body.context.contact_id, limit=512)
-                    facts = fact_result if isinstance(fact_result, list) else fact_result.get('facts', [])
-                    quotations.extend(filter_unstructured(
-                        contact_fact_candidates(query_text, facts), time_query))
-                except Exception as exc:
-                    logger.warning('context_assemble contact fact candidates failed (%s)', type(exc).__name__)
-            try:
-                max_chars = int(os.environ.get("COLONY_RECALL_CONTEXT_MAX_CHARS", "6000"))
-            except (TypeError, ValueError):
-                max_chars = 6000
-            if source_ledger is not None:
-                from apsimo.turns.source_annotations import expand as expand_annotations
-                annotation_scope = {'contact_id': body.context.contact_id, 'session_id': body.context.session_id}
-                beliefs = expand_annotations(source_ledger, beliefs, **annotation_scope)
-                quotations = expand_annotations(source_ledger, quotations, covered=beliefs, **annotation_scope)
-            selected, body_text = await _memory_context_selector().select_context(
-                query_text, beliefs, quotations, limit=5,
-                current_work_available=current_work_available,
-                max_chars=max(0, min(max_chars, 24000)))
-            if source_ledger is not None:
-                from apsimo.turns.source_annotations import current_candidates
-                retained = current_candidates(source_ledger, selected, **annotation_scope)
-                if len(retained) != len(selected):
-                    from apsimo.memory.recall import pack_memory_context
-                    selected, body_text = pack_memory_context(retained, limit=5,
-                        max_chars=max(0, min(max_chars, 24000)))
-            if body_text:
-                source_ids = []
-                for memory in selected:
-                    source_ids.extend(memory.get('source_turn_ids') or [])
-                    if memory.get('source_turn_id'):
-                        source_ids.append(memory['source_turn_id'])
-                    uri = str(memory.get('source_uri') or '')
-                    if uri.startswith('turn:'):
-                        source_ids.append(uri[5:])
-                citations = (source_ledger.source_references(source_ids,
-                    contact_id=body.context.contact_id, session_id=body.context.session_id)
-                    if source_ledger is not None else [])
-                # Preserve the checked correction packet's exact revisions.
-                # A subsequent erase is then visible to native request fencing
-                # instead of silently rebinding old text to a surviving revision.
-                citations_by_id = {ref['source_id']: ref for ref in citations}
-                for memory in selected:
-                    for ref in memory.get('_annotation_source_refs', []):
-                        citations_by_id[ref['source_id']] = ref
-                citations = list(citations_by_id.values())
+            from apsimo.util.temporal import resolve_communication_timezone
+            packet = await select_memory(collected, query=query_text, selector=_memory_context_selector(),
+                extra_candidates=beliefs, contact_facts=_tom_context_facts,
+                contact_facts_allowed=not _canonical_only,
+                timezone_name=resolve_communication_timezone(
+                    contact_tz, body.context.timezone or ("UTC" if _canonical_only else None)),
+                current_work_available=current_work_available)
+            if packet.content:
                 sections.append(ContextSection(
-                    id="colony-memory", title="Relevant Memories",
-                    body=body_text, priority=90, citations=citations or None))
+                    id="colony-memory", title="Relevant Memories", body=packet.content,
+                    priority=90, citations=packet.source_refs or None))
                 record_use = (getattr(_graph, "record_recall_use", None)
                               if not _canonical_only else None)
                 if not _canonical_only and callable(record_use):
-                    record_use(selected)
+                    record_use(packet.selected)
         except Exception as exc:
             logger.warning("combined memory selection failed (%s)", type(exc).__name__)
 
@@ -3172,6 +2973,22 @@ async def context_assemble(
 # Reasoning
 # ---------------------------------------------------------------------------
 
+def _reasoning_memory_search(request, identity, context):
+    """Bind one tool's query to this request, without global scope or body grants."""
+    if context is None:
+        return None
+    async def search(args):
+        if not request_authority(request).has_scope('memory:search'):
+            raise ValueError('memory search scope is required')
+        if not isinstance(args, dict) or set(args) - {'query', 'limit'}:
+            raise ValueError('memory authority and source selectors are not model arguments')
+        body = MemorySearchRequest(identity=identity, person_id=context.contact_id,
+            session_id=context.session_id, query=args.get('query', ''), limit=args.get('limit', 5),
+            timezone=context.timezone)
+        return (await memory_search(body, request)).model_dump()
+    return search
+
+
 @router.post("/reasoning/turn", response_model=ReasoningTurnResponse)
 async def reasoning_turn(
     body: ReasoningTurnRequest,
@@ -3225,6 +3042,7 @@ async def reasoning_turn(
         available_tools=available_tools,
         model_override=body.model_override or None,
         actor_policy=actor_policy,
+        memory_search=_reasoning_memory_search(request, body.identity, body.context),
     )
 
     response_msg = None
@@ -3338,6 +3156,8 @@ async def tools_invoke(
             }],
             allowed_tools=frozenset({body.name}),
             actor_policy=actor_policy,
+            **({'memory_search': _reasoning_memory_search(request, body.identity, body.context)}
+               if body.name == 'colony_memory_search' and body.context is not None else {}),
         ))[0]
         if result.get("executed") is True:
             return ToolInvokeResponse(result=result["content"], available=True)
@@ -3755,6 +3575,7 @@ class SourceFreshnessRequest(BaseModel):
     source_refs: list[SourceReference] = Field(max_length=512)
     unannotated_input_refs: list[SourceInputReference] = Field(default_factory=list, max_length=512)
     native_history_refs: list[NativeHistoryReference] = Field(default_factory=list, max_length=512)
+    annotation_checks: list[SourceAnnotationCheck] = Field(default_factory=list, max_length=512)
 
     @model_validator(mode='after')
     def exact_source_selector(self):
@@ -3788,6 +3609,19 @@ async def source_freshness_feed(body: SourceFreshnessRequest, request: Request):
     current = ledger.source_references([ref.source_id for ref in body.source_refs],
                                       contact_id=person, session_id=body.session_id)
     page['sources_current'] = expected == {(ref['source_id'], ref['source_version']) for ref in current}
+    if body.annotation_checks:
+        from apsimo.turns.source_annotations import current_candidates
+        checks = [check.model_dump() for check in body.annotation_checks]
+        candidates = [{'_annotation_source_refs': check['source_refs'],
+                       '_annotation_message_hashes': check['message_hashes'],
+                       '_annotation_ids': check['annotation_ids']} for check in checks]
+        retained = current_candidates(ledger, candidates, contact_id=person, session_id=body.session_id)
+        # Keep byte/ownership validity separate from each search's selected
+        # correction set. A stale earlier result must not poison a fresh search
+        # later in the same native turn.
+        page['annotation_checks_current'] = [candidate in retained and
+            {(ref['source_id'], ref['source_version']) for ref in check['source_refs']} <= expected
+            for check, candidate in zip(checks, candidates)]
     if body.native_history_refs:
         from apsimo.turns.history_references import resolve
         page['native_history_matches'] = resolve(ledger, contact_id=person,
@@ -12382,56 +12216,6 @@ async def delete_affect_event(event_id: str):
 # Theory of Mind — Shared Facts
 # ---------------------------------------------------------------------------
 
-async def _mirror_fact_to_graph(fact: str, contact_id: Optional[str],
-                                source: str, confidence: float, *, record=None) -> bool:
-    """Mirror a shared fact into the memory graph as a `fact` memory.
-
-    Shared facts live in their own store; semantic recall searches the memory
-    graph. Without this mirror a stored fact is structurally unrecallable
-    (recall.fact_coverage measured exactly that). A linked fact's hash includes
-    its source and contact: replay can reinforce that support, but cannot
-    take ownership of identical wording from another turn or a legacy row.
-
-    Returns True when the fact reached the graph (created or reinforced),
-    False otherwise — callers on the hot path ignore this; the backfill
-    endpoint uses it to count per-fact outcomes."""
-    if _graph is None or not (fact or "").strip():
-        return False
-    if record and (record.get('metadata') or {}).get('automatic_projection'):
-        # Contact knowledge estimates are not additional world facts. Canonical
-        # assertions and source history already provide grounded recall.
-        return False
-    try:
-        import hashlib
-        lineage = record.get('source_lineage') if record else None
-        if lineage and (_facts_store is None or not _facts_store.source_visible(record)):
-            return False
-        source_uri = 'turn:' + lineage['turn_id'] if lineage else 'tom:shared_fact'
-        metadata = {"shared_fact": True, "fact_source": source or ""}
-        if lineage:
-            metadata.update(source_turn_id=lineage['turn_id'], fact_record_id=record['id'],
-                source_message_hashes=lineage['message_hashes'],
-                model_provenance=(record.get('metadata') or {}).get('model_provenance', {}))
-        # A linked support must not reinforce or take ownership of an old
-        # independent fact, or of the same wording learned in another turn.
-        basis = json.dumps([source_uri, contact_id, fact], ensure_ascii=False) if lineage else fact
-        memory_id = await _graph.store_memory(
-            content=fact,
-            memory_type="fact",
-            entities=[],
-            metadata=metadata,
-            importance=max(0.1, min(1.0, confidence if confidence is not None else 0.7)),
-            person_id=contact_id,
-            source_type="inference",
-            source_uri=source_uri,
-            content_hash=hashlib.sha256(basis.encode("utf-8")).hexdigest(),
-        )
-        return bool(memory_id) if lineage else True
-    except Exception:
-        logger.debug("shared fact -> graph mirror failed", exc_info=True)
-        return False
-
-
 def _append_p8_fact_record(
     record: Mapping[str, Any],
     *,
@@ -12475,7 +12259,6 @@ async def create_shared_fact(
         )
     except Exception as e:
         raise HTTPException(status_code=422, detail=str(e))
-    await _mirror_fact_to_graph(body.fact, body.contact_id, body.source, body.confidence)
     producer = None
     if _p8_runtime is not None:
         try:
@@ -12497,115 +12280,6 @@ async def create_shared_fact(
     return SharedFactResponse(**result)
 
 
-# Single-flight state for the shared-facts -> graph backfill. Facts created
-# before the create-time mirror existed never reached the memory graph, so
-# semantic recall can't see them. The backfill replays them through the same
-# mirror; content-hash dedup makes re-runs mostly idempotent (a re-run
-# reinforces the existing node: +0.05 strength / +1 corroboration — documented
-# behavior, not a bug).
-_facts_backfill_state: Dict[str, Any] = {"running": False}
-
-
-class FactsBackfillRequest(BaseModel):
-    dry_run: bool = True
-    limit: int = 0              # 0 = no cap
-    min_confidence: float = 0.0
-    sleep_ms: int = 150         # serial pacing between embeds (shared embedder)
-
-
-@router.post("/mind/facts/backfill")
-async def backfill_shared_facts(body: FactsBackfillRequest) -> dict:
-    """Mirror existing shared facts into the memory graph (explicit admin op).
-
-    Runs as a background task, mirroring facts serially with ``sleep_ms``
-    spacing so a large backlog cannot saturate a shared embedder. Per-fact
-    failures (e.g. embedder outage — store_memory fails closed) are counted
-    and skipped, never fatal to the run. Single-flight: a second invocation
-    while one is running returns 409. Progress is journaled every 100 facts.
-    """
-    if _facts_store is None:
-        raise HTTPException(status_code=501, detail="Shared facts not initialized")
-    if _graph is None:
-        raise HTTPException(status_code=501, detail="Memory graph not initialized")
-    if _facts_backfill_state.get("running"):
-        raise HTTPException(status_code=409, detail="facts backfill already running")
-
-    # Collect candidates up-front (paged reads from SQLite; no awaits, so the
-    # single-flight check above cannot interleave with another request).
-    facts: list = []
-    offset = 0
-    cap = body.limit if body.limit and body.limit > 0 else None
-    while True:
-        page = _facts_store.list_facts(
-            min_confidence=body.min_confidence, limit=200, offset=offset)
-        rows = page.get("facts") or []
-        if not rows:
-            break
-        facts.extend(rows)
-        offset += len(rows)
-        if cap is not None and len(facts) >= cap:
-            facts = facts[:cap]
-            break
-
-    if body.dry_run:
-        return {"dry_run": True, "started": False, "total": len(facts)}
-
-    sleep_secs = max(0, body.sleep_ms) / 1000.0
-    _facts_backfill_state.update({
-        "running": True, "dry_run": False, "total": len(facts),
-        "processed": 0, "mirrored": 0, "failed": 0,
-        "started_at": datetime.now(timezone.utc).isoformat(),
-        "finished_at": None,
-    })
-
-    def _journal_progress(final: bool = False) -> None:
-        try:
-            from apsimo.events.journal import append_event
-            append_event("memory.facts_backfill", {
-                "processed": _facts_backfill_state["processed"],
-                "mirrored": _facts_backfill_state["mirrored"],
-                "failed": _facts_backfill_state["failed"],
-                "total": _facts_backfill_state["total"],
-                "final": final,
-            })
-        except Exception:
-            logger.debug("facts backfill journal failed", exc_info=True)
-
-    async def _run() -> None:
-        try:
-            for fact_row in facts:
-                ok = await _mirror_fact_to_graph(
-                    fact_row.get("fact") or "",
-                    fact_row.get("contact_id"),
-                    fact_row.get("source") or "",
-                    fact_row.get("confidence"),
-                    record=fact_row,
-                )
-                _facts_backfill_state["processed"] += 1
-                if ok:
-                    _facts_backfill_state["mirrored"] += 1
-                else:
-                    _facts_backfill_state["failed"] += 1
-                if _facts_backfill_state["processed"] % 100 == 0:
-                    _journal_progress()
-                if sleep_secs:
-                    await asyncio.sleep(sleep_secs)
-        finally:
-            _facts_backfill_state["running"] = False
-            _facts_backfill_state["finished_at"] = (
-                datetime.now(timezone.utc).isoformat())
-            _journal_progress(final=True)
-
-    _spawn_task(_run())
-    return {"dry_run": False, "started": True, "total": len(facts)}
-
-
-@router.get("/mind/facts/backfill")
-async def backfill_shared_facts_status() -> dict:
-    """Progress/status of the current (or last) shared-facts backfill."""
-    return dict(_facts_backfill_state)
-
-
 @router.get("/mind/facts", response_model=SharedFactListResponse)
 async def list_shared_facts(
     contact_id: Optional[str] = Query(None),
@@ -12614,11 +12288,7 @@ async def list_shared_facts(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
 ) -> SharedFactListResponse:
-    """List shared facts with optional filters.
-
-    Also searches the memory graph (Neo4j) for fact/preference/semantic
-    memories that haven't been synced to the SQLite facts store.
-    """
+    """List canonical shared facts with source visibility and optional filters."""
     if _facts_store is None:
         raise HTTPException(status_code=501, detail="Shared facts not initialized")
     result = _facts_store.list_facts(
@@ -12628,38 +12298,9 @@ async def list_shared_facts(
         limit=limit,
         offset=offset,
     )
-    facts = result["facts"]
-
-    # Fallback: search memory graph for fact-type memories
-    if _graph is not None and contact_id and len(facts) < limit:
-        try:
-            memories = await _graph.recall(
-                query=f"facts about {contact_id}",
-                limit=limit - len(facts),
-                person_id=contact_id,
-            )
-            for mem in memories:
-                mem_type = mem.get("type", "")
-                if mem_type in ("fact", "preference", "semantic"):
-                    # Check if already in facts (avoid duplicates)
-                    mem_content = mem.get("content", "")
-                    if not any(f["fact"] == mem_content for f in facts):
-                        facts.append({
-                            "id": mem.get("id", ""),
-                            "contact_id": contact_id,
-                            "fact": mem_content,
-                            "source": "memory_graph",
-                            "confidence": mem.get("strength", 0.8),
-                            "created_at": mem.get("created_at", ""),
-                            "expires_at": None,
-                            "metadata": None,
-                        })
-        except Exception as exc:
-            logger.debug("Memory graph fallback search failed: %s", exc)
-
     return SharedFactListResponse(
-        facts=[SharedFactResponse(**f) for f in facts],
-        total=len(facts),
+        facts=[SharedFactResponse(**f) for f in result["facts"]],
+        total=result["total"],
         limit=result["limit"],
         offset=result["offset"],
     )
@@ -13014,8 +12655,6 @@ async def extract_tom(
                 )
                 _append_p8_fact_record(
                     record, producer=_manual_p8_producer, origin="model")
-                await _mirror_fact_to_graph(f["fact"], f["contact_id"],
-                                            f["source"], f["confidence"], record=record)
 
     throttled = not _tom_extractor._can_extract(body.contact_id)
     return TomExtractResponse(
