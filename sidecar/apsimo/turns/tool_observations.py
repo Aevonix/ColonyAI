@@ -103,6 +103,7 @@ def retained_for_origin(ledger, conn, origin, *, contact_id, session_id):
             retained.append({'reference': ref,
                 'message_hash': source_message_hash(row['session_id'], message),
                 'entry': {**ref, 'tool_name': native['tool_name'], 'tool_call_id': native['tool_call_id'],
+                    'observed_at': datetime.fromtimestamp(native['timestamp'], timezone.utc).isoformat(),
                     'recorded_at': row['ingested_at'],
                     'selection_reason': {'author': 'model', 'reason': observation.reason}}})
         except (KeyError, TypeError, ValueError):

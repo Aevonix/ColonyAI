@@ -1,5 +1,6 @@
 """Scoped complete-source opening, stable paging, and honest oversized conflicts."""
 from datetime import datetime, timezone
+import hashlib
 import json
 
 from httpx import ASGITransport, AsyncClient
@@ -24,17 +25,32 @@ def opened(ledger, identifier='source', **kwargs):
     return read(ledger, contact_id='person', session_id='later', **ref(ledger, identifier), **kwargs)
 
 
-def test_long_procedure_opens_every_step_and_scope_or_revision_never_widens(tmp_path):
+@pytest.mark.parametrize('reported_at', [None, '2024-02-03T04:05:06+00:00'])
+def test_long_procedure_opens_every_step_and_scope_or_revision_never_widens(tmp_path, reported_at):
     ledger = TurnIdempotencyLedger(tmp_path/'source.db')
     text = 'Pump procedure: isolate pressure. ' + 'Check the seal; ' * 700 + 'Only then reconnect power.'
     ledger.record_source('source', contact_id='person', session_id='original',
-                         messages=[{'role': 'user', 'content': text}])
+                         messages=[{'role': 'user', 'content': text}], occurred_at=reported_at)
+    with ledger._connect() as conn:
+        row = conn.execute("SELECT ingested_at,messages_json FROM turn_sources WHERE turn_id='source'").fetchone()
+    recorded_at = row['ingested_at']
+    original = json.dumps({'messages': json.loads(row['messages_json']),
+        'reported_at': reported_at, 'recorded_at': recorded_at,
+        'event_time': 'unknown unless explicitly stated in each source'}, ensure_ascii=False)
     first = opened(ledger)
     assert not first['complete'] and len(first['content']) == 4096
+    assert 'reported_at' not in first['content']
+    assert first['read_revision'] == hashlib.sha256(original.encode()).hexdigest()
     pages, page = [first['content']], first
-    while not page['complete']:
+    while True:
+        assert page['reported_at'] == reported_at and page['recorded_at'] == recorded_at
+        assert page['evidence_basis'] == 'retained_record'
+        if page['complete']:
+            break
         page = opened(ledger, offset=page['next_offset'], read_revision=page['read_revision'])
         pages.append(page['content'])
+    assert ''.join(pages) == original
+    assert opened(ledger) == first
     assert json.loads(''.join(pages))['messages'] == [{'role': 'user', 'content': text}]
     assert first['source_refs'] == [ref(ledger)]
     for scope in ({'contact_id': 'other', 'session_id': 'later'},):
@@ -72,6 +88,42 @@ def test_checkpoint_opening_stays_in_its_session_and_correction_changes_continua
         page = opened(ledger, offset=page['next_offset'], read_revision=page['read_revision'])
     assert correction in content and 'attributed_correction' in content
     assert len(page['source_refs']) == 2
+
+
+def test_corrected_old_document_keeps_record_times_distinct_from_its_contents_and_correction(tmp_path, monkeypatch):
+    from apsimo.turns import source_annotations
+    ledger = TurnIdempotencyLedger(tmp_path/'source.db')
+    observed_at = '2026-09-12T08:00:00+00:00'
+    text = 'Service handbook, 2021 edition: cancellation requires a telephone call.'
+    ledger.record_source('source', contact_id='person', session_id='original',
+        messages=[{'role': 'tool', 'content': text}], occurred_at=observed_at, derive_claims=False)
+    original = opened(ledger)
+    assert json.loads(original['content'])['messages'][0]['content'] == text
+    assert original['reported_at'] == observed_at
+    assert original['recorded_at'] != observed_at
+    assert 'supported historical or stable facts' in original['guidance']
+    assert 'does not re-inspect its underlying subject' in original['guidance']
+
+    class LaterClock(datetime):
+        @classmethod
+        def now(cls, tz=None):
+            return cls(2026, 9, 13, 9, tzinfo=timezone.utc)
+
+    monkeypatch.setattr(source_annotations, 'datetime', LaterClock)
+    assert opened(ledger) == original
+    correction = 'As of 2026-09-13, the service also accepts cancellation through its portal.'
+    note = ledger.append_source_annotation(contact_id='person', session_id='later', annotation_id='policy',
+        **ref(ledger), excerpt='cancellation requires a telephone call',
+        correction=correction, author_principal='operator')
+    corrected = opened(ledger)
+    assert corrected['reported_at'] == original['reported_at']
+    assert corrected['recorded_at'] == original['recorded_at']
+    assert corrected['source_version'] == original['source_version']
+    assert corrected['read_revision'] != original['read_revision']
+    assert text in corrected['content'] and correction in corrected['content']
+    assert '2026-09-13T09:00:00+00:00' in corrected['content']
+    assert 'operator' in corrected['content']
+    assert note['source_id'] in {r['source_id'] for r in corrected['source_refs']}
 
 
 @pytest.mark.asyncio
@@ -160,6 +212,14 @@ def test_observation_directory_uses_index_and_exact_first_origin_not_nomination(
     assert 'Weather station' not in result['content'] and 'Checksum mismatch' not in result['content']
     assert next(e for e in entries if e['source_id'] == weather['source_id'])['selection_reason'] == {
         'author':'model', 'reason':'The checksum is repaired.'}
+    assert result['reported_at'] is None  # Outer times belong to the instruction.
+    for entry, number in ((next(e for e in entries if e['source_id'] == weather['source_id']), 1),
+                          (next(e for e in entries if e['source_id'] == outcome['source_id']), 2)):
+        assert entry['observed_at'] == datetime.fromtimestamp(1234567890.0 + number, timezone.utc).isoformat()
+        assert entry['observed_at'] != entry['recorded_at']
+        source = opened(ledger, entry['source_id'])
+        assert source['reported_at'] == entry['observed_at']
+        assert source['recorded_at'] == entry['recorded_at']
     assert 'light rain' in opened(ledger, weather['source_id'])['content']
     assert 'files modified 0' in opened(ledger, outcome['source_id'])['content']
     with ledger._connect() as conn:

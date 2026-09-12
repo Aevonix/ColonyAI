@@ -18,7 +18,7 @@ def test_native_source_reader_pages_and_reconciles_actual_tool_outputs(artifacts
     check = r'''
 long_text='Pump procedure: isolate pressure. ' + 'Inspect the seal. '*500 + 'Only then reconnect power.'
 ledger.record_source('long-native',contact_id='person',session_id='source-session',
-    messages=[{'role':'user','content':long_text}],derive_claims=False)
+    messages=[{'role':'user','content':long_text}],occurred_at='2024-02-03T04:05:06+00:00',derive_claims=False)
 long_ref=ledger.source_references(['long-native'],contact_id='person',session_id='reader')[0]
 recalled=provider.prefetch('Pump procedure',session_id='reader')
 assert long_ref['source_version'] in recalled
@@ -30,6 +30,9 @@ while True:
     opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
                     call='source-read-'+str(count),tool='apsimo_memory_read_source')
     assert 'error' not in opened,opened
+    assert opened['reported_at']=='2024-02-03T04:05:06+00:00'
+    assert opened['recorded_at']!=opened['reported_at'] and opened['evidence_basis']=='retained_record'
+    assert 'does not re-inspect its underlying subject' in opened['guidance']
     result=dict(dispatch.last_result)
     messages.append(result)
     checked=apply_llm_request_middleware({'messages':messages},session_id='reader',
@@ -108,6 +111,9 @@ assert 'supplied' in open_source(checksum)['error']
 directory=open_source({**origin,'view':'observations'})
 assert 'error' not in directory,directory
 entries=json.loads(directory['content'])['observations']
+assert directory['reported_at'] is None and directory['evidence_basis']=='retained_record'
+from datetime import datetime,timezone
+assert next(r for r in entries if r['source_id']==checksum['source_id'])['observed_at']==datetime.fromtimestamp(1234567892.0,timezone.utc).isoformat()
 assert {r['source_id'] for r in entries}=={weather['source_id'],checksum['source_id']},entries
 assert 'files modified 0' not in directory['content'] and 'light rain' not in directory['content']
 assert next(r for r in entries if r['source_id']==weather['source_id'])['selection_reason']['author']=='model'
