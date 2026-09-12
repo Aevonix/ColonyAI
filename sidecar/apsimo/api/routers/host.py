@@ -2739,20 +2739,10 @@ async def context_assemble(
         except Exception as exc:
             logger.warning("context_assemble world model failed: %s", exc)
 
-    # --- Available Skills ---
-    if not _canonical_only and _skills_registry is not None:
-        try:
-            skills = await _skills_registry.list_all()
-            if skills:
-                body_text = "\n".join(f"- {s.name}: {s.description}" for s in skills[:8])
-                sections.append(ContextSection(
-                    id="colony-skills",
-                    title="Available Skills",
-                    body=body_text,
-                    priority=50,
-                ))
-        except Exception as exc:
-            logger.warning("context_assemble skills failed: %s", exc)
+    # The registry contains internal initiative executors, not instruction
+    # skills installed in the requesting runtime. The host owns its actual
+    # skill catalog and discovery tools; do not advertise these Python
+    # executor names as callable skills in ordinary turn context.
 
     # --- Pending Commitments ---
     contact_id = body.context.contact_id if body.context else None
