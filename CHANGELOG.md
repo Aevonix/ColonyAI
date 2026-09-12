@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.4.0 - selected tool observations and linked communication erasure
+
+An agent can nominate a useful completed native tool call for later automatic
+recall. The adapter resolves the original result from Hermes and retains its
+exact source links. A bounded hint exposes eligible call IDs in the current
+request. Incidental output is not automatically copied into long-term memory;
+selection remains a model decision that needs evaluation during ordinary use.
+
+New ordinary communication summaries carry canonical source links. Forgetting
+those sources also removes their linked summaries. History reads validate the
+selected results and use existing erasure records, avoiding repeated scans of
+all original message bodies. An explicitly supplied source ledger prevents an
+offline copy from being checked against another profile's default store.
+
+Cleanup responses distinguish disabled stores from unverified cleanup and do
+not claim that every host has reconciled. Historical summaries without source
+links remain counted and are outside this cleanup scope. Older versions can
+read the additive communication schema but cannot perform its linked cleanup.
+
+The canonical and compatibility plugin manifests now match the adapter package
+version. The existing wheel and source-distribution test checks all four.
+
 ## v1.3.4 - compatibility readers for original tool observations
 
 Canonical source readers recognize original tool observations and preserve
