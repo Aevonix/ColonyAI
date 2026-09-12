@@ -6,6 +6,7 @@ import json
 import sqlite3
 import subprocess
 import sys
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -46,15 +47,31 @@ def native(source_app, monkeypatch, tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
     with TestClient(source_app, headers={'Authorization':'Bearer writer'}) as http:
         plugin = _load_plugin('apsimo_original_tool_observation_test')
+        http_events = []
         class Client(plugin.ApsimoClient):
             outage = False
             erasure_unavailable = False
             def _call(self, method, path, kwargs):
-                if self.outage and '/source-observation/' in path:
-                    return httpx.Response(503, request=httpx.Request(method, 'http://fixture'+path))
-                if self.erasure_unavailable and path == '/v1/host/memory/sources/erasures':
-                    return httpx.Response(403, request=httpx.Request(method, 'http://fixture'+path))
-                return http.request(method, path, **{k:v for k,v in kwargs.items() if k in {'json','params'}})
+                began = time.monotonic()
+                event = {'method': method, 'path': path}
+                if kwargs.get('_deadline_monotonic') is not None:
+                    event['remaining_budget_ms'] = round((kwargs['_deadline_monotonic'] - began) * 1000, 3)
+                try:
+                    if self.outage and '/source-observation/' in path:
+                        response = httpx.Response(503, request=httpx.Request(method, 'http://fixture'+path))
+                    elif self.erasure_unavailable and path == '/v1/host/memory/sources/erasures':
+                        response = httpx.Response(403, request=httpx.Request(method, 'http://fixture'+path))
+                    else:
+                        response = http.request(method, path,
+                            **{k:v for k,v in kwargs.items() if k in {'json','params'}})
+                    event['status'] = response.status_code
+                    return response
+                except Exception as exc:
+                    event['error'] = type(exc).__name__
+                    raise
+                finally:
+                    event['elapsed_ms'] = round((time.monotonic() - began) * 1000, 3)
+                    http_events.append(event)
             def get(self, path, **kwargs): return self._call('GET', path, kwargs)
             def post(self, path, **kwargs): return self._call('POST', path, kwargs)
             def put(self, path, **kwargs): return self._call('PUT', path, kwargs)
@@ -129,9 +146,18 @@ def native(source_app, monkeypatch, tmp_path):
                 'incoming_message':{'role':'user','content':'copper synchronization outcome'}})
             assert response.status_code == 200, response.text
             return next((s for s in response.json()['sections'] if s['id']=='colony-memory'), {})
+        outbox = plugin.TurnOutbox(tmp_path/'outbox.db')
+        def diagnostics(receipt):
+            # Assertion messages read this lazily; no headers, source payloads or retries.
+            try:
+                rows = [{key: row[key] for key in ('turn_id', 'state', 'attempts', 'last_error')}
+                        for row in outbox.snapshot()]
+            except Exception as exc:
+                rows = {'snapshot_error': type(exc).__name__}
+            return json.dumps({'receipt': receipt, 'http': http_events[-16:], 'outbox': rows}, indent=2)
         yield SimpleNamespace(plugin=plugin, context=context, db=db, http=http, clients=clients,
             complete=complete, request=request, retain=retain, ledger=ledger, recall=recall,
-            messages=messages, scope=call_context, outbox=plugin.TurnOutbox(tmp_path/'outbox.db'))
+            messages=messages, scope=call_context, outbox=outbox, diagnostics=diagnostics)
         db.close()
 
 
@@ -143,7 +169,7 @@ def test_actual_native_original_roundtrips_into_automatic_recall(native):
     assert not n.retain()['accepted']  # Completion alone is not current-request exposure.
     n.request()
     result = n.retain()
-    assert result['accepted'] and result['source_recorded'], result
+    assert result['accepted'] and result['source_recorded'], n.diagnostics(result)
     packet = n.recall()
     assert 'copper synchronization' in packet['body'] and '"role": "tool"' in packet['body']
     with sqlite3.connect(n.ledger.db_path) as db:
@@ -167,11 +193,15 @@ def test_failed_delivery_is_pending_and_same_outbox_retries_without_native_reexe
     n.clients[0].outage = True
     first = n.retain()
     assert first['state']=='pending' and not first['source_recorded']
+    diagnostic = json.loads(n.diagnostics(first))
+    assert any(row['turn_id'] == first['source_id'] and row['state'] == 'pending'
+               for row in diagnostic['outbox'])
     assert 'files_written' not in n.recall().get('body','')
     n.clients[0].outage = False
     n.outbox.drain(lambda stored, timeout_seconds: n.clients[0].sync_turn(
         **stored, outbox=n.outbox, timeout_seconds=timeout_seconds), limit=16, timeout_seconds=.25)
-    assert n.retain()['source_recorded']
+    receipt = n.retain()
+    assert receipt['source_recorded'], n.diagnostics(receipt)
     assert 'files_written' in n.recall()['body']
     assert n.db._conn.execute("SELECT count(*) FROM messages WHERE role='tool'").fetchone()[0] == 1
 
@@ -205,7 +235,7 @@ def test_actual_native_anthropic_conversion_preserves_original_tool_nomination(n
     assert any(block.get('type') == 'tool_use' and block.get('id') == 'call-1' for block in blocks)
     assert any(block.get('type') == 'tool_result' and block.get('content') == RESULT for block in blocks)
     receipt = n.retain()
-    assert receipt['accepted'] and receipt['source_recorded'], receipt
+    assert receipt['accepted'] and receipt['source_recorded'], n.diagnostics(receipt)
     rows = n.ledger.search_sources('copper synchronization', contact_id='cid-owner', session_id='later')
     original = next(row for row in rows if row['turn_id'] == receipt['source_id'])
     assert original['role'] == 'tool' and original['content'] == RESULT
@@ -227,7 +257,9 @@ def test_actual_native_deferred_catalog_and_completed_call_offer_bounded_hint(na
     assert '"call_id": "call-1"' in hints[0] and '"tool_name": "fixture_observe"' in hints[0]
     assert 'tool_describe' in hints[0] and 'tool_call' in hints[0]
     assert 'not saved memories' in hints[0] and RESULT not in hints[0]
-    assert n.messages == before and n.retain()['source_recorded']
+    assert n.messages == before
+    receipt = n.retain()
+    assert receipt['source_recorded'], n.diagnostics(receipt)
 
 
 @pytest.mark.parametrize('legacy_arguments', [False, True])
@@ -321,7 +353,7 @@ def test_native_deferred_original_dispatch_persistence_and_nomination(native, mo
         request = n.request(**request_options).payload
         assert '"call_id": "deferred-original"' in str(request)
         receipt = n.retain('deferred-original')
-        assert receipt['accepted'] and receipt['source_recorded'], receipt
+        assert receipt['accepted'] and receipt['source_recorded'], n.diagnostics(receipt)
         assert receipt['selected_call']['message_id'] == row['id']
         assert receipt['selected_call']['tool_name'] == 'fixture_observe'
         assert receipt['selected_call']['result_sha256'] == hashlib.sha256(RESULT.encode()).hexdigest()
@@ -346,7 +378,8 @@ def test_actual_native_responses_conversion_places_hint_in_instructions(native):
     assert request['instructions'].count('[apsimo-observation-candidates-v1]') == 1
     assert '"call_id": "call-1"' in request['instructions']
     assert any(row.get('type') == 'function_call_output' and row.get('output') == RESULT for row in request['input'])
-    assert n.retain()['source_recorded']
+    receipt = n.retain()
+    assert receipt['source_recorded'], n.diagnostics(receipt)
 
 
 @pytest.mark.parametrize('format', ['chat', 'anthropic', 'responses'])
@@ -371,7 +404,7 @@ def test_same_tool_calls_show_executed_arguments_and_exact_selected_receipt(nati
 
     # A wrong nomination remains the exact selected original, visibly identified.
     receipt = n.retain('earlier-call', reason='Retain the detailed inspection outcome.')
-    assert receipt['source_recorded'], receipt
+    assert receipt['source_recorded'], n.diagnostics(receipt)
     selected = receipt['selected_call']
     assert selected == {'tool_call_id': 'earlier-call', 'tool_name': 'terminal',
         'message_id': message_id, 'result_sha256': hashlib.sha256(b'first-status').hexdigest(),
@@ -400,7 +433,7 @@ def test_argument_previews_are_explicitly_truncated_inside_total_hint_budget(nat
     assert all(row['arguments_truncated'] and len(row['arguments_preview']) == 128 for row in candidates)
     assert all(f'original-{number}' not in hint for number in range(10))
     receipt = n.retain('call-9')
-    assert receipt['source_recorded'] and receipt['selected_call']['arguments_truncated']
+    assert receipt['source_recorded'] and receipt['selected_call']['arguments_truncated'], n.diagnostics(receipt)
     assert receipt['selected_call']['arguments_preview'] == candidates[0]['arguments_preview']
 
 
@@ -441,7 +474,7 @@ def test_origin_erasure_removes_observation_and_queued_retry(native):
     n.complete()
     n.request()
     result = n.retain()
-    assert result['accepted'], result
+    assert result['accepted'], n.diagnostics(result)
     row = next(row for row in n.outbox.snapshot() if row['turn_id']==result['source_id'])
     origin = row['payload']['observation']['origin']['source_id']
     erased = n.ledger.erase_sources(contact_id='cid-owner', turn_ids=[origin])
@@ -482,7 +515,7 @@ def test_call_request_viewer_and_raw_bytes_are_bound(native):
     assert not n.retain(request_id='api-3')['accepted']
     n.messages[-1]['content'] = original
     result = n.retain()
-    assert result['accepted'], result
+    assert result['accepted'], n.diagnostics(result)
     row = next(row for row in n.outbox.snapshot() if row['turn_id']==result['source_id'])
     body = {'identity':{'host_id':'hermes'}, 'context':{'session_id':'native-session',
         'contact_id':'cid-owner','turn_id':result['source_id']},'observation':row['payload']['observation']}
