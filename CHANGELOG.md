@@ -1,5 +1,16 @@
 # Changelog
 
+## v1.3.4 - compatibility readers for original tool observations
+
+Canonical source readers recognize original tool observations and preserve
+links to their source evidence when reading or erasing them. The durable outbox
+can remove pending observations when their source is erased.
+
+This release prepares compatibility for a later observation writer. It does not
+enable tool-result nomination or add an ingestion route. Pending observations
+from a newer writer remain pending on this version until re-upgrade; they are
+not reported as saved. No recall-quality improvement is claimed.
+
 ## v1.3.3 - native history erasure and Hermes 0.21.2 compatibility
 
 Native session-history results are checked against scoped canonical erasures
