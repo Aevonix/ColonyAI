@@ -9,6 +9,12 @@ SQLite store for entities, relationships and typed observations. Its HTTP
 creation, health and persistence paths use that same implementation. The separate
 Neo4j memory graph remains active code pending its own retirement.
 
+Canonical `apsimo` packages and entry points replace the removed Colony aliases.
+The retired self-knowledge seeding endpoint, command and module are removed;
+guided identity setup and source-backed self queries remain. Obsolete poller
+wrappers are removed, and worker setup selects current executable names.
+The standalone `apsimo-hostworker` package advances to 0.2.1.
+
 Current setup and architecture documentation replace historical upgrade guides
 and compatibility promises. Development releases before the completed Phase 1
 baseline may change interfaces and storage layouts.
