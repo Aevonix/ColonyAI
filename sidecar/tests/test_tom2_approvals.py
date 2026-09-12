@@ -9,9 +9,9 @@ import time
 import pytest
 from fastapi import HTTPException
 
-from apsimo.api.routers import host as host_mod
-from apsimo.proposals import ProposalStore
-from apsimo.tom.approvals import (
+from pacomind.api.routers import host as host_mod
+from pacomind.proposals import ProposalStore
+from pacomind.tom.approvals import (
     APPROVED, PENDING, REVOKED, Tom2ApprovalRegistry, approval_ttl_days)
 
 READER, SUBJECT = "cid-alice", "cid-bob"
@@ -23,11 +23,11 @@ def reg():
 
 
 def test_ttl_env(monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_APPROVAL_TTL_DAYS", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_APPROVAL_TTL_DAYS", raising=False)
     assert approval_ttl_days() == 30.0
-    monkeypatch.setenv("COLONY_TOM2_APPROVAL_TTL_DAYS", "junk")
+    monkeypatch.setenv("PACOMIND_TOM2_APPROVAL_TTL_DAYS", "junk")
     assert approval_ttl_days() == 30.0
-    monkeypatch.setenv("COLONY_TOM2_APPROVAL_TTL_DAYS", "-5")
+    monkeypatch.setenv("PACOMIND_TOM2_APPROVAL_TTL_DAYS", "-5")
     assert approval_ttl_days() == 0.0
 
 
@@ -142,8 +142,8 @@ async def test_endpoint_errors(monkeypatch):
 async def test_registry_feeds_eligibility_pipeline(monkeypatch):
     from test_tom2_eligibility import World
 
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
-    monkeypatch.delenv("COLONY_TOM2_L2_APPROVAL", raising=False)
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.delenv("PACOMIND_TOM2_L2_APPROVAL", raising=False)
     world = World()
     reg = Tom2ApprovalRegistry(ProposalStore())
     d = await world.evaluate(approval_check=reg.is_approved)

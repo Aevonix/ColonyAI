@@ -14,12 +14,12 @@ from fastapi import FastAPI
 from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.documents import MAX_DOCUMENT_BYTES, MAX_PAGE_STREAM_BYTES, extract_document
-from apsimo.turns.idempotency import SourceErased, source_message_hash
-from apsimo.turns.media import SourceMedia
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.documents import MAX_DOCUMENT_BYTES, MAX_PAGE_STREAM_BYTES, extract_document
+from pacomind.turns.idempotency import SourceErased, source_message_hash
+from pacomind.turns.media import SourceMedia
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
 from test_scoped_api_authority import _principal, _write_keyring
 from test_turn_source_evidence import source_app, envelope
 from test_hermes_turn_outbox import _load_client
@@ -171,7 +171,7 @@ def test_no_document_paths_urls_or_oversized_bytes_are_retained(tmp_path, varian
 
 @pytest.mark.asyncio
 async def test_pdf_backup_restore_shared_ownership_and_parse_erasure_race(tmp_path):
-    from apsimo import backup
+    from pacomind import backup
     data = pdf_bytes(); asset = hashlib.sha256(data).hexdigest()
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     for person in ('a', 'b'):
@@ -200,8 +200,8 @@ async def test_pdf_backup_restore_shared_ownership_and_parse_erasure_race(tmp_pa
 @pytest.mark.asyncio
 async def test_document_protocol_and_client_never_fall_back_to_predecessor(source_app, tmp_path):
     from fastapi import HTTPException, Response
-    from apsimo.api.routers.host import turns_sync_v2
-    from apsimo.api.schemas.host import TurnSyncRequest
+    from pacomind.api.routers.host import turns_sync_v2
+    from pacomind.api.schemas.host import TurnSyncRequest
     body = TurnSyncRequest.model_validate({'identity': {'host_id': 'fixture'},
         'context': {'contact_id': 'a', 'session_id': 's', 'turn_id': 'pdf'}, 'user_message': message()})
     with pytest.raises(HTTPException) as error:
@@ -210,7 +210,7 @@ async def test_document_protocol_and_client_never_fall_back_to_predecessor(sourc
     identifier = 'source-media/document/old-literal-id'
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=source_app), base_url='http://fixture') as client:
         assert (await client.put('/v2/host/turns/' + identifier, json=envelope(identifier, checkpoint=True))).status_code == 201
-    module = _load_client('document_route'); client = module.ColonyClient('http://fixture')
+    module = _load_client('document_route'); client = module.PacoMindClient('http://fixture')
     requests = []
     def reject(path, **kwargs):
         requests.append(path)
@@ -227,12 +227,12 @@ async def test_document_protocol_and_client_never_fall_back_to_predecessor(sourc
 
 @pytest.mark.asyncio
 async def test_pdf_source_memory_recovery_preserves_actual_pages_without_runtime_authority(tmp_path):
-    from apsimo import backup
+    from pacomind import backup
     data = pdf_bytes(); asset = hashlib.sha256(data).hexdigest()
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     ledger.record_source('pdf', contact_id='a', session_id='s', messages=[message(data)], derive_claims=False)
     media = SourceMedia(ledger); assert await media.process_one(None)
-    (state/'colony-id').write_text('fixture-pdf-colony')
+    (state/'pacomind-id').write_text('fixture-pdf-pacomind')
     archive = backup.create_full_backup(state, tmp_path/'archives', include_graph=False, include_vectors=False)
     media.store._original_path(asset, 'application/pdf').unlink()
     destination = tmp_path/'salvage'
@@ -248,7 +248,7 @@ async def test_pdf_source_memory_recovery_preserves_actual_pages_without_runtime
 @pytest.mark.asyncio
 @pytest.mark.parametrize('cancel', [False, True])
 async def test_parser_child_is_reaped_after_timeout_or_worker_cancellation(monkeypatch, cancel):
-    from apsimo.turns import documents
+    from pacomind.turns import documents
     spawn = asyncio.create_subprocess_exec
     started = asyncio.Event(); children = []
     async def delayed_child(*args, **kwargs):

@@ -9,11 +9,11 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from apsimo.memory.recall import pack_memory_context, render_memory_context
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.media import SourceMedia
-from apsimo.turns.source_annotations import expand, current_candidates
-from apsimo.turns.source_read import read
+from pacomind.memory.recall import pack_memory_context, render_memory_context
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.media import SourceMedia
+from pacomind.turns.source_annotations import expand, current_candidates
+from pacomind.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 from test_recall_source_presentation import rendered_rows
 from test_source_media import Vision, image_bytes, message
@@ -22,7 +22,7 @@ from test_turn_source_evidence import source_app
 
 @pytest_asyncio.fixture
 async def media_source(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
     ledger.record_source('drawing-source', contact_id='person', session_id='earlier-text',
                          messages=[message()], derive_claims=False)
@@ -49,7 +49,7 @@ async def test_real_context_pair_opens_original_through_native_reader(media_sour
             'identity': {'host_id': 'test'}, 'context': {'contact_id': 'person', 'session_id': 'later'},
             'incoming_message': {'role': 'user', 'content': 'Inspect the original blue circle reference image.'}})
     assert response.status_code == 200, response.text
-    section = next(s for s in response.json()['sections'] if s['id'] == 'colony-memory')
+    section = next(s for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
     row, = [r for r in rendered_rows(section['body']) if r.get('kind') == 'media_description']
     copied = {key: row[key] for key in ('source_id', 'source_version')}
     assert copied == ref and copied in section['citations']
@@ -78,7 +78,7 @@ async def test_real_context_pair_opens_original_through_native_reader(media_sour
     boundary.observe(scope, [current], user_message=current['content'])
     stamp = json.dumps({'contact_id': 'person', 'watermark': ledger.erasure_watermark('person'),
                         'sources': section['citations']})
-    current['api_content'] = current['content'] + '\n\n<memory-context>\n[colony-recall-v1 ' + stamp + ']\n' + section['body'] + '\n[/colony-recall-v1]\n</memory-context>'
+    current['api_content'] = current['content'] + '\n\n<memory-context>\n[pacomind-recall-v1 ' + stamp + ']\n' + section['body'] + '\n[/pacomind-recall-v1]\n</memory-context>'
     wire = {'role': 'user', 'content': current['api_content']}
     boundary({'messages': [wire]}, scope)
     helper = importlib.import_module(runtime.module.__package__ + '.source_read')

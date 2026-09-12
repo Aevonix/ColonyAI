@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from apsimo.initiatives import native_work, store as stores
-from apsimo.intelligence.components import initiative_engine as engine_module
+from pacomind.initiatives import native_work, store as stores
+from pacomind.intelligence.components import initiative_engine as engine_module
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ async def backup_candidate(engine):
 @pytest.fixture
 def backup(tmp_path, monkeypatch, clock):
     monkeypatch.setenv('HOME', str(tmp_path))
-    path = tmp_path/'.colony/backups/retained.bak'
+    path = tmp_path/'.pacomind/backups/retained.bak'
     path.parent.mkdir(parents=True)
     path.write_text('disposable old checkpoint')
     stamp = (clock.moment-timedelta(days=27)).timestamp()
@@ -195,8 +195,8 @@ async def test_receipt_failure_completion_suppresses_same_attempt_but_new_attemp
 @pytest.mark.asyncio
 async def test_log_growth_does_not_immediately_repeat_settled_native_review(tmp_path, monkeypatch, clock):
     monkeypatch.setenv('HOME', str(tmp_path))
-    path = tmp_path/'.colony/logs/sidecar.log'
-    monkeypatch.setenv('APSIMO_LOG_PATH', str(path))
+    path = tmp_path/'.pacomind/logs/sidecar.log'
+    monkeypatch.setenv('PACOMIND_LOG_PATH', str(path))
     path.parent.mkdir(parents=True)
     with path.open('wb') as stream:
         stream.truncate(101 * 1024 * 1024)

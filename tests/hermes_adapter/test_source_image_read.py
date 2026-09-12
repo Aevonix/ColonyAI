@@ -6,8 +6,8 @@ def test_native_owned_pixels_reopen_on_supported_protocols_and_erase(artifacts, 
     probe = annotation.PROBE
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
     assert probe.count(old) == 1
-    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='apsimo_memory_annotate'"))
-    old = "name='apsimo_memory_annotate',arguments=json.dumps(args)"
+    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='pacomind_memory_annotate'"))
+    old = "name='pacomind_memory_annotate',arguments=json.dumps(args)"
     assert probe.count(old) == 1
     probe = probe.replace(old, 'name=tool,arguments=json.dumps(args)')
     old = "return json.JSONDecoder().raw_decode(results[0]['content'])[0]"
@@ -19,7 +19,7 @@ def test_native_owned_pixels_reopen_on_supported_protocols_and_erase(artifacts, 
     check = r'''
 import base64, copy, hashlib, io, re
 from PIL import Image, ImageDraw
-from apsimo.turns.media import SourceMedia
+from pacomind.turns.media import SourceMedia
 from agent.codex_responses_adapter import _chat_messages_to_responses_input
 from agent.anthropic_message_convert import convert_messages_to_anthropic
 picture=Image.new('RGB',(96,48),'white'); draw=ImageDraw.Draw(picture)
@@ -39,7 +39,7 @@ recalled=provider.prefetch('neutral geometry reference image',session_id='reader
 assert ref['source_version'] in recalled,recalled
 native_context=compose_user_api_content('',recalled,'')
 assert caption in native_context and 'derived_unverified' in native_context,native_context
-stamp=json.loads(re.search(r'\[colony-recall-v1 (\{[^\n]+\})\]',native_context).group(1))
+stamp=json.loads(re.search(r'\[pacomind-recall-v1 (\{[^\n]+\})\]',native_context).group(1))
 recalled_ref=next(item for item in stamp['sources'] if item['source_id']=='native-image')
 recalled_asset=re.search(r'"asset_id": "sha256:([0-9a-f]{64})"',native_context).group(1)
 assert recalled_ref==ref and recalled_asset==asset
@@ -50,7 +50,7 @@ agent._model_supports_vision=lambda: True
 agent._provider_supports_vision_tool_messages=lambda: True
 args={**recalled_ref,'view':'image','asset_hash':recalled_asset}
 opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
-                call='call_image',tool='apsimo_memory_read_source')
+                call='call_image',tool='pacomind_memory_read_source')
 assert opened['image_bytes_included'] is True and opened['image']['asset_hash']==asset,opened
 result=copy.deepcopy(dispatch.last_result)
 assert isinstance(result['content'],list) and len(result['content'])==2,result
@@ -58,7 +58,7 @@ assert encoded not in result['content'][0]['text']
 assert base64.b64decode(result['content'][1]['image_url']['url'].split(',')[1])==original
 messages=[{'role':'user','content':compose_user_api_content('',recalled,'')},
     {'role':'assistant','content':'','tool_calls':[{'id':'call_image','type':'function','function':{
-        'name':'apsimo_memory_read_source','arguments':json.dumps(args)}}]},result]
+        'name':'pacomind_memory_read_source','arguments':json.dumps(args)}}]},result]
 responses={'input':_chat_messages_to_responses_input(copy.deepcopy(messages))}
 _,anthropic=convert_messages_to_anthropic(copy.deepcopy(messages))
 requests=[{'messages':messages},responses,{'messages':anthropic}]
@@ -76,13 +76,13 @@ assert anthropic_result['content'][1]['type']=='image'
 assert base64.b64decode(anthropic_result['content'][1]['source']['data'])==original
 agent._model_supports_vision=lambda: False
 nonvision=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
-                   call='call_no_vision',tool='apsimo_memory_read_source')
+                   call='call_no_vision',tool='pacomind_memory_read_source')
 assert nonvision['complete'] is False and nonvision['image_bytes_included'] is False,nonvision
 assert 'No visual inspection occurred' in nonvision['error']
 agent._model_supports_vision=lambda: True
 agent._provider_supports_vision_tool_messages=lambda: False
 unsupported=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
-                     call='call_no_parts',tool='apsimo_memory_read_source')
+                     call='call_no_parts',tool='pacomind_memory_read_source')
 assert unsupported['image_bytes_included'] is False and 'error' in unsupported,unsupported
 ledger.erase_sources(contact_id='person',turn_ids=['native-image'])
 for request in requests:

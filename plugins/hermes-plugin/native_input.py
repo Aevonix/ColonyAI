@@ -17,7 +17,7 @@ class NativeInput:
     bound: tuple[str, str] | None = None
 
 
-_CURRENT = ContextVar('colony_native_clean_input', default=None)
+_CURRENT = ContextVar('pacomind_native_clean_input', default=None)
 
 
 def _transport():

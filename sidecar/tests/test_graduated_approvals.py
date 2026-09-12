@@ -1,4 +1,4 @@
-"""Graduated approval policy v0.18.0 — COLONY_APPROVAL_POLICY=graduated.
+"""Graduated approval policy v0.18.0 — PACOMIND_APPROVAL_POLICY=graduated.
 
 Graduated policy may tune presentation, but it is not execution authority.
 Every effectful action needs a canonical direct decision or bounded grant.
@@ -24,20 +24,20 @@ from types import SimpleNamespace
 import pytest
 from fastapi import HTTPException
 
-from apsimo.api.routers import task_queue as tq_router
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.events import broadcaster
-from apsimo.initiatives import standing_approvals
-from apsimo.initiatives.action_registry import (
+from pacomind.api.routers import task_queue as tq_router
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.events import broadcaster
+from pacomind.initiatives import standing_approvals
+from pacomind.initiatives.action_registry import (
     ACTION_REGISTRY,
     RiskTier,
     classify_agent_action,
     get_action,
     get_approval_policy,
 )
-from apsimo.initiatives.approval_policy import is_authorized_target
-from apsimo.task_queue.models import JobStatus
-from apsimo.task_queue.queue_manager import TaskQueueManager
+from pacomind.initiatives.approval_policy import is_authorized_target
+from pacomind.task_queue.models import JobStatus
+from pacomind.task_queue.queue_manager import TaskQueueManager
 
 
 # ---------------------------------------------------------------------------
@@ -47,9 +47,9 @@ from apsimo.task_queue.queue_manager import TaskQueueManager
 @pytest.fixture(autouse=True)
 def _isolated_env(monkeypatch, tmp_path):
     """Per-test state dir so standing approvals never leak between tests."""
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("COLONY_APPROVAL_POLICY", raising=False)
-    monkeypatch.delenv("COLONY_AGENT_AUTO_APPROVE", raising=False)
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("PACOMIND_APPROVAL_POLICY", raising=False)
+    monkeypatch.delenv("PACOMIND_AGENT_AUTO_APPROVE", raising=False)
 
 
 @pytest.fixture()
@@ -129,12 +129,12 @@ async def _submit(stub, action_hint, initiative_id="init-1", entity_id="e1"):
 
 def test_default_policy_is_strict(monkeypatch):
     assert get_approval_policy() == "strict"
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     assert get_approval_policy() == "graduated"
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", " GRADUATED ")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", " GRADUATED ")
     assert get_approval_policy() == "graduated"
     # Unknown values fail closed to strict
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "yolo")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "yolo")
     assert get_approval_policy() == "strict"
 
 
@@ -219,7 +219,7 @@ def test_registry_tier_audit():
 @pytest.mark.asyncio
 async def test_graduated_mutating_requires_canonical_authority(
         tmp_path, monkeypatch, captured_events):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(mgr)
@@ -244,7 +244,7 @@ async def test_graduated_mutating_requires_canonical_authority(
 
 @pytest.mark.asyncio
 async def test_graduated_destructive_blocks(tmp_path, monkeypatch, captured_events):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(mgr)
@@ -266,7 +266,7 @@ async def test_graduated_destructive_blocks(tmp_path, monkeypatch, captured_even
 @pytest.mark.asyncio
 async def test_graduated_outbound_authorized_contact_still_requires_approval(
         tmp_path, monkeypatch, captured_events):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
     try:
         store = _FakeContactStore(
@@ -295,7 +295,7 @@ async def test_graduated_outbound_authorized_contact_still_requires_approval(
 
 @pytest.mark.asyncio
 async def test_graduated_outbound_unknown_target_blocks(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
     try:
         # Store resolves nothing for this address
@@ -315,7 +315,7 @@ async def test_graduated_outbound_unknown_target_blocks(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_graduated_outbound_unauthorized_contact_blocks(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
     try:
         store = _FakeContactStore(
@@ -337,7 +337,7 @@ async def test_graduated_outbound_unauthorized_contact_blocks(tmp_path, monkeypa
 
 @pytest.mark.asyncio
 async def test_graduated_outbound_without_contact_store_blocks(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(
@@ -488,7 +488,7 @@ def test_standing_approvals_persist_across_reload(tmp_path):
     standing_approvals.grant("coding_merge_pr", approved_by="sam")
     standing_approvals.grant("calendar_send_reminder", approved_by="sam")
 
-    # On disk, under $COLONY_STATE_DIR
+    # On disk, under $PACOMIND_STATE_DIR
     path = Path(standing_approvals._path())
     assert path.name == "standing_approvals.json"
     on_disk = json.loads(path.read_text())

@@ -10,7 +10,7 @@ import os
 # Ensure the sidecar package is importable
 sys.path.insert(0, os.path.dirname(__file__))
 
-from apsimo.server import create_app
+from pacomind.server import create_app
 
 
 def main() -> None:

@@ -1,6 +1,6 @@
 # Receipt-derived cognition evidence
 
-Colony can now learn from completed project work without trusting a model,
+PacoMind can now learn from completed project work without trusting a model,
 worker, queue status, or external producer to declare its own success. The
 feature defaults to off and requires qualification before activation.
 
@@ -69,7 +69,7 @@ passthrough cursor prevents off-to-live replay duplication.
 
 ## Modes
 
-`COLONY_COGNITION_EVIDENCE=off|shadow|live` defaults to `off`. Unknown values
+`PACOMIND_COGNITION_EVIDENCE=off|shadow|live` defaults to `off`. Unknown values
 resolve to off.
 
 - `off`: no projection validation or evidence-derived learning. The reducer
@@ -84,14 +84,14 @@ resolve to off.
 
 Additional controls:
 
-- `COLONY_COGNITION_EVIDENCE_BOOTSTRAP=beginning|tail` defaults to
+- `PACOMIND_COGNITION_EVIDENCE_BOOTSTRAP=beginning|tail` defaults to
   `beginning`.
-- `COLONY_COGNITION_EVIDENCE_INTERVAL_SECONDS` defaults to 30 and is bounded
+- `PACOMIND_COGNITION_EVIDENCE_INTERVAL_SECONDS` defaults to 30 and is bounded
   to 5–3600 seconds.
-- `COLONY_COGNITION_EVIDENCE_GAP_POLICY=stop|acknowledge` defaults to `stop`.
+- `PACOMIND_COGNITION_EVIDENCE_GAP_POLICY=stop|acknowledge` defaults to `stop`.
   `acknowledge` records an explicit durable gap; it does not recreate lost
   evidence and must not be used as an automatic availability setting.
-- `COLONY_EVENT_CONCERNS_GAP_POLICY` and `COLONY_SITUATION_GAP_POLICY` use the
+- `PACOMIND_EVENT_CONCERNS_GAP_POLICY` and `PACOMIND_SITUATION_GAP_POLICY` use the
   same stop-by-default contract for the other host-journal cognition reducers.
 
 ## Operator visibility

@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 import pytest
 
 from test_accepted_local_work import body, local_api, native_run, post
-from apsimo.commitments.local_work import LocalWork
+from pacomind.commitments.local_work import LocalWork
 from test_hermes_general_governance import runtime, _pre, _tool
 
 
@@ -248,7 +248,7 @@ def test_standalone_new_turn_and_legacy_acceptance_keep_their_identity(local_api
     old = post(api, path, body(tmp_path)).json()
     # Recreate predecessor storage shape: the original dedup key lived only
     # on the initiative, before acceptance aliases were recorded separately.
-    from apsimo.commitments.local_work import SOURCE, encoded
+    from pacomind.commitments.local_work import SOURCE, encoded
     import hashlib
     material = {'commitment_id': obligation['id'], 'question': body(tmp_path)['question'],
                 'sources': body(tmp_path)['sources'], 'session_id': 'owner-chat', 'turn_id': 'owner-turn'}
@@ -274,20 +274,20 @@ def test_native_handler_recovers_lost_handoff_ack_without_releasing_worker(runti
     _pre(context, session=session, task='owner-task', turn='owner-turn', platform='sms', sender='+15550001')
     def tool(name, args):
         return json.loads(_tool(context, name, args, session=session, task='owner-task', turn='owner-turn', call=name))
-    assert tool('colony_commitment_work', {'operation':'claim', 'commitment_id':obligation['id']})['accepted']
+    assert tool('pacomind_commitment_work', {'operation':'claim', 'commitment_id':obligation['id']})['accepted']
     args = {'commitment_id':obligation['id'], 'question':body(tmp_path)['question'], 'sources':body(tmp_path)['sources']}
-    assert 'error' in tool('colony_accept_local_draft', args)
+    assert 'error' in tool('pacomind_accept_local_draft', args)
     assert dropped
     # The worker may take ownership before the accepting caller learns that
     # handoff committed. A replay must detach only the caller's old snapshot.
     assert claim(api, obligation, session_id='worker', task_id='worker', turn_id='worker')[1]['accepted']
-    recovered = tool('colony_accept_local_draft', args)
+    recovered = tool('pacomind_accept_local_draft', args)
     assert recovered['id'] == dropped[0] and recovered['handoff_released'] is True
     assert claim(api, obligation, operation='status')[1]['session_id'] == 'worker'
     from test_hermes_native_tool_authority import call
     assert call(context, 'read_file', session=session, task='owner-task', turn='owner-turn') == 'executed'
     for forbidden in ('handoff', 'claim_id', 'session_id'):
-        assert 'error' in tool('colony_accept_local_draft', {**args, forbidden:'model-selected'})
-    conflict = tool('colony_accept_local_draft', {**args, 'new_draft':True})
+        assert 'error' in tool('pacomind_accept_local_draft', {**args, forbidden:'model-selected'})
+    conflict = tool('pacomind_accept_local_draft', {**args, 'new_draft':True})
     assert conflict == {'error':'local_draft_in_progress', 'initiative_id': recovered['id'],
                         'execution_created':False}

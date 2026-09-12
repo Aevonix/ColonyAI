@@ -14,23 +14,23 @@ from fastapi import FastAPI, HTTPException, Response
 from httpx import ASGITransport, AsyncClient
 from starlette.requests import Request
 
-from apsimo.api.authority import RequestAuthority, required_scope
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import task_queue as tq_router
-from apsimo.initiatives.approval_authority import (
+from pacomind.api.authority import RequestAuthority, required_scope
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import task_queue as tq_router
+from pacomind.initiatives.approval_authority import (
     ApprovalAuthorityError,
     ApprovalAuthorityStore,
     build_action_binding,
     build_approval_presentation,
     prepare_action_approval,
 )
-from apsimo.task_queue.models import (
+from pacomind.task_queue.models import (
     Job,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.queue_manager import TaskQueueManager
 
 
 def _binding(job_id: str, *, pr: str = "17", message: str = "merge"):
@@ -199,7 +199,7 @@ def _request(authority: RequestAuthority) -> Request:
         "client": ("127.0.0.1", 50000),
         "scheme": "http",
     })
-    request.state.colony_authority = authority
+    request.state.pacomind_authority = authority
     return request
 
 
@@ -222,7 +222,7 @@ def test_store_closes_every_transient_sqlite_connection(tmp_path, monkeypatch):
     hide a lifecycle leak that exhausts macOS's default descriptor limit.
     """
 
-    import apsimo.initiatives.approval_authority as authority_module
+    import pacomind.initiatives.approval_authority as authority_module
 
     original_connect = authority_module.sqlite3.connect
     opened = []
@@ -552,8 +552,8 @@ def test_concurrent_grant_resolution_is_one_use_and_idempotent(tmp_path):
 async def test_http_approved_by_spoof_is_ignored_and_scope_is_attested(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -603,8 +603,8 @@ async def test_http_approved_by_spoof_is_ignored_and_scope_is_attested(
 async def test_exact_approval_replay_is_idempotent_while_dependency_blocked(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -658,8 +658,8 @@ async def test_exact_approval_replay_is_idempotent_while_dependency_blocked(
 async def test_enforce_mode_rejects_model_or_consumer_without_decision_scope(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -683,7 +683,7 @@ async def test_enforce_mode_rejects_model_or_consumer_without_decision_scope(
 
 
 def test_enforce_middleware_scopes_are_exact(monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     assert required_scope(
         "POST", "/v1/host/queue/jobs/job-1/approve"
     ) == "approvals:decide"
@@ -696,7 +696,7 @@ def test_enforce_middleware_scopes_are_exact(monkeypatch):
     assert required_scope(
         "DELETE", "/v1/host/queue/approvals/grants/grt-1"
     ) == "approvals:manage"
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enfroce")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enfroce")
     assert required_scope(
         "GET", "/v1/host/queue/jobs/blocked"
     ) == "approvals:read"
@@ -709,7 +709,7 @@ def test_enforce_middleware_scopes_are_exact(monkeypatch):
 async def test_enforce_approval_surfaces_never_allow_anonymous_dev_mode(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     app = FastAPI()
     app.add_middleware(ApiKeyMiddleware, api_key=None, keyring_path=None)
     app.include_router(tq_router.router)
@@ -741,7 +741,7 @@ async def test_enforce_approval_surfaces_never_allow_anonymous_dev_mode(
 async def test_invalid_approval_mode_returns_503_on_read_and_decision(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enfroce")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enfroce")
     app = FastAPI()
     app.add_middleware(ApiKeyMiddleware, api_key=None, keyring_path=None)
     app.include_router(tq_router.router)
@@ -768,8 +768,8 @@ async def test_invalid_approval_mode_returns_503_on_read_and_decision(
 async def test_enforce_approval_reads_require_api_access_and_exact_scope(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     keyring = tmp_path / "approval-read-keyring.json"
     keyring.write_text(json.dumps({
         "version": 1,
@@ -832,8 +832,8 @@ async def test_enforce_approval_reads_require_api_access_and_exact_scope(
 async def test_shadow_restricted_approval_principal_uses_exact_route_only(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     keyring = tmp_path / "shadow-approval-keyring.json"
     keyring.write_text(json.dumps({
         "version": 1,
@@ -933,7 +933,7 @@ def test_presentation_is_redacted_bounded_and_digest_bound(tmp_path):
 async def test_pem_private_key_never_enters_approval_surfaces(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     pem_body = "HOST_PRIVATE_KEY_BYTES_MUST_NEVER_PROJECT_7xQ9"
     pem = (
         "-----BEGIN PRIVATE KEY-----\n"
@@ -1017,7 +1017,7 @@ async def test_direct_effect_submission_has_authority_before_blocked_read(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1056,7 +1056,7 @@ async def test_reconciler_repairs_partial_legacy_approval_hold(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1097,7 +1097,7 @@ async def test_reconciler_repairs_partial_legacy_approval_hold(
 async def test_reconciler_preserves_rejection_before_available_exact_grant(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1147,7 +1147,7 @@ async def test_reconciler_preserves_rejection_before_available_exact_grant(
 async def test_historical_grant_use_cannot_override_target_rejection(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1219,7 +1219,7 @@ async def test_historical_grant_use_cannot_override_target_rejection(
 async def test_initial_post_preserves_orphaned_rejection_before_exact_grant(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     target_id = "job-rejected-before-queue-insert"
@@ -1264,7 +1264,7 @@ async def test_initial_post_preserves_orphaned_rejection_before_exact_grant(
 async def test_unserializable_queue_row_neither_prompts_nor_burns_grant(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1309,7 +1309,7 @@ async def test_unserializable_queue_row_neither_prompts_nor_burns_grant(
 async def test_invalid_queue_job_id_is_rejected_before_approval_or_grant(
     tmp_path, monkeypatch, invalid_job_id,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1368,7 +1368,7 @@ async def test_uuid_and_work_order_queue_ids_remain_valid(
 async def test_queue_first_birth_crash_before_authority_is_safe_and_repairable(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     job = Job(
@@ -1413,7 +1413,7 @@ async def test_queue_first_birth_crash_before_authority_is_safe_and_repairable(
 async def test_queue_first_birth_crash_after_authority_converges_once(
     tmp_path, monkeypatch, authority_kind,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     job = Job(
@@ -1632,7 +1632,7 @@ async def test_blocked_projection_never_falls_back_to_secret_job_payload(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     secret = "never-render-this-owner-secret"
@@ -1672,7 +1672,7 @@ async def test_blocked_projection_never_falls_back_to_secret_job_payload(
 async def test_raw_approval_reads_hide_nonqueue_and_orphan_requests(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1712,7 +1712,7 @@ async def test_raw_approval_reads_hide_nonqueue_and_orphan_requests(
 async def test_blocked_discovery_cursor_pages_exactly_once_without_mutation(
     tmp_path, monkeypatch, count,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1755,7 +1755,7 @@ async def test_blocked_discovery_cursor_pages_exactly_once_without_mutation(
 async def test_blocked_discovery_excludes_and_counts_legacy_ids_read_only(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     canonical = [f"legacy-boundary-{index:03d}" for index in range(199)]
@@ -1806,9 +1806,9 @@ async def test_blocked_discovery_excludes_and_counts_legacy_ids_read_only(
         assert [item["id"] for item in all_items] == canonical
         assert [item["id"] for item in agent_items] == canonical
         assert custom_items == []
-        assert all_response.headers["X-Colony-Blocked-Legacy-Count"] == "7"
-        assert agent_response.headers["X-Colony-Blocked-Legacy-Count"] == "7"
-        assert custom_response.headers["X-Colony-Blocked-Legacy-Count"] == "0"
+        assert all_response.headers["X-PacoMind-Blocked-Legacy-Count"] == "7"
+        assert agent_response.headers["X-PacoMind-Blocked-Legacy-Count"] == "7"
+        assert custom_response.headers["X-PacoMind-Blocked-Legacy-Count"] == "0"
         encoded = json.dumps(all_items, ensure_ascii=False)
         assert all(legacy_job_id not in encoded for legacy_job_id in legacy_ids)
         assert before == after
@@ -1821,7 +1821,7 @@ async def test_blocked_discovery_excludes_and_counts_legacy_ids_read_only(
 async def test_blocked_discovery_accepts_canonical_boundary_cursors(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     ids = ["a", "a/path", "z" * 192]
@@ -1843,7 +1843,7 @@ async def test_blocked_discovery_accepts_canonical_boundary_cursors(
 async def test_blocked_discovery_cursor_validation_and_unknown_position(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1873,7 +1873,7 @@ async def test_blocked_discovery_cursor_validation_and_unknown_position(
 async def test_blocked_discovery_task_type_filter_is_cursor_stable(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1903,8 +1903,8 @@ async def test_blocked_discovery_task_type_filter_is_cursor_stable(
 async def test_blocked_cursor_walk_handles_removal_and_lower_id_insert(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "shadow")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     initial = ["walk-100", "walk-200", "walk-300", "walk-400"]
@@ -1948,7 +1948,7 @@ async def test_approval_projection_ignores_forged_authorization_tags(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -1989,7 +1989,7 @@ async def test_approval_job_projection_exposes_exact_direct_authorization(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -2019,7 +2019,7 @@ async def test_approval_job_projection_exposes_exact_direct_authorization(
 
         projection = await tq_router.get_job_approval_projection(job.job_id)
 
-        assert projection["schema"] == "ColonyApprovalAuthorizationProjectionV1"
+        assert projection["schema"] == "PacoMindApprovalAuthorizationProjectionV1"
         assert projection["version"] == 1
         assert projection["authority_mode"] == "shadow"
         assert projection["job_id"] == job.job_id
@@ -2057,7 +2057,7 @@ async def test_approval_job_projection_exposes_exact_direct_authorization(
 async def test_approval_projection_reports_rejected_cancelled_queue_state(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -2101,7 +2101,7 @@ async def test_approval_job_projection_exposes_consumed_grant_after_queueing(
     tmp_path,
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     store = ApprovalAuthorityStore()
     source_payload = {
         "action_hint": "coding_merge_pr",
@@ -2183,7 +2183,7 @@ async def test_grant_projection_fails_closed_without_exact_source_request(
     mutation,
     expected_status,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     store = ApprovalAuthorityStore()
     source_payload = {
         "action_hint": "coding_merge_pr",
@@ -2253,8 +2253,8 @@ async def test_grant_projection_fails_closed_without_exact_source_request(
 async def test_enforce_http_boundary_derives_principal_from_scoped_key(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     keyring = tmp_path / "keys.json"
     keyring.write_text(json.dumps({
         "version": 1,

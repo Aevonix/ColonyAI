@@ -6,8 +6,8 @@ import sqlite3
 
 import pytest
 
-import apsimo.api.routers.host as host_mod
-from apsimo.commitments.store import (
+import pacomind.api.routers.host as host_mod
+from pacomind.commitments.store import (
     CommitmentResolutionSchemaError,
     CommitmentStore,
     RESOLUTION_RECOVERY_CAPABILITY,
@@ -119,7 +119,7 @@ def test_exact_legacy_absence_migrates_preserves_data_and_restarts(tmp_path):
     assert first.resolution_recovery_readiness() == {
         "ready": True,
         "capability": RESOLUTION_RECOVERY_CAPABILITY,
-        "schema": "ColonyCommitmentResolutionRecoveryV1",
+        "schema": "PacoMindCommitmentResolutionRecoveryV1",
         "version": 1,
     }
     migrated_objects = _recovery_objects(db_path)
@@ -174,7 +174,7 @@ def test_exact_d829_schema_preserves_bound_proof_across_restart(tmp_path):
     first = CommitmentStore(db_path)
     assert first.resolution_recovery_readiness()["ready"] is True
     assert first.get_resolution_operation("d829-bound") == {
-        "schema": "ColonyCommitmentResolutionOperationV1",
+        "schema": "PacoMindCommitmentResolutionOperationV1",
         "version": 1,
         **operation,
     }
@@ -452,7 +452,7 @@ async def test_host_capability_and_health_follow_live_recovery_readiness(
 
 
 def test_server_validates_before_wiring_and_fails_lifespan_closed():
-    from apsimo import server
+    from pacomind import server
 
     source = inspect.getsource(server.lifespan)
     section = source[

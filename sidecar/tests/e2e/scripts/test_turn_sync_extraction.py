@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """E2E Test: Turn Sync → Extraction Pipeline
 
-Sends a real conversation through Colony's turn_sync, then verifies
+Sends a real conversation through PacoMind's turn_sync, then verifies
 that ToM extraction, pattern extraction, and surprise scoring fired
 and stored results.
 
-Usage: COLONY_API_KEY=test python3 test_turn_sync_extraction.py
+Usage: PACOMIND_API_KEY=test python3 test_turn_sync_extraction.py
 """
 
 import json
@@ -16,9 +16,9 @@ import uuid
 
 import httpx
 
-COLONY_URL = os.environ.get("COLONY_URL", "http://localhost:7777")
-COLONY_API_KEY = os.environ.get("COLONY_API_KEY", "")
-HEADERS = {"Authorization": f"Bearer {COLONY_API_KEY}"}
+PACOMIND_URL = os.environ.get("PACOMIND_URL", "http://localhost:7777")
+PACOMIND_API_KEY = os.environ.get("PACOMIND_API_KEY", "")
+HEADERS = {"Authorization": f"Bearer {PACOMIND_API_KEY}"}
 CT = {"Content-Type": "application/json"}
 
 def log(msg, status=""):
@@ -26,15 +26,15 @@ def log(msg, status=""):
     print(f"  {msg}{tag}")
 
 def get(path, **params):
-    r = httpx.get(f"{COLONY_URL}{path}", headers=HEADERS, params=params, timeout=10)
+    r = httpx.get(f"{PACOMIND_URL}{path}", headers=HEADERS, params=params, timeout=10)
     return r
 
 def post(path, data):
-    r = httpx.post(f"{COLONY_URL}{path}", headers={**HEADERS, **CT}, json=data, timeout=15)
+    r = httpx.post(f"{PACOMIND_URL}{path}", headers={**HEADERS, **CT}, json=data, timeout=15)
     return r
 
 def patch(path, data):
-    r = httpx.patch(f"{COLONY_URL}{path}", headers={**HEADERS, **CT}, json=data, timeout=10)
+    r = httpx.patch(f"{PACOMIND_URL}{path}", headers={**HEADERS, **CT}, json=data, timeout=10)
     return r
 
 
@@ -190,13 +190,13 @@ def test_turn_sync_extraction():
         sections = r.json().get("sections", [])
         section_ids = [s["id"] for s in sections]
         log(f"  Sections: {section_ids}")
-        if "colony-commitments" in section_ids:
+        if "pacomind-commitments" in section_ids:
             log("  Commitments in context", "✅")
-        if "colony-affect" not in section_ids:
+        if "pacomind-affect" not in section_ids:
             log("  Legacy mood estimates omitted from ordinary context", "✅")
-        if "colony-shared-facts" in section_ids:
+        if "pacomind-shared-facts" in section_ids:
             log("  Shared facts in context", "✅")
-        if "colony-surprises" in section_ids:
+        if "pacomind-surprises" in section_ids:
             log("  Surprises in context", "✅")
     else:
         log(f"  Context assembly failed: {r.status_code}", "❌")

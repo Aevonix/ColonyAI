@@ -19,9 +19,9 @@ Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 def no_network(*a,**kw): raise AssertionError('Contract fixture must stay offline')
 socket.socket.connect=no_network; socket.create_connection=no_network
 from tools import skill_manager_tool as manager,skill_provenance as provenance,skill_ledger as ledger,write_approval as approval
-from apsimo_hermes.review import stage_skill_change
-from apsimo_hermes.review_evaluation import evaluate_pending,audit_evaluation
-from apsimo_hermes.review_evidence import capture,current
+from pacomind_hermes.review import stage_skill_change
+from pacomind_hermes.review_evaluation import evaluate_pending,audit_evaluation
+from pacomind_hermes.review_evidence import capture,current
 capture(NS(valid_participant=True,authority_lane='owner',platform='cli',session_id='native-parent',turn_id='native-turn'),
     {'messages':[{'role':'assistant','tool_calls':[{'id':'failed-read','function':{'name':'read_file'}}]},
         {'role':'tool','tool_call_id':'failed-read','content':json.dumps({'error':'Selected fixture path is absent'})}]})
@@ -41,10 +41,10 @@ try:
         if scenario in {'targeted','patch_conflict','interrupted_targeted'}:
             operation={'action':'patch','name':name,'old_string':'absent-text' if scenario=='patch_conflict' else 'earlier','new_string':'current supplied'}
         arguments={'operations':[operation]} if scenario in {'batch','targeted','patch_conflict','interrupted_targeted'} else operation
-        arguments['_colony_review_evidence']={'invented_by_model':True}
+        arguments['_pacomind_review_evidence']={'invented_by_model':True}
         staged=json.loads(stage_skill_change(arguments))
         assert staged['staged']; pid=staged['pending_id']
-        assert approval.get_pending(approval.SKILLS,pid)['payload']['_colony_review_evidence']==expected_source
+        assert approval.get_pending(approval.SKILLS,pid)['payload']['_pacomind_review_evidence']==expected_source
 finally: provenance.reset_current_write_origin(token)
 target=manager._find_skill(name)['path']/'SKILL.md'
 phases=[]
@@ -147,7 +147,7 @@ Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 def no_network(*a,**kw): raise AssertionError('Contract fixture must stay offline')
 socket.socket.connect=no_network; socket.create_connection=no_network
 from tools import skill_manager_tool as manager,skill_provenance as provenance,skill_ledger as ledger,write_approval as approval
-from apsimo_hermes.review import stage_skill_change
+from pacomind_hermes.review import stage_skill_change
 name='neutral-batch-shape'
 old='---\nname: '+name+'\ndescription: Use for neutral batch shape checks.\n---\nOriginal guidance.\n'
 new=old.replace('Original guidance.','Updated guidance.')

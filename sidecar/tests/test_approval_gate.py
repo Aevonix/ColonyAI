@@ -21,16 +21,16 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from apsimo.api.authority import legacy_authority
-from apsimo.api.routers import task_queue as tq_router
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.task_queue.models import (
+from pacomind.api.authority import legacy_authority
+from pacomind.api.routers import task_queue as tq_router
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.task_queue.models import (
     Job,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.queue_manager import TaskQueueManager
 
 
 # ---------------------------------------------------------------------------
@@ -39,10 +39,10 @@ from apsimo.task_queue.queue_manager import TaskQueueManager
 
 @pytest.fixture(autouse=True)
 def _isolated_approval_state(monkeypatch, tmp_path):
-    """Approval tests must never touch a developer/live Colony state dir."""
+    """Approval tests must never touch a developer/live PacoMind state dir."""
 
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.delenv("COLONY_APPROVAL_AUTHORITY_MODE", raising=False)
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.delenv("PACOMIND_APPROVAL_AUTHORITY_MODE", raising=False)
 
 async def _make_mgr(tmp_path) -> TaskQueueManager:
     """Fresh singleton TaskQueueManager backed by a tmp SQLite db."""
@@ -104,7 +104,7 @@ async def _submit_blocked(mgr: TaskQueueManager, **payload_overrides) -> str:
 
 @pytest.mark.asyncio
 async def test_gated_action_submission_is_blocked(tmp_path, monkeypatch):
-    monkeypatch.delenv("COLONY_AGENT_AUTO_APPROVE", raising=False)
+    monkeypatch.delenv("PACOMIND_AGENT_AUTO_APPROVE", raising=False)
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(mgr)
@@ -126,7 +126,7 @@ async def test_gated_action_submission_is_blocked(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_read_only_action_submission_is_queued(tmp_path, monkeypatch):
-    monkeypatch.delenv("COLONY_AGENT_AUTO_APPROVE", raising=False)
+    monkeypatch.delenv("PACOMIND_AGENT_AUTO_APPROVE", raising=False)
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(mgr)
@@ -145,7 +145,7 @@ async def test_read_only_action_submission_is_queued(tmp_path, monkeypatch):
 @pytest.mark.asyncio
 async def test_legacy_auto_approve_env_cannot_bypass_central_gate(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_AGENT_AUTO_APPROVE", "true")
+    monkeypatch.setenv("PACOMIND_AGENT_AUTO_APPROVE", "true")
     mgr = await _make_mgr(tmp_path)
     try:
         stub = _loop_stub(mgr)
@@ -202,7 +202,7 @@ async def test_claim_excludes_blocked_jobs(tmp_path):
 @pytest.mark.asyncio
 async def test_approve_transitions_to_queued_and_claimable(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     mgr = await _make_mgr(tmp_path)
     try:
         job_id = await _submit_blocked(mgr)
@@ -368,7 +368,7 @@ async def test_approval_timeout_fails_stale_blocked_jobs(tmp_path):
 
 @pytest.mark.asyncio
 async def test_phase_approval_timeout_respects_env(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_TIMEOUT_HOURS", "1")
+    monkeypatch.setenv("PACOMIND_APPROVAL_TIMEOUT_HOURS", "1")
     mgr = await _make_mgr(tmp_path)
     try:
         stale = Job(
@@ -420,7 +420,7 @@ class _RecordingFeedback:
 
 @pytest.mark.asyncio
 async def test_initiative_approve_response_unblocks_job(tmp_path):
-    from apsimo.api.routers import host as host_router
+    from pacomind.api.routers import host as host_router
 
     mgr = await _make_mgr(tmp_path)
     old_store = host_router._initiative_store
@@ -446,7 +446,7 @@ async def test_initiative_approve_response_unblocks_job(tmp_path):
 
 @pytest.mark.asyncio
 async def test_initiative_dismiss_response_rejects_job(tmp_path):
-    from apsimo.api.routers import host as host_router
+    from pacomind.api.routers import host as host_router
 
     mgr = await _make_mgr(tmp_path)
     old_store = host_router._initiative_store
@@ -471,9 +471,9 @@ async def test_initiative_dismiss_response_rejects_job(tmp_path):
 @pytest.mark.asyncio
 async def test_denied_initiative_approval_has_no_status_or_feedback_side_effects(
         tmp_path, monkeypatch):
-    from apsimo.api.routers import host as host_router
+    from pacomind.api.routers import host as host_router
 
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     mgr = await _make_mgr(tmp_path)
     old_store = host_router._initiative_store
     old_feedback = host_router._feedback_store
@@ -488,7 +488,7 @@ async def test_denied_initiative_approval_has_no_status_or_feedback_side_effects
         "path": "/v1/host/initiatives/init-denied/respond",
         "headers": [],
     })
-    request.state.colony_authority = legacy_authority()
+    request.state.pacomind_authority = legacy_authority()
     try:
         job_id = await _submit_blocked(mgr)
         initiative.job_id = job_id

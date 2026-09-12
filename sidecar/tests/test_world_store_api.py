@@ -3,9 +3,9 @@
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host
-from apsimo.world_model.config import WorldModelConfig
-from apsimo.world_model.store import WorldModelStore
+from pacomind.api.routers import host
+from pacomind.world_model.config import WorldModelConfig
+from pacomind.world_model.store import WorldModelStore
 
 
 async def test_world_http_entities_and_relationships_survive_reopen(tmp_path, monkeypatch):

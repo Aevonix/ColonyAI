@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.contacts.comms import CommsLog
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.idempotency import SourceErased
+from pacomind.api.routers import host
+from pacomind.contacts.comms import CommsLog
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.idempotency import SourceErased
 from test_turn_source_evidence import source_app
 
 
@@ -151,10 +151,10 @@ async def test_projection_cleanup_failure_stays_pending_and_read_retries(source_
 @pytest.mark.asyncio
 @pytest.mark.parametrize('disabled', [False, True])
 async def test_absent_store_status_is_not_a_deletion_claim(source_app, tmp_path, monkeypatch, disabled):
-    import apsimo.vector as vector
+    import pacomind.vector as vector
     monkeypatch.setattr(vector, '_store', None)
-    monkeypatch.setenv('COLONY_GRAPH_ENABLED', 'false' if disabled else 'true')
-    monkeypatch.setenv('COLONY_EMBED_PROVIDER', 'skip' if disabled else 'openai_api')
+    monkeypatch.setenv('PACOMIND_GRAPH_ENABLED', 'false' if disabled else 'true')
+    monkeypatch.setenv('PACOMIND_EMBED_PROVIDER', 'skip' if disabled else 'openai_api')
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     ledger.record_source('original', contact_id='person', session_id='session',
         messages=[{'role': 'user', 'content': 'A neutral fact.'}], derive_claims=False)
@@ -168,7 +168,7 @@ async def test_absent_store_status_is_not_a_deletion_claim(source_app, tmp_path,
 
 @pytest.mark.asyncio
 async def test_configured_store_failure_remains_pending(source_app, tmp_path, monkeypatch):
-    import apsimo.vector as vector
+    import pacomind.vector as vector
     graph = SimpleNamespace(delete_source_memories=AsyncMock(side_effect=OSError('offline')))
     vectors = SimpleNamespace(catalog=object(), erase_source_projections=AsyncMock(side_effect=OSError('offline')))
     monkeypatch.setattr(host, '_graph', graph)
@@ -185,10 +185,10 @@ async def test_configured_store_failure_remains_pending(source_app, tmp_path, mo
 
 
 def test_unbound_foreign_profile_read_preserves_linked_rows(tmp_path, monkeypatch):
-    import apsimo
+    import pacomind
     ledger, log, lineage = linked_log(tmp_path)
     log.log('person', summary='A fact owned by the original profile.', source_lineage=lineage)
-    monkeypatch.setattr(apsimo, 'get_state_dir', lambda: tmp_path / 'unrelated-profile')
+    monkeypatch.setattr(pacomind, 'get_state_dir', lambda: tmp_path / 'unrelated-profile')
     reopened = CommsLog(log._db_path)
     for read in (lambda: reopened.history('person'), reopened.recent,
                  lambda: reopened.counts('person'), reopened.purge_erased_sources):
@@ -223,7 +223,7 @@ def test_prose_validation_follows_selected_rows_not_whole_contact(tmp_path, monk
 
 
 def test_metadata_aggregates_use_erasure_ids_without_hashing_source_text(tmp_path, monkeypatch):
-    import apsimo.turns.idempotency as sources
+    import pacomind.turns.idempotency as sources
     ledger, log, lineage = linked_log(tmp_path)
     log.log('person', direction='out', summary='A linked summary.', source_lineage=lineage)
     log.log('person', direction='in', summary='Independent unlinked history.')

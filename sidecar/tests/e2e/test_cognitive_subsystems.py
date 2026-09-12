@@ -1,13 +1,13 @@
-"""E2E integration tests for Colony cognitive subsystems (v0.5.3+).
+"""E2E integration tests for PacoMind cognitive subsystems (v0.5.3+).
 
 Tests full data flow: API → subsystem store → readback → cross-subsystem integration.
 
 Prerequisites:
-- Colony sidecar running (default: localhost:7777)
-- COLONY_API_KEY set
+- PacoMind sidecar running (default: localhost:7777)
+- PACOMIND_API_KEY set
 
 Run:
-    COLONY_API_KEY=your-key pytest tests/e2e/test_cognitive_subsystems.py -v
+    PACOMIND_API_KEY=your-key pytest tests/e2e/test_cognitive_subsystems.py -v
 """
 
 from __future__ import annotations
@@ -20,14 +20,14 @@ import uuid
 import httpx
 import pytest
 
-COLONY_URL = os.environ.get("COLONY_URL", "http://localhost:7777")
-COLONY_API_KEY = os.environ.get("COLONY_API_KEY", "")
-HEADERS = {"Authorization": f"Bearer {COLONY_API_KEY}"} if COLONY_API_KEY else {}
+PACOMIND_URL = os.environ.get("PACOMIND_URL", "http://localhost:7777")
+PACOMIND_API_KEY = os.environ.get("PACOMIND_API_KEY", "")
+HEADERS = {"Authorization": f"Bearer {PACOMIND_API_KEY}"} if PACOMIND_API_KEY else {}
 
 
 @pytest.fixture(scope="session")
 def client():
-    return httpx.Client(base_url=COLONY_URL, headers=HEADERS, timeout=30)
+    return httpx.Client(base_url=PACOMIND_URL, headers=HEADERS, timeout=30)
 
 
 # ---------------------------------------------------------------------------
@@ -408,7 +408,7 @@ class TestEventJournal:
 # ---------------------------------------------------------------------------
 
 class TestDoctorEquivalence:
-    """Verify all subsystems that colony doctor checks are responsive."""
+    """Verify all subsystems that pacomind doctor checks are responsive."""
 
     def test_health_passes(self, client):
         r = client.get("/v1/host/health")

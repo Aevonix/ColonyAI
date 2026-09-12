@@ -11,19 +11,19 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import RequestAuthority, required_scope
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.cognition.external_events import (
+from pacomind.api.authority import RequestAuthority, required_scope
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.cognition.external_events import (
     ExternalCognitionEventV1,
     ExternalEventConflict,
     ExternalEventInboxStore,
     ExternalEventIntake,
     ExternalEventValidationError,
 )
-from apsimo.events.journal import append_event_record, replay_events
-from apsimo.projects import ProjectEngine, ProjectStore
-from apsimo.work_orders import QueueWorkOrderAdapter
+from pacomind.events.journal import append_event_record, replay_events
+from pacomind.projects import ProjectEngine, ProjectStore
+from pacomind.work_orders import QueueWorkOrderAdapter
 
 
 NOW = datetime(2026, 7, 12, 20, 0, tzinfo=timezone.utc)
@@ -57,7 +57,7 @@ def _payload(**updates):
 
 
 def test_external_event_schema_is_strict_non_secret_and_text_system_only(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     event = ExternalCognitionEventV1.from_authority(
         _payload(), authority=_authority(), now=NOW,
     )
@@ -127,7 +127,7 @@ def test_external_event_schema_is_strict_non_secret_and_text_system_only(monkeyp
 def test_typed_text_and_system_events_allow_natural_surface_language(
     monkeypatch, payload,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
 
     event = ExternalCognitionEventV1.from_authority(
         payload, authority=_authority(), now=NOW,
@@ -169,7 +169,7 @@ def test_typed_text_and_system_events_allow_natural_surface_language(
 def test_typed_surface_rejects_voice_shapes_and_actual_secret_values(
     monkeypatch, payload,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
 
     with pytest.raises(ExternalEventValidationError):
         ExternalCognitionEventV1.from_authority(
@@ -190,7 +190,7 @@ def test_authority_identity_bounds_reject_instead_of_truncating(monkeypatch):
             allow_unscoped_api=False,
         )
 
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     for invalid in (
         authority(principal="p" * 129, viewer="person-owner"),
         authority(credential="c" * 193, viewer="person-owner"),
@@ -205,7 +205,7 @@ def test_authority_identity_bounds_reject_instead_of_truncating(monkeypatch):
     # identities to one 128-character owner and elevated the viewer into the
     # owner-private lane solely because the untrusted audience contained owner.
     prefix = "z" * 128
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", prefix + "a")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", prefix + "a")
     with pytest.raises(ExternalEventValidationError):
         ExternalCognitionEventV1.from_authority(
             _payload(),
@@ -214,7 +214,7 @@ def test_authority_identity_bounds_reject_instead_of_truncating(monkeypatch):
         )
 
     owner = "o" * 128
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", owner)
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", owner)
     bounded = ExternalCognitionEventV1.from_authority(
         _payload(),
         authority=authority(
@@ -278,7 +278,7 @@ def test_authority_identity_bounds_reject_instead_of_truncating(monkeypatch):
 def test_each_external_kind_has_exact_discriminated_attributes(
     monkeypatch, kind, attributes, enum_field,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     event = ExternalCognitionEventV1.from_authority(
         _payload(kind=kind, attributes=attributes),
         authority=_authority(), now=NOW,
@@ -318,7 +318,7 @@ def test_each_external_kind_has_exact_discriminated_attributes(
     ],
 )
 def test_action_digest_and_numeric_bounds_are_exact(monkeypatch, attributes):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     with pytest.raises(ExternalEventValidationError):
         ExternalCognitionEventV1.from_authority(
             _payload(kind="action_outcome", attributes=attributes),
@@ -350,7 +350,7 @@ def test_action_digest_and_numeric_bounds_are_exact(monkeypatch, attributes):
 def test_per_kind_numeric_and_text_types_are_bounded(
     monkeypatch, kind, attributes,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     with pytest.raises(ExternalEventValidationError):
         ExternalCognitionEventV1.from_authority(
             _payload(kind=kind, attributes=attributes),
@@ -359,7 +359,7 @@ def test_per_kind_numeric_and_text_types_are_bounded(
 
 
 def test_text_turn_observation_is_normalized_nonempty_and_bounded(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     event = ExternalCognitionEventV1.from_authority(
         _payload(
             kind="text_turn_observation",
@@ -390,7 +390,7 @@ def test_text_turn_observation_is_normalized_nonempty_and_bounded(monkeypatch):
     "alias", ["gmeet", "telephone", "telephony", "voip", "pstn", "sip"],
 )
 def test_realtime_words_are_valid_inside_typed_text_content(monkeypatch, alias):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     event = ExternalCognitionEventV1.from_authority(
         _payload(summary=f"System status mentions {alias}"),
         authority=_authority(), now=NOW,
@@ -402,9 +402,9 @@ def test_external_event_restart_replay_is_one_receipt_and_one_journal_event(
     tmp_path, monkeypatch,
 ):
     journal_dir = tmp_path / "journal"
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(journal_dir))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(journal_dir))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     db_path = tmp_path / "external-events.db"
     event = ExternalCognitionEventV1.from_authority(
         _payload(), authority=_authority(), now=NOW,
@@ -446,9 +446,9 @@ def test_external_event_restart_replay_is_one_receipt_and_one_journal_event(
 def test_receipt_commit_survives_projection_failure_and_restart(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     path = tmp_path / "external-events.db"
     event = ExternalCognitionEventV1.from_authority(
         _payload(event_id="external-event-projection-failure"),
@@ -458,7 +458,7 @@ def test_receipt_commit_survives_projection_failure_and_restart(
     failed = ExternalEventIntake(
         store, journal_projector=lambda *_args, **_kwargs: None,
     )
-    from apsimo.cognition.external_events import ExternalEventProjectionError
+    from pacomind.cognition.external_events import ExternalEventProjectionError
     with pytest.raises(ExternalEventProjectionError):
         failed.ingest(event, now=NOW)
     reserved, created = store.reserve(event, now=NOW)
@@ -478,10 +478,10 @@ def test_journal_success_then_finalize_crash_and_prune_reconciles_tombstone(
     tmp_path, monkeypatch,
 ):
     journal_dir = tmp_path / "journal"
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(journal_dir))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_RETENTION", "1")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(journal_dir))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_RETENTION", "1")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     path = tmp_path / "external-events.db"
     event = ExternalCognitionEventV1.from_authority(
         _payload(event_id="external-event-finalize-crash"),
@@ -505,7 +505,7 @@ def test_journal_success_then_finalize_crash_and_prune_reconciles_tombstone(
     store.complete_projection = original_complete
     store.close()
 
-    from apsimo.events.journal import append_event
+    from pacomind.events.journal import append_event
     assert append_event("test.retention.advance", {"step": 2}) == 2
     tombstone = json.loads(marker_path.read_text())
     assert tombstone["state"] == "pruned"
@@ -550,10 +550,10 @@ def test_event_key_marker_is_minimal_pruned_and_completed_replay_cannot_resurrec
     tmp_path, monkeypatch,
 ):
     journal_dir = tmp_path / "journal"
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(journal_dir))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_RETENTION", "1")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(journal_dir))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_RETENTION", "1")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     event = ExternalCognitionEventV1.from_authority(
         _payload(event_id="external-event-pruned-marker"),
         authority=_authority(), now=NOW,
@@ -567,7 +567,7 @@ def test_event_key_marker_is_minimal_pruned_and_completed_replay_cannot_resurrec
     (journal_dir / ".cursor").unlink()
     shutil.rmtree(journal_dir / ".sequence-index")
 
-    from apsimo.events.journal import append_event
+    from pacomind.events.journal import append_event
     assert append_event("test.retention.advance", {"step": 2}) == 2
     assert list((journal_dir / ".event-keys").iterdir()) == []
     assert [item["seq"] for item in replay_events(
@@ -581,9 +581,9 @@ def test_event_key_marker_is_minimal_pruned_and_completed_replay_cannot_resurrec
 
 def test_projected_replay_cleans_stale_event_key_marker(tmp_path, monkeypatch):
     journal_dir = tmp_path / "journal"
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(journal_dir))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(journal_dir))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     db_path = tmp_path / "external-events.db"
     event = ExternalCognitionEventV1.from_authority(
         _payload(event_id="external-event-stale-ack"),
@@ -629,7 +629,7 @@ def _app(tmp_path, principals):
 def _headers(secret, principal):
     return {
         "Authorization": f"Bearer {secret}",
-        "X-Colony-Principal": principal,
+        "X-PacoMind-Principal": principal,
     }
 
 
@@ -658,8 +658,8 @@ class _AllowOwnerGoalBoundaries:
 async def test_http_intake_derives_scope_and_rejects_body_authority_and_replay_drift(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
     intake = ExternalEventIntake(ExternalEventInboxStore(
         str(tmp_path / "external-events.db"),
     ))
@@ -743,8 +743,8 @@ async def test_http_intake_derives_scope_and_rejects_body_authority_and_replay_d
 async def test_owner_rcs_goal_creates_one_project_initial_work_order_and_receipt_trace(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
     intake = ExternalEventIntake(ExternalEventInboxStore(
         str(tmp_path / "external-events.db"),
     ))

@@ -1,7 +1,7 @@
 # Scoped API authentication
 
-Colony supports per-service API principals alongside the legacy global
-`COLONY_API_KEY`. The dual-accept period is deliberate: consumers can move one
+PacoMind supports per-service API principals alongside the legacy global
+`PACOMIND_API_KEY`. The dual-accept period is deliberate: consumers can move one
 at a time without turning a live deployment silent.
 
 ## Authority model
@@ -51,7 +51,7 @@ workspace; `cognition:manage` is required to resolve a concern because that
 operation may settle a linked commitment or project. Benchmark and experiment
 reads are separate from evidence ingestion and mutation. Other endpoints
 require `api:access` (or the deliberately broad `*`). Scope names are exact;
-Colony does not infer a wider scope from a prefix.
+PacoMind does not infer a wider scope from a prefix.
 
 `tools:mutate` is a second, handler-level grant for P8 reasoning surfaces. It
 does not make a principal the owner and it cannot be body-claimed: the request
@@ -75,12 +75,12 @@ The host approval bridge should use a dedicated principal with
 at `GET /v1/host/queue/approvals/jobs/{job_id}`, and posts the owner's exact
 decision to `POST /v1/host/queue/approvals/requests/{request_id}/decision`.
 Do not add worker, executor, or attestation scopes to this transport adapter.
-Colony creates the request at effect-job birth; phone and Operator Deck
+PacoMind creates the request at effect-job birth; phone and Operator Deck
 surfaces are short-lived mirrors of that one request, not additional approval
 ledgers.
 
 A channel adapter that submits a structured transport `sender` may also be
-granted `turns:resolve-sender`. Colony then ignores the body's initial contact
+granted `turns:resolve-sender`. PacoMind then ignores the body's initial contact
 claim, starts from the principal's viewer binding, and lets the server-side
 participant resolver map the attested platform/user identifier. Without that
 additional scope, the initial turn contact must be one of the principal's exact
@@ -118,7 +118,7 @@ changing its secret-bearing keyring record:
 
 The policy requires `turns:resolve-sender`, exact platform names, and a cap of
 1..4096 IDs. Wildcard platforms and wildcard person IDs are rejected. When a
-turn from an allowed platform reaches `ParticipantResolver`, Colony discards
+turn from an allowed platform reaches `ParticipantResolver`, PacoMind discards
 the body's initial contact claim, resolves the sender server-side, and only
 then atomically adds that one exact contact ID to the principal's projection.
 A body-asserted ID, contact lookup, or ordinary context request cannot create a
@@ -126,8 +126,8 @@ grant. The projection can add neither API scopes nor `owner`, `shared`, or
 `global` audience lanes.
 
 The projection defaults to
-`$COLONY_STATE_DIR/api-contact-grants.json`; override it with
-`COLONY_API_CONTACT_GRANTS_PATH`. It contains no key material, is required to
+`$PACOMIND_STATE_DIR/api-contact-grants.json`; override it with
+`PACOMIND_API_CONTACT_GRANTS_PATH`. It contains no key material, is required to
 be a regular service-user-owned mode-0600 file, and hot-reloads after atomic
 replacement. An invalid replacement fails dynamic grants closed without
 invalidating the separately configured legacy bearer or scoped keyring.
@@ -136,7 +136,7 @@ For memory requests, an omitted `person_id` is replaced with the authenticated
 viewer binding. A supplied `person_id` is accepted only when it is one of that
 principal's exact grants. The optional `audience` field selects one explicit
 lane. The graph query still uses one hard `(:Memory)-[:ABOUT]->(:Person)`
-candidate boundary. Colony never retries a scoped miss against global memory.
+candidate boundary. PacoMind never retries a scoped miss against global memory.
 If a request supplies both an audience and a person/contact field, they must
 resolve to the same exact ID.
 
@@ -146,7 +146,7 @@ Legacy query-string selectors named `person_id`, `contact_id`, or
 ### Worker node authority
 
 Worker authentication is staged independently from the server-side
-WorkerGovernor. `COLONY_WORKER_AUTHORITY_MODE=shadow` is the default: the
+WorkerGovernor. `PACOMIND_WORKER_AUTHORITY_MODE=shadow` is the default: the
 legacy bearer and not-yet-provisioned scoped consumers keep working, while
 each successful claim records the principal, credential class, and whether
 enforcement would deny it. After every worker has a scoped secret and a
@@ -218,31 +218,31 @@ A keyring execution grant containing `workers:claim` must also contain
 of producing a misleading green claim-only shadow canary. Lifecycle responses
 also expose their exact future enforcement posture.
 
-The embedded in-process worker remains enabled by default for generic Colony
+The embedded in-process worker remains enabled by default for generic PacoMind
 installs. A health-only deployment can set
-`COLONY_EMBEDDED_WORKER_ENABLED=false`; this skips worker construction while
+`PACOMIND_EMBEDDED_WORKER_ENABLED=false`; this skips worker construction while
 leaving the independent queue scheduler and evidence reconciler running.
 
 Generic `agent_action` consumers must select an exact non-effect lane via
-`COLONY_AGENT_WORKER_ROUTES=agent_sync`, `hermes_run`, or the combined default
+`PACOMIND_AGENT_WORKER_ROUTES=agent_sync`, `hermes_run`, or the combined default
 `agent_sync,hermes_run`. The generic parser rejects `action_plane` and
 `work_order`; those belong to the separately pinned host Action Plane node.
-Set `COLONY_AGENT_SYNC_WORKER_NODE_ID`,
-`COLONY_HERMES_RUN_WORKER_NODE_ID`, and
-`COLONY_ACTION_PLANE_WORKER_NODE_ID` to make route ownership exact. The global
-`COLONY_AGENT_JOB_CLAIMS_ENABLED=false` containment switch stops every generic
+Set `PACOMIND_AGENT_SYNC_WORKER_NODE_ID`,
+`PACOMIND_HERMES_RUN_WORKER_NODE_ID`, and
+`PACOMIND_ACTION_PLANE_WORKER_NODE_ID` to make route ownership exact. The global
+`PACOMIND_AGENT_JOB_CLAIMS_ENABLED=false` containment switch stops every generic
 claim loop without stopping initiative forwarding.
 
 The private Thought lane is independent from those generic routes. Production
-P3 startup requires `COLONY_EMBEDDED_WORKER_ENABLED=true`, a configured LLM
-router, and `COLONY_THOUGHT_WORKER_NODE_ID` equal to the local durable node ID.
+P3 startup requires `PACOMIND_EMBEDDED_WORKER_ENABLED=true`, a configured LLM
+router, and `PACOMIND_THOUGHT_WORKER_NODE_ID` equal to the local durable node ID.
 The worker advertises both `cognition_scoped` and `thought_engine:v1`; the queue
 reports the lane unready until that exact handler registers. A wrong node
 cannot evict an already healthy Thought owner.
 
 Release probes call `GET /v1/host/queue/contract` with `workers:contract` and
-match `COLONY_RELEASE_COMMIT` (40 lowercase hex characters) plus
-`COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256` (64 lowercase hex characters).
+match `PACOMIND_RELEASE_COMMIT` (40 lowercase hex characters) plus
+`PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256` (64 lowercase hex characters).
 `GET /v1/host/queue/inspection/jobs/{job_id}` requires `workers:inspect` and
 binds a canary to its exact claimant, attempt, expiry, capabilities, and route
 tags. Runtime readiness is intentionally outside the contract digest, so a
@@ -254,7 +254,7 @@ separate principal with `workers:attest` submits an
 `POST /v1/host/queue/attestations/jobs/{job_id}`. The receipt binds the exact
 server-minted claim attempt, immutable action digest, server-derived effect
 class, bounded scheme-qualified receipt references, and verification time.
-Colony computes the canonical evidence and receipt-reference hashes; callers
+PacoMind computes the canonical evidence and receipt-reference hashes; callers
 cannot submit those hashes. It stores the hashes and canonical reference-only
 attestation, never the receipt artifacts themselves. The global migration
 bearer is rejected. A keyring principal with `workers:attest` is invalid if it
@@ -271,9 +271,9 @@ contract, attempt, and verification-pending fields needed by a reconciler.
 
 Webhook execution is a split claimant/lifecycle principal. The queue worker
 or built-in Agent Bridge claims under its configured node ID (the built-in
-default is `sidecar-bridge`), while the Hermes `colony-jobs` route sends the
+default is `sidecar-bridge`), while the Hermes `pacomind-jobs` route sends the
 heartbeat/complete/fail requests. Before worker-authority enforcement, the
-credential in Hermes' `COLONY_API_KEY` must therefore have
+credential in Hermes' `PACOMIND_API_KEY` must therefore have
 `workers:lifecycle` and an exact worker grant for that same node ID and
 `agent_action` job type. Do not pass a broad bearer in the webhook payload.
 Migrate this consumer alongside the claimant and verify a normal heartbeat +
@@ -293,23 +293,23 @@ attempt map in bulk heartbeats. An executor that does not implement this
 contract cannot claim those jobs.
 
 Agent webhook dispatch uses the same strong route secret as Hermes. Set a
-per-route HMAC secret in Hermes and in `COLONY_HERMES_WEBHOOK_SECRET`; Colony
+per-route HMAC secret in Hermes and in `PACOMIND_HERMES_WEBHOOK_SECRET`; PacoMind
 signs the exact body using pinned Hermes' timestamped
 `X-Webhook-Signature-V2` contract and emits a stable `X-Request-ID`.
 Use the V2 contract for the current integration. Raw-body V1 receiver support
 is retained code outside the supported baseline. `INSECURE_NO_AUTH` is a
 loopback-only development posture.
 
-When Hermes' canonical general Colony plugin is active, the separate
-`colony-memory` provider publishes and dispatches only its non-duplicating
+When Hermes' canonical general PacoMind plugin is active, the separate
+`pacomind-memory` provider publishes and dispatches only its non-duplicating
 read/context allowlist. Standalone queue mutation tools require the explicit
-`COLONY_MEMORY_WORKER_TOOLS=1` opt-in. Initiative approval is never exposed as
+`PACOMIND_MEMORY_WORKER_TOOLS=1` opt-in. Initiative approval is never exposed as
 a model tool on that provider; approval remains transport/operator authority.
 
-The provider requires `COLONY_PREFETCH_QUERY_CHECK=1` and
-`COLONY_PREFETCH_TURN_CONTACT=1`; disabling either is a startup error. Set
-`COLONY_MCP_CONTACT_ID` to the exact owner contact and use
-`COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY=owner_system` only for a non-channel
+The provider requires `PACOMIND_PREFETCH_QUERY_CHECK=1` and
+`PACOMIND_PREFETCH_TURN_CONTACT=1`; disabling either is a startup error. Set
+`PACOMIND_MCP_CONTACT_ID` to the exact owner contact and use
+`PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY=owner_system` only for a non-channel
 CLI/system owner lane. Real RCS/SMS/WhatsApp senders never fall back to that
 default. The provider first calls
 `GET /v1/host/context/projection-readiness` (`context:read`) and then sends
@@ -348,7 +348,7 @@ when the contact store resolves an allowed recipient. Contact resolution is
 identity/context, not execution authority. Outbound work stays approval-blocked
 until an immutable phone/Operator Deck decision or bounded grant is consumed.
 This is a deliberate temporary usability tradeoff: restore a fast path only
-after Colony can issue and verify a durable target plus transport attestation;
+after PacoMind can issue and verify a durable target plus transport attestation;
 never infer authority from `outbound_target` or
 `auto_approved_by_policy` caller tags.
 
@@ -356,17 +356,17 @@ The lane-to-person mappings are deployment configuration:
 
 | Variable | Default |
 |---|---|
-| `COLONY_OWNER_PERSON_ID` | `COLONY_OWNER_CONTACT_ID`, then `owner` |
-| `COLONY_SHARED_PERSON_ID` | `shared` |
-| `COLONY_GLOBAL_PERSON_ID` | `global` |
-| `COLONY_DEV_PERSON_ID` | `dev-anonymous` |
+| `PACOMIND_OWNER_PERSON_ID` | `PACOMIND_OWNER_CONTACT_ID`, then `owner` |
+| `PACOMIND_SHARED_PERSON_ID` | `shared` |
+| `PACOMIND_GLOBAL_PERSON_ID` | `global` |
+| `PACOMIND_DEV_PERSON_ID` | `dev-anonymous` |
 
 Anonymous loopback dev mode remains convenient: callers may use an ordinary
-scratch `person_id`, and omission derives `COLONY_DEV_PERSON_ID`. It cannot
+scratch `person_id`, and omission derives `PACOMIND_DEV_PERSON_ID`. It cannot
 select, read, or write the configured owner/shared/global IDs. Set the owner
 mapping to the real owner contact ID before relying on this boundary.
 
-The implementation retains `COLONY_API_KEY` as a global principal with
+The implementation retains `PACOMIND_API_KEY` as a global principal with
 unrestricted body-selected behavior. It is outside the supported baseline;
 guided setup creates a scoped keyring and leaves the global key empty.
 
@@ -376,12 +376,12 @@ Install [`sidecar/api-keyring.example.json`](../sidecar/api-keyring.example.json
 outside the repository, then replace every placeholder while it is private:
 
 ```bash
-install -m 600 sidecar/api-keyring.example.json ~/.colony/api-principals.json
-${EDITOR:-vi} ~/.colony/api-principals.json
-chmod 600 ~/.colony/api-principals.json
+install -m 600 sidecar/api-keyring.example.json ~/.pacomind/api-principals.json
+${EDITOR:-vi} ~/.pacomind/api-principals.json
+chmod 600 ~/.pacomind/api-principals.json
 ```
 
-Set `COLONY_API_KEYRING_PATH` to that absolute path. Colony rejects a keyring
+Set `PACOMIND_API_KEYRING_PATH` to that absolute path. PacoMind rejects a keyring
 with any group/world permission bits, malformed JSON, duplicate principal IDs,
 duplicate credential secrets, unknown status/audience values, or timestamps
 without a timezone. Never commit the populated file.
@@ -395,14 +395,14 @@ restored; the separately configured legacy key continues working.
 and `retiring` accept requests, and neither accepts at or after
 `accept_until`; a `retiring` record must provide that bound. Multiple
 credentials under one principal support overlap during rotation. A caller may
-send `X-Colony-Principal`; if present, it must exactly match the principal
+send `X-PacoMind-Principal`; if present, it must exactly match the principal
 resolved from the token.
 
 ## Migration evidence
 
-Colony persists privacy-safe authentication counters in
-`$COLONY_STATE_DIR/colony-auth-telemetry.db` by default; override that path with
-`COLONY_AUTH_TELEMETRY_PATH`. Counters contain only authenticated principal
+PacoMind persists privacy-safe authentication counters in
+`$PACOMIND_STATE_DIR/pacomind-auth-telemetry.db` by default; override that path with
+`PACOMIND_AUTH_TELEMETRY_PATH`. Counters contain only authenticated principal
 name, legacy/scoped/anonymous class, required scope, framework route template,
 allow/deny reason, count, and first/last-seen timestamps. Tokens, credential
 IDs, headers, bodies, query values, peer addresses, and concrete path IDs are

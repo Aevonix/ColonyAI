@@ -1,15 +1,15 @@
-"""E2E behavioral integration tests for Colony cognitive subsystems.
+"""E2E behavioral integration tests for PacoMind cognitive subsystems.
 
 These tests verify that subsystems actually DO what they claim — not just
 that endpoints respond, but that data flows correctly, state changes as
 expected, and cross-subsystem integration produces meaningful results.
 
 Prerequisites:
-- Colony sidecar running (default: localhost:7777)
-- COLONY_API_KEY set
+- PacoMind sidecar running (default: localhost:7777)
+- PACOMIND_API_KEY set
 
 Run:
-    COLONY_API_KEY=your-key pytest tests/e2e/test_behavioral.py -v
+    PACOMIND_API_KEY=your-key pytest tests/e2e/test_behavioral.py -v
 """
 
 from __future__ import annotations
@@ -23,14 +23,14 @@ import uuid
 import httpx
 import pytest
 
-COLONY_URL = os.environ.get("COLONY_URL", "http://localhost:7777")
-COLONY_API_KEY = os.environ.get("COLONY_API_KEY", "")
-HEADERS = {"Authorization": f"Bearer {COLONY_API_KEY}"} if COLONY_API_KEY else {}
+PACOMIND_URL = os.environ.get("PACOMIND_URL", "http://localhost:7777")
+PACOMIND_API_KEY = os.environ.get("PACOMIND_API_KEY", "")
+HEADERS = {"Authorization": f"Bearer {PACOMIND_API_KEY}"} if PACOMIND_API_KEY else {}
 
 
 @pytest.fixture(scope="session")
 def client():
-    return httpx.Client(base_url=COLONY_URL, headers=HEADERS, timeout=30)
+    return httpx.Client(base_url=PACOMIND_URL, headers=HEADERS, timeout=30)
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +334,7 @@ class TestWorldModelBehavior:
         stats_before = client.get("/v1/host/world/stats").json()
 
         # Upsert same entity (MERGE by ID)
-        from apsimo.world_model.entities import PersonEntity
+        from pacomind.world_model.entities import PersonEntity
         # Can't directly upsert by ID via API (it generates IDs), 
         # so test that creating with same name creates separate entity
         r2 = client.post("/v1/host/world/entities", json={

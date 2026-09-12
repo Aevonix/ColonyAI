@@ -8,18 +8,18 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host, transport
-from apsimo.contacts.comms import CommsLog
-from apsimo.commitments.store import CommitmentStore
-from apsimo.initiatives.temporal_followup import TemporalFollowups
-from apsimo.turns import TurnIdempotencyLedger, canonical_turn_digest
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host, transport
+from pacomind.contacts.comms import CommsLog
+from pacomind.commitments.store import CommitmentStore
+from pacomind.initiatives.temporal_followup import TemporalFollowups
+from pacomind.turns import TurnIdempotencyLedger, canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 
 
 @pytest.mark.asyncio
 async def test_reordered_receipts_resolve_exact_reply_after_restart(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(tmp_path))
     sources = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
     messages = [{'role': 'user', 'content': 'Obtain the agreed report and track its reply.'}]
     sources.record_source('task-source', contact_id='cid-owner', session_id='s', messages=messages)

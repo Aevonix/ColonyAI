@@ -3,7 +3,7 @@ import copy
 
 import httpx
 
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.turns import TurnIdempotencyLedger
 from test_hermes_turn_outbox import _load_client
 
 
@@ -41,7 +41,7 @@ def test_unavailable_observation_writer_keeps_pending_bytes_until_origin_erasure
             'content': 'Copper synchronization completed with exit code 3.'}}
     original = copy.deepcopy(payload)
     outbox.enqueue('queued-original', payload)
-    client = module.ApsimoClient(url='http://127.0.0.1:1', api_key='fixture-never-sent')
+    client = module.PacoMindClient(url='http://127.0.0.1:1', api_key='fixture-never-sent')
     monkeypatch.setattr(client, 'get', lambda *a, **k: httpx.Response(200,
         json=ledger.erasure_feed('owner'), request=httpx.Request('GET', 'http://fixture')))
     for method in ('put', 'post'):

@@ -17,15 +17,15 @@ An already captured source is not silently reinterpreted or backfilled. Rolling-
 The existing `LocalImageStore` provides exact-byte storage in the source-owned namespace:
 
 ```
-$COLONY_STATE_DIR/images/sources/originals/<sha256>.<extension>
-$COLONY_STATE_DIR/images/sources/thumbs/<sha256>.jpg
+$PACOMIND_STATE_DIR/images/sources/originals/<sha256>.<extension>
+$PACOMIND_STATE_DIR/images/sources/thumbs/<sha256>.jpg
 ```
 
 Originals are not resized or EXIF-stripped. Thumbnails are separate projections. Files are written with private permissions, an atomic replacement and durability sync before the source transaction references them. A read verifies the original hash. The source namespace keeps cleanup independent from existing vector-store image ownership.
 
 `source_media` and `source_media_links` use the existing canonical turn SQLite ledger. Links identify the source turn, original message hash, block index and role. Descriptions keep the producing model alias and description version. They are `derived_unverified` evidence, not source quotations or verified beliefs.
 
-Descriptions share the existing source projection worker, with one model request at a time. Function routing uses `source_image_description` and the `vision` role, its declared local fallback, and a 40-second outer deadline. Legacy tier routing requires an explicitly configured local VISION tier with image support, a 20-second deadline and no escalation. No SMALL/default binding is borrowed. Unavailable or incompatible local models leave visible pending work. Model aliases are recorded without claiming an immutable weights revision. `COLONY_SOURCE_CLAIMS=off` stops the shared source projection worker; explicit erasure still attempts physical media cleanup.
+Descriptions share the existing source projection worker, with one model request at a time. Function routing uses `source_image_description` and the `vision` role, its declared local fallback, and a 40-second outer deadline. Legacy tier routing requires an explicitly configured local VISION tier with image support, a 20-second deadline and no escalation. No SMALL/default binding is borrowed. Unavailable or incompatible local models leave visible pending work. Model aliases are recorded without claiming an immutable weights revision. `PACOMIND_SOURCE_CLAIMS=off` stops the shared source projection worker; explicit erasure still attempts physical media cleanup.
 
 A rejected final caption records `missing_final_answer`, `incomplete_final_answer`, `description_word_limit` or `description_character_limit`, with the returned model and routing provenance when a response exists. The limits remain 160 words and 2,400 characters. Rejected prose and reasoning never become descriptions or search entries. Other failures retain only their exception class. Status describes the latest attempt, not a complete attempt history; older generic `ValueError` rows cannot reveal which check failed. The existing retry schedule and original-image access continue independently of caption success.
 
@@ -57,7 +57,7 @@ Original bytes are available only through the authenticated, contact-scoped API,
 GET /v1/host/memory/sources/assets/<sha256>?contact_id=...&session_id=...
 ```
 
-There is no public static file route. The existing `colony_memory_read_source`
+There is no public static file route. The existing `pacomind_memory_read_source`
 tool accepts `view: "image"` with a supplied `source_id`, `source_version`, and
 `asset_hash` (the 64 hexadecimal characters after `sha256:`). The source
 revision must already have reached this participant's current model request.
@@ -85,7 +85,7 @@ part and one `image_url` part containing the original data URL. The text does
 not duplicate base64 image data. Hermes applies the active processor's vision
 and tool-result capability rules. If it selects the text fallback, the result
 explicitly says no visual inspection occurred and `image_bytes_included` is
-false. Apsimo does not select a new model or silently recaption the original.
+false. PacoMind does not select a new model or silently recaption the original.
 
 Qualify the model identifier on the constructed native request, including any
 explicit voice or CLI override. A named provider may resolve its default model
@@ -96,7 +96,7 @@ model and its capability declaration through the deployment's existing publisher
 a successful description call alone does not verify this native boundary.
 
 Before each actual model dispatch containing an authenticated image read,
-Apsimo verifies the exact source, ownership, asset and read revision again.
+PacoMind verifies the exact source, ownership, asset and read revision again.
 That metadata-only call shares the existing 250 ms request freshness budget
 and never downloads the pixels again. A new applicable correction changes the
 read revision even without erasure. Unavailability, changed ownership,
@@ -116,7 +116,7 @@ the original.
 
 The source tests exercise actual image files, source API ingestion, scope isolation, durable reopening, canonical hash preservation, checkpoint/outbox erasure agreement, late-description rejection and cleanup of originals/thumbnails. The native packaged adapter test uses Hermes' actual `build_native_content_parts` and lifecycle hooks, then checks the durable outbox and client serializer preserve the content list.
 
-The packaged source-reader test uses installed Apsimo tools, the real scoped
+The packaged source-reader test uses installed PacoMind tools, the real scoped
 source API, actual native tool dispatch and Hermes' Chat, Responses and
 Anthropic conversion paths. It verifies exact original bytes in supported
 image parts, honest nonvision/unsupported-adapter fallbacks, and erasure before

@@ -9,15 +9,15 @@ import pytest
 from fastapi import HTTPException
 from starlette.requests import Request
 
-from apsimo.api.authority import RequestAuthority, required_scope
-from apsimo.api.routers import task_queue as tq_router
-from apsimo.initiatives.approval_authority import (
+from pacomind.api.authority import RequestAuthority, required_scope
+from pacomind.api.routers import task_queue as tq_router
+from pacomind.initiatives.approval_authority import (
     ApprovalAuthorityStore,
     DEFAULT_REQUEST_TTL_SECONDS,
     build_action_binding,
     build_approval_presentation,
 )
-from apsimo.task_queue.approval_relay_canary import (
+from pacomind.task_queue.approval_relay_canary import (
     ACTION_HINT,
     APPROVAL_TTL_SECONDS,
     SCHEMA,
@@ -26,8 +26,8 @@ from apsimo.task_queue.approval_relay_canary import (
     idempotency_digest,
     is_exact_job,
 )
-from apsimo.task_queue.models import JobStatus, WorkerCapabilities
-from apsimo.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.models import JobStatus, WorkerCapabilities
+from pacomind.task_queue.queue_manager import TaskQueueManager
 
 
 def _authority(*scopes: str, legacy: bool = False) -> RequestAuthority:
@@ -54,7 +54,7 @@ def _request(authority: RequestAuthority) -> Request:
         "client": ("127.0.0.1", 50000),
         "scheme": "http",
     })
-    request.state.colony_authority = authority
+    request.state.pacomind_authority = authority
     return request
 
 
@@ -67,8 +67,8 @@ def _body(key: str = "relay-canary-idempotency-0001"):
 
 
 async def _manager(tmp_path, monkeypatch) -> TaskQueueManager:
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     TaskQueueManager._instance = None
     return await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
 
@@ -84,7 +84,7 @@ async def test_canary_requires_nonlegacy_scoped_bridge_even_in_shadow(
     tmp_path, monkeypatch,
 ):
     manager = await _manager(tmp_path, monkeypatch)
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "shadow")
     try:
         rejected = (
             _authority("api:access"),

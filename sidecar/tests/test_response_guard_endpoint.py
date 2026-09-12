@@ -5,12 +5,12 @@ import hashlib
 import pytest
 from pydantic import ValidationError
 
-from apsimo.api.routers import host as host_mod
-from apsimo.api.authority import compatible_scopes, required_scope
-from apsimo.api.schemas.host import ResponseGuardCheckRequest
-from apsimo.gate.context_provenance import (
+from pacomind.api.routers import host as host_mod
+from pacomind.api.authority import compatible_scopes, required_scope
+from pacomind.api.schemas.host import ResponseGuardCheckRequest
+from pacomind.gate.context_provenance import (
     ContextProvenanceStore, ProvenanceCrossContextGuard)
-from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from pacomind.gate.response_guard import GuardMode, ResponseGuard
 
 
 def test_outbound_evaluator_scope_does_not_grant_guard_audit_access():
@@ -25,7 +25,7 @@ async def test_endpoint_flags_cross_context_leak(monkeypatch):
     # Written against legacy all-checks enforcement; the per-check enforce
     # allowlist (H6.3, default secret_leak) is covered in
     # test_guard_enforce_policy.py.
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
     store = ContextProvenanceStore(":memory:")
     store.record("rcs:conv-A", ["Project Falcon"])
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,
@@ -41,7 +41,7 @@ async def test_endpoint_flags_cross_context_leak(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_endpoint_shadow_request_cannot_weaken_configured_enforce(monkeypatch):
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
     store = ContextProvenanceStore(":memory:")
     store.record("rcs:conv-A", ["Project Falcon"])
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,
@@ -57,7 +57,7 @@ async def test_endpoint_shadow_request_cannot_weaken_configured_enforce(monkeypa
 @pytest.mark.asyncio
 async def test_endpoint_missing_guard_allows_shadow_text(monkeypatch):
     monkeypatch.setattr(host_mod, "_response_guard", None)
-    monkeypatch.setenv("COLONY_GUARD_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "shadow")
     out = await host_mod.response_guard_check(ResponseGuardCheckRequest(
         surface="text_chat", response_text="hi"))
     assert out["decision"] == "allow" and out["mode"] == "shadow"
@@ -67,7 +67,7 @@ async def test_endpoint_missing_guard_allows_shadow_text(monkeypatch):
 @pytest.mark.asyncio
 async def test_endpoint_missing_guard_blocks_enforce_text(monkeypatch):
     monkeypatch.setattr(host_mod, "_response_guard", None)
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     out = await host_mod.response_guard_check(ResponseGuardCheckRequest(
         surface="text_message", response_text="hi"))
     assert out["decision"] == "block" and out["mode"] == "enforce"
@@ -78,7 +78,7 @@ async def test_endpoint_missing_guard_blocks_enforce_text(monkeypatch):
 @pytest.mark.asyncio
 async def test_endpoint_missing_guard_still_bypasses_speech(monkeypatch):
     monkeypatch.setattr(host_mod, "_response_guard", None)
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     out = await host_mod.response_guard_check(ResponseGuardCheckRequest(
         surface="realtime_voice", response_text="hi"))
     assert out["decision"] == "allow" and out["mode"] == "excluded"

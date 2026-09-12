@@ -6,8 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.self_model import appraisals as module
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.self_model import appraisals as module
+from pacomind.turns import TurnIdempotencyLedger
 
 
 @pytest.fixture
@@ -73,8 +73,8 @@ def view(store, **kwargs):
 
 def admitted_preference(store, name, *, value='concise explanations', prior=None, operation='assert'):
     """Controlled canonical admission, through the real validator and commit."""
-    from apsimo.beliefs.source_claims import validated_claims
-    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from pacomind.beliefs.source_claims import validated_claims
+    from pacomind.beliefs.source_projection import SourceClaimProjection
     with store.ledger._connect() as conn:
         row = dict(conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (name,)).fetchone())
     message = json.loads(row['messages_json'])[0]
@@ -153,7 +153,7 @@ async def test_drawing_query_recalls_two_source_hypothesis_without_exposing_priv
 @pytest.mark.parametrize('contact', ['person', 'owner'])
 @pytest.mark.asyncio
 async def test_context_renders_identical_hints_once_preserving_each_source_and_record(state, monkeypatch, contact):
-    from apsimo.api.routers import social_state
+    from pacomind.api.routers import social_state
     for name, hint in [('first', 'try_different_approach'),
                        ('second', 'try_different_approach'),
                        ('third', 'verify_before_relying')]:
@@ -195,7 +195,7 @@ async def test_incident_changes_relevant_decision_replay_does_not_reinforce_and_
 
 @pytest.mark.asyncio
 async def test_private_views_stay_private_preference_has_attribution_and_values_are_not_grants(state, monkeypatch):
-    monkeypatch.setenv('COLONY_AGENT_VALUES', json.dumps(['Be candid', 'Respect promises']))
+    monkeypatch.setenv('PACOMIND_AGENT_VALUES', json.dumps(['Be candid', 'Respect promises']))
     source(state, 'incident', 'The export has failed again after the same retry.')
     processor = Processor(); await state.process_one(processor)
     assert 'chosen_values' not in processor.requests[0]
@@ -307,9 +307,9 @@ async def test_durable_view_retains_pending_contrary_evidence_until_interval(sta
 @pytest.mark.asyncio
 async def test_canonical_preference_changes_cached_profiler_and_erasure_removes_it(state, tmp_path, monkeypatch):
     from unittest.mock import AsyncMock
-    from apsimo import identity
-    from apsimo.tom.engagement import EngagementStore
-    from apsimo.intelligence.relationships.profiler import RelationshipProfiler
+    from pacomind import identity
+    from pacomind.tom.engagement import EngagementStore
+    from pacomind.intelligence.relationships.profiler import RelationshipProfiler
     monkeypatch.setattr(identity, 'get_owner_contact_id', lambda: 'owner')
     engagement = EngagementStore(tmp_path/'engagement.db', source_ledger=state.ledger)
     contacts = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(
@@ -333,7 +333,7 @@ async def test_canonical_preference_changes_cached_profiler_and_erasure_removes_
 @pytest.mark.asyncio
 async def test_retired_numeric_engagement_does_not_call_another_model():
     from unittest.mock import AsyncMock
-    from apsimo.tom.extractor import TomExtractor
+    from pacomind.tom.extractor import TomExtractor
     router = AsyncMock()
     assert await TomExtractor(router).extract_engagement('I prefer concise explanations.', 'person') is None
     assert router.mock_calls == []

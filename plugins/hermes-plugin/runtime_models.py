@@ -26,12 +26,12 @@ class RuntimeModelObserver:
             with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=.1)) as db:
                 db.row_factory = sqlite3.Row
                 task = db.execute('SELECT * FROM tasks WHERE id=?', (task_id,)).fetchone()
-                if (task is None or task['created_by'] != 'colony-initiative'
+                if (task is None or task['created_by'] != 'pacomind-initiative'
                         or task['tenant'] != self.owner or task['status'] != 'running'
                         or task['current_run_id'] != int(run_id) or task['claim_lock'] != claim
-                        or not str(task['idempotency_key']).startswith('colony-initiative:')):
+                        or not str(task['idempotency_key']).startswith('pacomind-initiative:')):
                     return
-                identifier = task['idempotency_key'].removeprefix('colony-initiative:')
+                identifier = task['idempotency_key'].removeprefix('pacomind-initiative:')
                 body = {'contact_id': self.owner, 'native_board': 'default', 'native_task_id': task_id,
                     'native_run_id': int(run_id), 'native_claim_lock': claim,
                     'contract_sha256': hashlib.sha256((task['body'] or '').encode()).hexdigest(),

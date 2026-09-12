@@ -1,7 +1,7 @@
 """L1.1 — ConversationPresenceStore: passive conversation census.
 
 Fed from the turns/sync attribution chokepoint (after the ParticipantResolver
-settles WHO), gated by COLONY_CONV_PRESENCE (default on). The system sentinel
+settles WHO), gated by PACOMIND_CONV_PRESENCE (default on). The system sentinel
 is never recorded; reads PROPAGATE errors so a broken store can never look
 like an empty (safe) room to the risk classifier.
 """
@@ -13,17 +13,17 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.api.schemas.host import (
+from pacomind.api.routers import host as host_mod
+from pacomind.api.schemas.host import (
     HostIdentity, HostMessage, HostSender, HostTurnContext, TurnSyncRequest)
-from apsimo.channels.presence import (
+from pacomind.channels.presence import (
     STRONG_METHODS, ConversationPresenceStore, conv_presence_enabled)
 
 
 def test_gate_default_on(monkeypatch):
-    monkeypatch.delenv("COLONY_CONV_PRESENCE", raising=False)
+    monkeypatch.delenv("PACOMIND_CONV_PRESENCE", raising=False)
     assert conv_presence_enabled() is True
-    monkeypatch.setenv("COLONY_CONV_PRESENCE", "off")
+    monkeypatch.setenv("PACOMIND_CONV_PRESENCE", "off")
     assert conv_presence_enabled() is False
 
 
@@ -63,7 +63,7 @@ def test_system_sentinel_and_empties_never_recorded():
 
 
 def test_gate_off_is_noop(monkeypatch):
-    monkeypatch.setenv("COLONY_CONV_PRESENCE", "off")
+    monkeypatch.setenv("PACOMIND_CONV_PRESENCE", "off")
     s = ConversationPresenceStore()
     assert s.record("c1", "cid-a", method="handle") is False
     assert s.census("c1") == []

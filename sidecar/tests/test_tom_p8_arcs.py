@@ -9,13 +9,13 @@ import sqlite3
 
 import pytest
 
-from apsimo.tom.arcs import (
+from pacomind.tom.arcs import (
     ArcConflictError,
     ArcEventV1,
     ArcReducer,
     ArcStore,
 )
-from apsimo.tom.visibility import ViewerContextV1
+from pacomind.tom.visibility import ViewerContextV1
 
 
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)

@@ -1,4 +1,4 @@
-"""Minimal HTTP client for the governed Hermes Colony adapter."""
+"""Minimal HTTP client for the governed Hermes PacoMind adapter."""
 
 from __future__ import annotations
 
@@ -1644,15 +1644,15 @@ def _resolve_env_placeholder(value: Any) -> str:
     return text
 
 
-class ApsimoClient:
+class PacoMindClient:
     """Small synchronous client; effect endpoints are intentionally absent."""
 
     def __init__(self, url: str | None = None, api_key: str | None = None):
         self.url = str(
-            url or os.environ.get("COLONY_URL") or "http://127.0.0.1:7777"
+            url or os.environ.get("PACOMIND_URL") or "http://127.0.0.1:7777"
         ).rstrip("/")
         self._api_key = _resolve_env_placeholder(
-            api_key if api_key is not None else os.environ.get("COLONY_API_KEY", "")
+            api_key if api_key is not None else os.environ.get("PACOMIND_API_KEY", "")
         )
 
     def _headers(self, supplied: Mapping[str, str] | None = None) -> dict[str, str]:
@@ -1722,7 +1722,7 @@ class ApsimoClient:
         outbox: TurnOutbox | None = None,
         timeout_seconds: float = 0.25,
     ) -> bool:
-        """Persist one participant-bound observation through Colony's ledger."""
+        """Persist one participant-bound observation through PacoMind's ledger."""
 
         try:
             timeout = max(0.01, min(float(timeout_seconds), 1.0))
@@ -1858,11 +1858,10 @@ class ApsimoClient:
             return False
 
 
-ColonyClient = ApsimoClient
 
 __all__ = [
-    "ApsimoClient",
-    "ColonyClient",
+    "PacoMindClient",
+    "PacoMindClient",
     "PrivateSQLitePath",
     "PrivateSQLitePathError",
     "TurnOutbox",

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from apsimo.self_model import (
+from pacomind.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine, floor_class,
     self_brief,
 )
@@ -142,7 +142,7 @@ def test_gate_stages():
 
 
 def test_autograduation_shadow_to_ask_to_act(monkeypatch):
-    monkeypatch.setenv("COLONY_TRUST_AUTOGRADUATE", "true")
+    monkeypatch.setenv("PACOMIND_TRUST_AUTOGRADUATE", "true")
     store = CompetenceStore()
     t = TrustEngine(store, journal=ActionJournal())
     sm = SelfModel(store, trust=t)
@@ -178,7 +178,7 @@ def test_circuit_breaker_demotes_on_clustered_failures():
 
 
 def test_shadow_events_do_not_earn_act_first(monkeypatch):
-    monkeypatch.setenv("COLONY_TRUST_AUTOGRADUATE", "true")
+    monkeypatch.setenv("PACOMIND_TRUST_AUTOGRADUATE", "true")
     store = CompetenceStore()
     t = TrustEngine(store, journal=ActionJournal())
     sm = SelfModel(store, trust=t)
@@ -189,7 +189,7 @@ def test_shadow_events_do_not_earn_act_first(monkeypatch):
 
 
 def test_autograduate_disable(monkeypatch):
-    monkeypatch.setenv("COLONY_TRUST_AUTOGRADUATE", "false")
+    monkeypatch.setenv("PACOMIND_TRUST_AUTOGRADUATE", "false")
     store = CompetenceStore()
     t = TrustEngine(store, journal=ActionJournal())
     sm = SelfModel(store, trust=t)
@@ -223,12 +223,12 @@ def test_delivery_cap_earned_and_bounded(monkeypatch):
         store.record("delivery", "success")
     cap = t.delivery_cap(3)
     assert cap > 3
-    monkeypatch.setenv("COLONY_TRUST_DELIVERY_CAP_MAX", "4")
+    monkeypatch.setenv("PACOMIND_TRUST_DELIVERY_CAP_MAX", "4")
     assert t.delivery_cap(3) == 4          # bounded by the max
 
 
 def test_rate_limiter_uses_cap_provider():
-    from apsimo.delivery.rate_limiter import DeliveryRateLimiter
+    from pacomind.delivery.rate_limiter import DeliveryRateLimiter
     rl = DeliveryRateLimiter(max_per_day=1, cooldown_hours=0,
                              quiet_start_hour=0, quiet_end_hour=0,
                              cap_provider=lambda base: base + 1)

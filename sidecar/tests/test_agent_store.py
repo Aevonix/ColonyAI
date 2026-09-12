@@ -6,8 +6,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 import pytest
 
-from apsimo.agents.store import AgentStore, InviteStore
-from apsimo.agents.models import Agent, AgentStatus, AgentMetadata
+from pacomind.agents.store import AgentStore, InviteStore
+from pacomind.agents.models import Agent, AgentStatus, AgentMetadata
 
 
 class TestAgentStore:
@@ -23,7 +23,7 @@ class TestAgentStore:
         agent = store.create({
             "agent_id": "agent-1",
             "node_id": "node-1",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
             "capabilities": ["messaging", "calendar"],
@@ -43,7 +43,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-2",
             "node_id": "node-2",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
         })
@@ -60,7 +60,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-3",
             "node_id": "node-3",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
         })
@@ -76,7 +76,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-4",
             "node_id": "node-4",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
         })
@@ -90,7 +90,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-5",
             "node_id": "node-5",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "agent-a",
             "connection_mode": "local",
             "capabilities": ["messaging"],
@@ -99,7 +99,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-6",
             "node_id": "node-6",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "agent-b",
             "connection_mode": "remote",
             "capabilities": ["calendar"],
@@ -108,7 +108,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-7",
             "node_id": "node-7",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "agent-c",
             "connection_mode": "local",
             "capabilities": ["messaging", "calendar"],
@@ -123,16 +123,16 @@ class TestAgentStore:
         online = store.list(status=["online"])
         assert len(online) == 2
 
-        # Filter by colony_id
-        colony_agents = store.list(colony_id="colony-1")
-        assert len(colony_agents) == 3
+        # Filter by pacomind_id
+        pacomind_agents = store.list(pacomind_id="pacomind-1")
+        assert len(pacomind_agents) == 3
 
     def test_revoke_agent(self, store: AgentStore) -> None:
         """Test revoking an agent."""
         store.create({
             "agent_id": "agent-8",
             "node_id": "node-8",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
             "status": "online",
@@ -148,7 +148,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-9",
             "node_id": "node-9",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
         })
@@ -169,7 +169,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-10",
             "node_id": "node-10",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
             "current_assignments": 0,
@@ -203,7 +203,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-11",
             "node_id": "node-11",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
             "metadata": metadata_dict,
@@ -224,7 +224,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-12",
             "node_id": "node-12",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
             "current_assignments": 0,
@@ -247,7 +247,7 @@ class TestAgentStore:
         store.create({
             "agent_id": "agent-13",
             "node_id": "node-13",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": "test-agent",
             "connection_mode": "local",
         })
@@ -268,7 +268,7 @@ class TestInviteStore:
     def test_create_invite(self, store: InviteStore) -> None:
         """Test creating an invite."""
         invite = store.create(
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             capabilities=["messaging", "calendar"],
             is_primary=False,
             max_concurrent=5,
@@ -277,14 +277,14 @@ class TestInviteStore:
         )
 
         assert invite is not None
-        assert invite["setup_code"].startswith("COLONY-")
+        assert invite["setup_code"].startswith("PACOMIND-")
         assert invite["capabilities"] == ["messaging", "calendar"]
         assert invite["is_primary"] is False
 
     def test_use_invite(self, store: InviteStore) -> None:
         """Test using an invite."""
         invite = store.create(
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             capabilities=["messaging"],
             expires_seconds=900,
         )
@@ -305,7 +305,7 @@ class TestInviteStore:
         """Test that expired invites cannot be used."""
         # Create already-expired invite
         invite = store.create(
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             capabilities=["messaging"],
             expires_seconds=-1,  # Expired
         )
@@ -342,7 +342,7 @@ class TestAgentModel:
         agent = Agent(
             agent_id="test",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test",
             max_concurrent=5,
             current_assignments=2,
@@ -358,7 +358,7 @@ class TestAgentModel:
         agent = Agent(
             agent_id="test",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test",
             max_concurrent=5,
             current_assignments=2,
@@ -379,7 +379,7 @@ class TestAgentModel:
         agent = Agent(
             agent_id="test",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test",
             excluded_types=["coding"],
             included_types=["messaging", "calendar"],

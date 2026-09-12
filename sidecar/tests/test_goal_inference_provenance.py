@@ -6,14 +6,14 @@ dropped because the two propose_goal() calls forwarded only title/description/
 source/priority. suggested_deadline is a matched phrase ("due by", "before the
 meeting"), not a parseable datetime, so it is carried as a context hint.
 """
-from apsimo.goals.engine import GoalEngine
-from apsimo.goals.config import GoalEngineConfig
-from apsimo.goals.inference import (
+from pacomind.goals.engine import GoalEngine
+from pacomind.goals.config import GoalEngineConfig
+from pacomind.goals.inference import (
     ConversationMessage,
     InferenceCandidate,
     IntentSignal,
 )
-from apsimo.goals.models import GoalSource, GoalStatus, GoalPriority
+from pacomind.goals.models import GoalSource, GoalStatus, GoalPriority
 
 
 class _StubInference:

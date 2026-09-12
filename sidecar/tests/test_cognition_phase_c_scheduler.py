@@ -17,8 +17,8 @@ import types
 
 import pytest
 
-import apsimo.autonomy.scheduler as scheduler_module
-from apsimo.autonomy.scheduler import (
+import pacomind.autonomy.scheduler as scheduler_module
+from pacomind.autonomy.scheduler import (
     AutonomyScheduler,
     ScheduleStore,
     TaskSchedule,
@@ -840,7 +840,7 @@ def test_endless_container_subclass_projection_is_bounded_by_process_timeout():
 
 def test_projection_is_cross_process_deterministic_and_ignores_object_addresses():
     script = """
-from apsimo.autonomy.scheduler import _receipt_json
+from pacomind.autonomy.scheduler import _receipt_json
 class PlainResult:
     pass
 mixed = dict({
@@ -907,7 +907,7 @@ def test_hostile_metaclass_name_data_descriptor_never_runs(
     script = r'''
 import json
 import os
-from apsimo.autonomy.scheduler import (
+from pacomind.autonomy.scheduler import (
     _receipt_json,
     _safe_exception_projection,
 )
@@ -955,7 +955,7 @@ from datetime import datetime, timezone
 import json
 import os
 import tempfile
-from apsimo.autonomy.scheduler import AutonomyScheduler
+from pacomind.autonomy.scheduler import AutonomyScheduler
 
 hostile_attribute = os.environ["SCHEDULER_HOSTILE_AWAIT_ATTRIBUTE"]
 
@@ -1019,7 +1019,7 @@ import asyncio
 from datetime import datetime, timezone
 import json
 import tempfile
-from apsimo.autonomy.scheduler import AutonomyScheduler
+from pacomind.autonomy.scheduler import AutonomyScheduler
 
 armed = False
 
@@ -1161,7 +1161,7 @@ def test_concurrent_builtin_mutation_projection_is_process_bounded():
 import json
 import sys
 import threading
-from apsimo.autonomy.scheduler import _receipt_json
+from pacomind.autonomy.scheduler import _receipt_json
 
 sys.setswitchinterval(0.000001)
 shared_list = list(range(64))

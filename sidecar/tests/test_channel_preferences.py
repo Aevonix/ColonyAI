@@ -7,7 +7,7 @@ from types import SimpleNamespace
 import pytest
 import yaml
 
-from apsimo import setup_hermes
+from pacomind import setup_hermes
 
 
 def attached(tmp_path, config):
@@ -15,7 +15,7 @@ def attached(tmp_path, config):
     home.mkdir()
     state.mkdir()
     config = deepcopy(config)
-    config['plugins'] = {'colony': {'instance_dir': str(state)}}
+    config['plugins'] = {'pacomind': {'instance_dir': str(state)}}
     (home / 'config.yaml').write_text(yaml.safe_dump(config, sort_keys=False))
     (home / 'SOUL.md').write_text('Retained identity.\n')
     (state / 'instance.json').write_text(json.dumps({'hermes_home': str(home)}))
@@ -40,40 +40,38 @@ def test_existing_profile_explicit_preference_preserves_scope_and_state(tmp_path
     assert current == before
     assert (home / 'SOUL.md').read_text() == 'Retained identity.\n'
     assert (state / 'retained.db').read_bytes() == b'untouched fixture state'
-    assert len(list(home.glob('.config.yaml.colony-backup-*'))) == 1
+    assert len(list(home.glob('.config.yaml.pacomind-backup-*'))) == 1
     # Repeating the same choice is byte-idempotent and adds no backup or state.
     snapshot = (home / 'config.yaml').read_bytes()
     assert setup_hermes.run(state, args) == 0
     assert (home / 'config.yaml').read_bytes() == snapshot
-    assert len(list(home.glob('.config.yaml.colony-backup-*'))) == 1
+    assert len(list(home.glob('.config.yaml.pacomind-backup-*'))) == 1
 
 
 def test_omitted_receipt_preference_retains_config_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(os, "environ", dict(os.environ))
-    monkeypatch.delenv("APSIMO_STATE_DIR", raising=False)
+    monkeypatch.delenv("PACOMIND_STATE_DIR", raising=False)
     home, state, _ = attached(tmp_path, {'whatsapp': {'send_read_receipts': True}})
     path = home / 'config.yaml'
     path.write_text('# A retained comment\n' + path.read_text())
     before = path.read_bytes()
     assert setup_hermes.run(state, SimpleNamespace(non_interactive=True, hermes_home=str(home))) == 0
     assert path.read_bytes() == before
-    assert not list(home.glob('.config.yaml.colony-backup-*'))
-    assert "APSIMO_STATE_DIR" not in os.environ
-    # A legacy caller can select its next state without a stale canonical input
-    # taking precedence over that selection.
-    from apsimo.environment import normalize_environment
-    from apsimo import get_state_dir
+    assert not list(home.glob('.config.yaml.pacomind-backup-*'))
+    assert os.environ["PACOMIND_STATE_DIR"] == str(state)
+    # An explicit subsequent selection is authoritative.
+    from pacomind import get_state_dir
     following = tmp_path / 'following-state'
-    monkeypatch.setenv('COLONY_STATE_DIR', str(following))
-    assert normalize_environment()['COLONY_STATE_DIR'] == str(following)
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(following))
+    assert dict(os.environ)['PACOMIND_STATE_DIR'] == str(following)
     assert get_state_dir() == following
 
 
 def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
     import sys
-    from apsimo import cli, setup
+    from pacomind import cli, setup
     observed = []
-    monkeypatch.setattr(sys, 'argv', ['colony', 'init', '--whatsapp-read-receipts', 'on',
+    monkeypatch.setattr(sys, 'argv', ['pacomind', 'init', '--whatsapp-read-receipts', 'on',
                                      '--hermes-home', str(tmp_path), '--non-interactive'])
     monkeypatch.setattr(setup, 'run_init', lambda root_dir, args: observed.append(args) or 1)
     with pytest.raises(SystemExit) as exit_code:
@@ -85,7 +83,7 @@ def test_receipt_cli_flag_uses_existing_init_parser(tmp_path, monkeypatch):
 @pytest.mark.parametrize('preview', [True, False])
 def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path, monkeypatch, preview):
     import sys
-    from apsimo import cli
+    from pacomind import cli
     home = tmp_path/'home'
     home.mkdir()
     config = home/'config.yaml'
@@ -97,11 +95,11 @@ def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path,
                          (setup_hermes, '_select_home'), (setup_hermes.subprocess, 'run'),
                          (setup_hermes.httpx, 'get'), (setup_hermes.httpx, 'post')]:
         monkeypatch.setattr(module, name, forbidden)
-    argv = ['colony', 'init', '--hermes-home', str(home), '--preferences-only',
+    argv = ['pacomind', 'init', '--hermes-home', str(home), '--preferences-only',
             '--whatsapp-read-receipts', 'on']
     monkeypatch.setattr(sys, 'argv', argv + (['--preview'] if preview else []))
     cli.main()
-    assert not (home/'colony').exists()
+    assert not (home/'pacomind').exists()
     assert not (home/'SOUL.md').exists()
     if preview:
         assert config.read_bytes() == before
@@ -109,7 +107,7 @@ def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path,
     else:
         assert yaml.safe_load(config.read_bytes()) == {'whatsapp': {
             'enabled': False, 'send_read_receipts': True}}
-        backups = list(home.glob('.config.yaml.colony-backup-*'))
+        backups = list(home.glob('.config.yaml.pacomind-backup-*'))
         assert len(backups) == 1 and backups[0].read_bytes() == before
 
 
@@ -118,7 +116,7 @@ def test_preference_only_cli_never_sets_up_identity_models_or_instance(tmp_path,
     {'native_goals': True}, {'local_work': True},
 ])
 def test_preference_only_rejects_setup_combinations_before_writes(tmp_path, options):
-    from apsimo import setup
+    from pacomind import setup
     (tmp_path/'config.yaml').write_text('whatsapp: {enabled: false}\n')
     args = SimpleNamespace(hermes_home=str(tmp_path), preferences_only=True,
                            whatsapp_read_receipts='on', **options)
@@ -148,7 +146,7 @@ def test_projection_does_not_mutate_a_shared_yaml_alias():
 
 
 def test_config_race_is_rejected_and_concurrent_bytes_remain(tmp_path, monkeypatch):
-    from apsimo import setup
+    from pacomind import setup
     path = tmp_path/'config.yaml'
     path.write_text('whatsapp: {enabled: false}\n')
     actual_writer = setup._atomic_hermes_config_write

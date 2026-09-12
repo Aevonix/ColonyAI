@@ -1,10 +1,10 @@
 """H1.5 — world_model as the second supervised-rung consumer.
 
-Only when "world_model" is enrolled in COLONY_SUPERVISED_LIVE_DOMAINS does
+Only when "world_model" is enrolled in PACOMIND_SUPERVISED_LIVE_DOMAINS does
 the LLM extractor's mode graduate through the trust engine; otherwise the
 env mode is returned untouched (regression lock). Supervised permits only
 the reversible ops (entity_upsert / alias_merge / edge_corroborate), capped
-at COLONY_WORLD_SUPERVISED_MAX_WRITES per run, never creates edges, never
+at PACOMIND_WORLD_SUPERVISED_MAX_WRITES per run, never creates edges, never
 touches causal edge types, and records real outcomes only when writes > 0.
 """
 
@@ -14,14 +14,14 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.self_model import (
+from pacomind.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
-from apsimo.self_model.supervised import reversible
-from apsimo.world_model.llm_extract import (
+from pacomind.self_model.supervised import reversible
+from pacomind.world_model.llm_extract import (
     WorldLLMExtractor, world_supervised_max_writes,
 )
-from apsimo.world_model.relationships import WorldRelationship
+from pacomind.world_model.relationships import WorldRelationship
 
 
 class FakeWorld:
@@ -82,16 +82,16 @@ def test_reversible_contract_pins_the_three_ops():
 def test_effective_mode_untouched_when_domain_not_enrolled(monkeypatch):
     """Regression lock: without world_model in the domains list the env
     mode passes through raw, whatever the trust stage says."""
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "shadow")
-    monkeypatch.delenv("COLONY_SUPERVISED_LIVE_DOMAINS", raising=False)
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "shadow")
+    monkeypatch.delenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", raising=False)
     for stage in ("shadow", "ask_first", "act_first"):
         x = WorldLLMExtractor(FakeWorld(), self_model=_self_model(stage))
         assert x._effective_mode() == "shadow", stage
 
 
 def test_effective_mode_supervised_when_enrolled_at_ask_first(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "shadow")
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "world_model")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "shadow")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", "world_model")
     x = WorldLLMExtractor(FakeWorld(), self_model=_self_model("ask_first"))
     assert x._effective_mode() == "supervised"
     x2 = WorldLLMExtractor(FakeWorld(), self_model=_self_model("shadow"))
@@ -99,11 +99,11 @@ def test_effective_mode_supervised_when_enrolled_at_ask_first(monkeypatch):
 
 
 def test_env_live_and_off_remain_owner_overrides(monkeypatch):
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "world_model")
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", "world_model")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
     x = WorldLLMExtractor(FakeWorld(), self_model=_self_model("shadow"))
     assert x._effective_mode() == "live"
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "off")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "off")
     assert x._effective_mode() == "off"
 
 
@@ -113,7 +113,7 @@ def test_env_live_and_off_remain_owner_overrides(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_supervised_entity_upsert_and_alias_merge(monkeypatch):
-    monkeypatch.delenv("COLONY_WORLD_SUPERVISED_MAX_WRITES", raising=False)
+    monkeypatch.delenv("PACOMIND_WORLD_SUPERVISED_MAX_WRITES", raising=False)
     world = FakeWorld()
     x = WorldLLMExtractor(world)
     report = _report()
@@ -167,7 +167,7 @@ async def test_supervised_never_writes_causal_edge_types():
 
 @pytest.mark.asyncio
 async def test_supervised_write_cap(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_SUPERVISED_MAX_WRITES", "2")
+    monkeypatch.setenv("PACOMIND_WORLD_SUPERVISED_MAX_WRITES", "2")
     assert world_supervised_max_writes() == 2
     world = FakeWorld()
     x = WorldLLMExtractor(world)
@@ -203,7 +203,7 @@ def _outcomes(sm):
 
 
 def test_outcome_recorded_only_when_writes_positive(monkeypatch):
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "world_model")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", "world_model")
     recorded = []
     sm = _self_model("ask_first")
     sm.record = lambda *a, **k: recorded.append((a, k))
@@ -222,7 +222,7 @@ def test_outcome_recorded_only_when_writes_positive(monkeypatch):
 def test_outcome_not_recorded_when_domain_not_enrolled(monkeypatch):
     """Regression lock: no enrollment -> extractor records no trust
     outcomes at all, exactly as before H1.5."""
-    monkeypatch.delenv("COLONY_SUPERVISED_LIVE_DOMAINS", raising=False)
+    monkeypatch.delenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", raising=False)
     recorded = []
     sm = _self_model("ask_first")
     sm.record = lambda *a, **k: recorded.append((a, k))

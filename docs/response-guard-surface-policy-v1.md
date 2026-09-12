@@ -44,11 +44,11 @@ requires the returned candidate digest to match the exact UTF-8 text, and
 withholds replies over the adapter's 8,000-character synchronous-check limit
 instead of checking only a prefix. Current Hermes deployments that cannot
 mutate post-hook replies are still honestly downgraded to shadow. This is
-Colony plugin behavior and does not patch Hermes core.
+PacoMind plugin behavior and does not patch Hermes core.
 
 The in-process proactive delivery path has the same mode-specific outage
 contract: an unavailable or malformed guard allows in shadow and blocks in
-enforce. Its owner exemption is derived from Colony's identity resolver, not
+enforce. Its owner exemption is derived from PacoMind's identity resolver, not
 from message content or a caller-supplied boolean.
 
 ## Integration points
@@ -59,17 +59,17 @@ from message content or a caller-supplied boolean.
 - The legacy host-request `authorized` field is non-authoritative. The public
   endpoint always evaluates it as false; only trusted in-process code may pass
   an owner exemption after deriving identity from server-owned state.
-- The Colony Hermes plugin declares `text_chat`.
-- Colony proactive outreach declares `proactive_text`, including its single
+- The PacoMind Hermes plugin declares `text_chat`.
+- PacoMind proactive outreach declares `proactive_text`, including its single
   rejection/regeneration retry.
 - Audit rows persist the exact surface, policy id, policy digest, candidate
   digest, and guard status. These rows prove only that a candidate was
   evaluated. They do **not** prove a transport withheld the candidate or
   emitted a checked revision, regardless of row count or verdict.
-- Colony deliberately leaves the Tom2 applied-enforcement evidence probe unset,
+- PacoMind deliberately leaves the Tom2 applied-enforcement evidence probe unset,
   so evaluation logs cannot unlock level 2. A future mediator must persist a
   digest-bound receipt for the exact applied output before that cap can lift.
-- `COLONY_GUARD_EXCLUDED_GATEWAYS` is no longer consumed. The constructor
+- `PACOMIND_GUARD_EXCLUDED_GATEWAYS` is no longer consumed. The constructor
   accepts the old argument only as a logged, ignored compatibility input.
 
 New adapters must choose one existing exact surface or deliberately revise the
@@ -79,12 +79,12 @@ surface from an untrusted inbound field.
 ## Rollout and rollback
 
 This source change performs no service restart, rebind, or live configuration
-mutation. Before a later canary, keep `COLONY_GUARD_MODE=shadow` and the Hermes
+mutation. Before a later canary, keep `PACOMIND_GUARD_MODE=shadow` and the Hermes
 chat mode `off` or `shadow`; verify audit classification before enabling text
 enforcement. Do not enable Tom2 level 2 from verdict counts; first ship and
 verify the applied-output receipt mediator described above.
 
 Operational rollback is configuration-first: set the Hermes chat mode to
-`off` and Colony guard mode to `shadow`, then roll back the pinned Colony
+`off` and PacoMind guard mode to `shadow`, then roll back the pinned PacoMind
 artifact if needed. No voice rollback is involved because the host voice core
 and its routing are outside this policy and remain untouched.

@@ -1,4 +1,4 @@
-"""Tests for Colony synthesis — cross-domain insight engine."""
+"""Tests for PacoMind synthesis — cross-domain insight engine."""
 
 import asyncio
 from dataclasses import dataclass, field
@@ -7,25 +7,25 @@ from typing import Any, Dict, List, Optional
 
 import pytest
 
-from apsimo.intelligence.synthesis.connection_discoverer import (
+from pacomind.intelligence.synthesis.connection_discoverer import (
     Connection,
     ConnectionDiscoverer,
     ConnectionType,
 )
-from apsimo.intelligence.synthesis.novelty_scorer import (
+from pacomind.intelligence.synthesis.novelty_scorer import (
     DOMAIN_DISTANCES,
     NoveltyScore,
     NoveltyScorer,
 )
-from apsimo.intelligence.synthesis.cross_domain_analyzer import (
+from pacomind.intelligence.synthesis.cross_domain_analyzer import (
     CrossDomainAnalyzer,
     DomainInsight,
 )
-from apsimo.intelligence.synthesis.insight_validator import (
+from pacomind.intelligence.synthesis.insight_validator import (
     InsightValidator,
     ValidationResult,
 )
-from apsimo.intelligence.synthesis.insight_deliverer import (
+from pacomind.intelligence.synthesis.insight_deliverer import (
     DeliveryChannel,
     DeliveryDecision,
     InsightDeliverer,
@@ -604,7 +604,7 @@ class TestInsightDeliverer:
 
 class TestPackageExports:
     def test_all_exports_importable(self):
-        from apsimo.intelligence.synthesis import (
+        from pacomind.intelligence.synthesis import (
             Connection,
             ConnectionDiscoverer,
             ConnectionType,

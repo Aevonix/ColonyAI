@@ -1,15 +1,15 @@
 """H2.1: causal relationship vocabulary + query-only action policy.
 
 Locks: the four causal types exist in both the general vocabulary and the
-causal subset; causal_edges_actionable() is OFF unless COLONY_CAUSAL_ACT=1
+causal subset; causal_edges_actionable() is OFF unless PACOMIND_CAUSAL_ACT=1
 (query-only invariant holds by default); is_causal() classifies exactly the
 causal subset.
 """
 
-from apsimo.world_model.causal_policy import (
+from pacomind.world_model.causal_policy import (
     causal_edges_actionable, is_causal,
 )
-from apsimo.world_model.constants import (
+from pacomind.world_model.constants import (
     CAUSAL_RELATIONSHIP_TYPES, RELATIONSHIP_TYPES,
 )
 
@@ -24,16 +24,16 @@ def test_causal_vocabulary_registered():
 
 def test_actionable_defaults_off(monkeypatch):
     """Regression lock: unset/0/junk all keep causal edges query-only."""
-    monkeypatch.delenv("COLONY_CAUSAL_ACT", raising=False)
+    monkeypatch.delenv("PACOMIND_CAUSAL_ACT", raising=False)
     assert causal_edges_actionable() is False
     for v in ("0", "false", "no", "off", "banana", ""):
-        monkeypatch.setenv("COLONY_CAUSAL_ACT", v)
+        monkeypatch.setenv("PACOMIND_CAUSAL_ACT", v)
         assert causal_edges_actionable() is False, v
 
 
 def test_actionable_explicit_unlock(monkeypatch):
     for v in ("1", "true", "yes", "on"):
-        monkeypatch.setenv("COLONY_CAUSAL_ACT", v)
+        monkeypatch.setenv("PACOMIND_CAUSAL_ACT", v)
         assert causal_edges_actionable() is True, v
 
 

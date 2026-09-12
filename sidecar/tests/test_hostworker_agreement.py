@@ -1,8 +1,8 @@
-"""Cross-implementation agreement: endpoint vs apsimo_hostworker.
+"""Cross-implementation agreement: endpoint vs pacomind_hostworker.
 
 DELIBERATE REDUNDANCY — DO NOT "UNIFY" THESE IMPLEMENTATIONS.
 
-``apsimo.governed_actions`` (the endpoint) and ``apsimo_hostworker``
+``pacomind.governed_actions`` (the endpoint) and ``pacomind_hostworker``
 (the stateless host-worker core) each keep their OWN independent validator and
 digest implementation for the same wire contract.  That redundancy already
 caught a real incompatibility (the ASCII/UTF-8 canonical-JSON digest split),
@@ -13,7 +13,7 @@ battery of systematic mutations through BOTH implementations and fails if
 they ever disagree on a digest, an acceptance, or a rejection.
 
 It also enforces the independence itself: the sidecar package must not import
-``apsimo_hostworker`` and ``apsimo_hostworker`` must not import the sidecar
+``pacomind_hostworker`` and ``pacomind_hostworker`` must not import the sidecar
 (or any server framework).
 """
 
@@ -27,7 +27,7 @@ import sys
 import pytest
 from jsonschema import Draft202012Validator
 
-from apsimo import governed_actions as endpoint
+from pacomind import governed_actions as endpoint
 
 _REPO_ROOT = pathlib.Path(__file__).resolve().parents[2]
 _HOSTWORKER_DIR = _REPO_ROOT / "hostworker"
@@ -37,22 +37,22 @@ _PLUGIN_INIT = _REPO_ROOT / "plugins" / "hermes-plugin" / "__init__.py"
 if str(_HOSTWORKER_DIR) not in sys.path:
     sys.path.insert(0, str(_HOSTWORKER_DIR))
 
-import apsimo_hostworker as hostworker  # noqa: E402
-from apsimo_hostworker import catalog as hw_catalog  # noqa: E402
-from apsimo_hostworker import contract as hw_contract  # noqa: E402
+import pacomind_hostworker as hostworker  # noqa: E402
+from pacomind_hostworker import catalog as hw_catalog  # noqa: E402
+from pacomind_hostworker import contract as hw_contract  # noqa: E402
 
 
 @pytest.fixture(scope="module")
 def vectors() -> dict:
     with open(_VECTORS_PATH, encoding="utf-8") as handle:
         data = json.load(handle)
-    assert data["schema"] == "ColonyHostWorkerGoldenVectorsV1"
+    assert data["schema"] == "PacoMindHostWorkerGoldenVectorsV1"
     return data
 
 
 @pytest.fixture(scope="module")
 def plugin_module():
-    name = "colony_hermes_hostworker_agreement_test"
+    name = "pacomind_hermes_hostworker_agreement_test"
     spec = importlib.util.spec_from_file_location(
         name,
         _PLUGIN_INIT,
@@ -67,7 +67,7 @@ def plugin_module():
 
 def test_hostworker_package_is_present():
     assert _HOSTWORKER_DIR.is_dir(), (
-        "apsimo_hostworker distribution missing at %s" % _HOSTWORKER_DIR
+        "pacomind_hostworker distribution missing at %s" % _HOSTWORKER_DIR
     )
     assert _VECTORS_PATH.is_file(), "shared golden vectors missing"
 
@@ -194,27 +194,27 @@ def test_advertised_bounds_match_both_independent_validators(plugin_module):
 
     text_specs = (
         (
-            "colony_create_commitment", {}, "description", "d",
+            "pacomind_create_commitment", {}, "description", "d",
             hw_catalog.COMMITMENT_DESCRIPTION_MAX_CHARS,
         ),
         (
-            "colony_create_commitment", {"description": "d"}, "due_at", "t",
+            "pacomind_create_commitment", {"description": "d"}, "due_at", "t",
             hw_catalog.COMMITMENT_DUE_AT_MAX_CHARS,
         ),
         (
-            "colony_record_insight", {"insight_type": "fact"}, "content", "c",
+            "pacomind_record_insight", {"insight_type": "fact"}, "content", "c",
             hw_catalog.INSIGHT_CONTENT_MAX_CHARS,
         ),
         (
-            "colony_research", {}, "topic", "r",
+            "pacomind_research", {}, "topic", "r",
             hw_catalog.RESEARCH_TOPIC_MAX_CHARS,
         ),
         (
-            "colony_resolve_commitment", {"commitment_id": "c"}, "reason", "r",
+            "pacomind_resolve_commitment", {"commitment_id": "c"}, "reason", "r",
             hw_catalog.FREEFORM_REASON_MAX_CHARS,
         ),
         (
-            "colony_task_snooze", {"task_id": "t"}, "reason", "r",
+            "pacomind_task_snooze", {"task_id": "t"}, "reason", "r",
             hw_catalog.FREEFORM_REASON_MAX_CHARS,
         ),
     )
@@ -240,12 +240,12 @@ def test_advertised_bounds_match_both_independent_validators(plugin_module):
             ))
 
     identifier_fields = (
-        ("colony_get_initiative", {}, "initiative_id"),
-        ("colony_initiative_feedback", {"action": "actioned"}, "initiative_id"),
-        ("colony_resolve_commitment", {}, "commitment_id"),
-        ("colony_task_complete", {}, "task_id"),
-        ("colony_task_dismiss", {}, "task_id"),
-        ("colony_task_snooze", {}, "task_id"),
+        ("pacomind_get_initiative", {}, "initiative_id"),
+        ("pacomind_initiative_feedback", {"action": "actioned"}, "initiative_id"),
+        ("pacomind_resolve_commitment", {}, "commitment_id"),
+        ("pacomind_task_complete", {}, "task_id"),
+        ("pacomind_task_dismiss", {}, "task_id"),
+        ("pacomind_task_snooze", {}, "task_id"),
     )
     identifier_schema = hw_catalog.identifier_model_schema()
     assert endpoint.GOVERNED_IDENTIFIER_PATTERN == identifier_schema["pattern"]
@@ -254,7 +254,7 @@ def test_advertised_bounds_match_both_independent_validators(plugin_module):
     assert re.search(identifier_schema["pattern"], "identifier\n") is None
     for tool, base, field in identifier_fields:
         assert properties[tool][field] == identifier_schema
-        if tool == "colony_get_initiative":
+        if tool == "pacomind_get_initiative":
             continue  # Read tool: it does not cross the two governed validators.
         accepted = {**base, field: "i" * hw_catalog.IDENTIFIER_MAX_CHARS}
         cases.extend((
@@ -266,7 +266,7 @@ def test_advertised_bounds_match_both_independent_validators(plugin_module):
             (tool, accepted, {**base, field: "identifier\n"}),
         ))
 
-    parameters = schemas["colony_initiative_feedback"]["parameters"]
+    parameters = schemas["pacomind_initiative_feedback"]["parameters"]
     details_schema = parameters["properties"]["details"]
     assert details_schema["type"] == "object"
     assert "$ref" not in details_schema
@@ -322,42 +322,42 @@ def test_advertised_bounds_match_both_independent_validators(plugin_module):
 
     cases.extend((
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"v": "s" * string_max}),
             feedback({"v": "s" * (string_max + 1)}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"v": ""}),
             feedback({"v": "s\x00"}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"k" * key_max: None}),
             feedback({"k" * (key_max + 1): None}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"valid": None}),
             feedback({"bad key": None}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"valid": None}),
             feedback({"bad\n": None}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"items": [None] * children}),
             feedback({"items": [None] * (children + 1)}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({"number": integer_max}),
             feedback({"number": integer_max + 1}),
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             feedback({
                 "nested": nested_lists(hw_catalog.BOUNDED_JSON_MAX_DEPTH - 1),
             }),
@@ -373,7 +373,7 @@ def test_advertised_bounds_match_both_independent_validators(plugin_module):
 def test_aggregate_details_limit_is_advertised_and_prevalidated(plugin_module):
     schema = next(
         item for item in plugin_module._TOOL_SCHEMAS
-        if item["name"] == "colony_initiative_feedback"
+        if item["name"] == "pacomind_initiative_feedback"
     )["parameters"]
     details = schema["properties"]["details"]
     assert (
@@ -390,20 +390,20 @@ def test_aggregate_details_limit_is_advertised_and_prevalidated(plugin_module):
         "action": "actioned",
         "details": {"a": [None] * 300, "b": [None] * 300},
     }
-    assert endpoint._validate_args("colony_initiative_feedback", accepted) == accepted
+    assert endpoint._validate_args("pacomind_initiative_feedback", accepted) == accepted
     assert hw_catalog.validate_tool_args(
-        "colony_initiative_feedback", accepted,
+        "pacomind_initiative_feedback", accepted,
     ) == accepted
     with pytest.raises(endpoint.GovernedActionValidationError, match="too complex"):
-        endpoint._validate_args("colony_initiative_feedback", invalid)
+        endpoint._validate_args("pacomind_initiative_feedback", invalid)
     with pytest.raises(hw_contract.GovernedContractError, match="too complex"):
-        hw_catalog.validate_tool_args("colony_initiative_feedback", invalid)
+        hw_catalog.validate_tool_args("pacomind_initiative_feedback", invalid)
     # Standard JSON Schema has no aggregate descendant-node counter.  The
     # plugin closes that portable-schema limitation by invoking the catalog's
     # exact validator before it constructs or submits an intent.
     with pytest.raises(ValueError, match="too complex"):
         plugin_module.HermesToolActionIntentV1.build(
-            tool_name="colony_initiative_feedback",
+            tool_name="pacomind_initiative_feedback",
             args=invalid,
             context={},
         )
@@ -411,7 +411,7 @@ def test_aggregate_details_limit_is_advertised_and_prevalidated(plugin_module):
 
 @pytest.mark.parametrize(("tool", "args"), (
     (
-        "colony_initiative_feedback",
+        "pacomind_initiative_feedback",
         {
             "initiative_id": "initiative-1",
             "action": "actioned",
@@ -419,7 +419,7 @@ def test_aggregate_details_limit_is_advertised_and_prevalidated(plugin_module):
         },
     ),
     (
-        "colony_record_insight",
+        "pacomind_record_insight",
         {
             "content": "fact",
             "insight_type": "fact",
@@ -511,19 +511,19 @@ async def test_create_commitment_default_matches_advertised_execution(
 
     advertised = next(
         schema for schema in plugin_module._TOOL_SCHEMAS
-        if schema["name"] == "colony_create_commitment"
+        if schema["name"] == "pacomind_create_commitment"
     )["parameters"]["properties"]["priority"]["default"]
     assert advertised == hw_catalog.COMMITMENT_PRIORITY_DEFAULT
     assert advertised == endpoint.GOVERNED_COMMITMENT_PRIORITY_DEFAULT
 
     commitments = CapturingCommitments()
-    executor = endpoint.ColonySubsystemActionExecutor(commitments=commitments)
+    executor = endpoint.PacoMindSubsystemActionExecutor(commitments=commitments)
     args = endpoint._validate_args(
-        "colony_create_commitment", {"description": "Follow up"},
+        "pacomind_create_commitment", {"description": "Follow up"},
     )
     assert "priority" not in args
     await executor.perform(
-        {"tool_name": "colony_create_commitment", "args": args},
+        {"tool_name": "pacomind_create_commitment", "args": args},
         "owner",
     )
     assert commitments.created["priority"] == advertised
@@ -608,8 +608,8 @@ def test_tampered_execution_request_rejected_by_endpoint(vectors):
 # ---------------------------------------------------------------- independence
 
 
-def test_sidecar_never_imports_apsimo_hostworker():
-    """The endpoint keeps its own validator; importing apsimo_hostworker from
+def test_sidecar_never_imports_pacomind_hostworker():
+    """The endpoint keeps its own validator; importing pacomind_hostworker from
     the sidecar would collapse the deliberate redundancy this suite protects.
     See the module docstring before "fixing" a failure here."""
 
@@ -620,21 +620,21 @@ def test_sidecar_never_imports_apsimo_hostworker():
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
                 if any(
-                    alias.name.split(".")[0] == "apsimo_hostworker"
+                    alias.name.split(".")[0] == "pacomind_hostworker"
                     for alias in node.names
                 ):
                     offenders.append(source_file)
             elif isinstance(node, ast.ImportFrom):
-                if (node.module or "").split(".")[0] == "apsimo_hostworker":
+                if (node.module or "").split(".")[0] == "pacomind_hostworker":
                     offenders.append(source_file)
     assert not offenders, (
-        "apsimo must never import apsimo_hostworker: %s" % offenders
+        "pacomind must never import pacomind_hostworker: %s" % offenders
     )
 
 
 def test_hostworker_never_imports_the_sidecar_or_a_server():
-    package_root = _HOSTWORKER_DIR / "apsimo_hostworker"
-    forbidden = {"apsimo", "fastapi", "httpx", "pydantic", "uvicorn"}
+    package_root = _HOSTWORKER_DIR / "pacomind_hostworker"
+    forbidden = {"pacomind", "fastapi", "httpx", "pydantic", "uvicorn"}
     offenders = []
     for source_file in package_root.rglob("*.py"):
         tree = ast.parse(source_file.read_text(encoding="utf-8"))
@@ -651,13 +651,13 @@ def test_hostworker_never_imports_the_sidecar_or_a_server():
                 ] in forbidden:
                     offenders.append(source_file)
     assert not offenders, (
-        "apsimo_hostworker must stay stdlib-only: %s" % offenders
+        "pacomind_hostworker must stay stdlib-only: %s" % offenders
     )
 
 
 def test_independence_rule_is_documented_in_the_contract():
     contract_source = (
-        _HOSTWORKER_DIR / "apsimo_hostworker" / "contract.py"
+        _HOSTWORKER_DIR / "pacomind_hostworker" / "contract.py"
     ).read_text(encoding="utf-8")
     module_docstring = ast.get_docstring(ast.parse(contract_source)) or ""
     flattened = " ".join(module_docstring.split())

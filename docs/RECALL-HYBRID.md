@@ -13,7 +13,7 @@ model swaps and the shared HTTP contract.
 
 ## Returning no useful memory
 
-`COLONY_RECALL_RERANK_MIN_SCORE` is optional and has no global default. Scores
+`PACOMIND_RECALL_RERANK_MIN_SCORE` is optional and has no global default. Scores
 have model-specific meanings. When a cutoff is configured and calibrated, the
 reranker also evaluates candidate sets smaller than the requested result count.
 Passages below the cutoff are omitted instead of padding the context. Omitted
@@ -21,7 +21,7 @@ scores cannot satisfy a configured cutoff. A reranker error retains the existing
 fallback behavior; an empty result must not be interpreted as evidence that an
 unavailable backend searched successfully.
 
-The cutoff applies only when `COLONY_RECALL_RERANK_CALIBRATION` matches the
+The cutoff applies only when `PACOMIND_RECALL_RERANK_CALIBRATION` matches the
 SHA-256 configuration fingerprint supplied by the active reranker registration.
 The fingerprint uses the provider, model, endpoint, prompt format, candidate
 input format, optional weight revision, embedding configuration and optional index generation. Changing
@@ -34,8 +34,8 @@ weight revision is unavailable is explicitly marked
 `configuration_verified_weights_unverified`. A configuration stamp cannot detect
 an unannounced weight replacement behind the same endpoint/model alias. Operators
 must invalidate calibration on such a replacement; setting a model name is not
-proof of immutable weights. `COLONY_RERANKER_REVISION` and
-`COLONY_RECALL_INDEX_GENERATION` accept known revisions when available.
+proof of immutable weights. `PACOMIND_RERANKER_REVISION` and
+`PACOMIND_RECALL_INDEX_GENERATION` accept known revisions when available.
 
 There is no universal cosine or reranker threshold. A deployment should freeze
 representative positive, paraphrased, corrected and no-answer queries, select a
@@ -94,7 +94,7 @@ No graph candidate or graph recall-strength update participates in this path.
 
 Canonical candidates feed one rank-fusion and reranking pass. The calibrated
 cutoff can reject every candidate. Context contains at most five total records
-in one `colony-memory` section. There is no separate conversation-evidence
+in one `pacomind-memory` section. There is no separate conversation-evidence
 injection. Quotations remain evidence of what was said, while claims and contact
 estimates retain their distinct interpretation and uncertainty.
 
@@ -119,7 +119,7 @@ many distinct assistant retellings compete, or recover sources missed during
 candidate retrieval. The five-record limit and character budget are unchanged.
 
 The default combined rendered budget is 6,000 characters, adjustable through
-`COLONY_RECALL_CONTEXT_MAX_CHARS` up to 24,000; zero suppresses this packet.
+`PACOMIND_RECALL_CONTEXT_MAX_CHARS` up to 24,000; zero suppresses this packet.
 This is a character limit, not an asserted token count. Shortened excerpts carry
 `excerpt_truncated=true`, and source bytes remain intact in the source store.
 Records retain `kind=belief` or `kind=source_quote`, source/turn handles, speaker

@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.cognition.drive_governance import (
+from pacomind.api.authority import RequestAuthority
+from pacomind.cognition.drive_governance import (
     CharterRevisionV1,
     DriveGovernance,
     DriveGovernanceStore,
@@ -17,30 +17,30 @@ from apsimo.cognition.drive_governance import (
     RankingBudgetV1,
     ScopeV1,
 )
-from apsimo.cognition.evidence_pipeline import (
+from pacomind.cognition.evidence_pipeline import (
     CognitionEvidenceReducer,
     CognitionEvidenceStore,
 )
-from apsimo.cognition.external_events import (
+from pacomind.cognition.external_events import (
     ExternalCognitionEventV1,
     ExternalEventInboxStore,
     ExternalEventIntake,
 )
-from apsimo.cognition.goal_spine import (
+from pacomind.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtQueueAdapter,
 )
-from apsimo.cognition.runtime import CognitionRuntimeContractV1
-from apsimo.initiatives.approval_authority import ApprovalAuthorityStore
-from apsimo.projects import ProjectEngine, ProjectStore
-from apsimo.projects.event_outbox import ProjectEventProjector
-from apsimo.self_model.event_concerns import ExternalEventConcernReducer
-from apsimo.self_model.store import CompetenceStore, SelfModel
-from apsimo.self_model.workspace import ConcernStore
-from apsimo.server import _compose_p7_charter_admission
-from apsimo.task_queue.models import JobResult, JobStatus, JobType
-from apsimo.work_orders import QueueWorkOrderAdapter
+from pacomind.cognition.runtime import CognitionRuntimeContractV1
+from pacomind.initiatives.approval_authority import ApprovalAuthorityStore
+from pacomind.projects import ProjectEngine, ProjectStore
+from pacomind.projects.event_outbox import ProjectEventProjector
+from pacomind.self_model.event_concerns import ExternalEventConcernReducer
+from pacomind.self_model.store import CompetenceStore, SelfModel
+from pacomind.self_model.workspace import ConcernStore
+from pacomind.server import _compose_p7_charter_admission
+from pacomind.task_queue.models import JobResult, JobStatus, JobType
+from pacomind.work_orders import QueueWorkOrderAdapter
 
 
 NOW = datetime(2026, 7, 13, 12, 0, tzinfo=timezone.utc)
@@ -258,19 +258,19 @@ def _complete_work_order(job):
 async def test_owner_text_event_reaches_verified_learning_and_settlement(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_RETENTION", "500")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.setenv("COLONY_WORKSPACE", "live")
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE_BOOTSTRAP", "beginning")
-    import apsimo.projects.engine as project_engine_module
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_RETENTION", "500")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_WORKSPACE", "live")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE_BOOTSTRAP", "beginning")
+    import pacomind.projects.engine as project_engine_module
     monkeypatch.setattr(project_engine_module, "projects_review_secs", lambda: 0.0)
 
     governance, charter = _activate_owner_charter(tmp_path)

@@ -5,16 +5,16 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def _iso(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.delenv("COLONY_EVENT_JOURNAL_DIR", raising=False)
-    monkeypatch.setenv("COLONY_AGENT_TIMEZONE", "UTC")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.delenv("PACOMIND_EVENT_JOURNAL_DIR", raising=False)
+    monkeypatch.setenv("PACOMIND_AGENT_TIMEZONE", "UTC")
     yield
 
 
 @pytest.mark.asyncio
 async def test_timeline_endpoint_filters_and_digest(tmp_path):
-    from apsimo.events.journal import append_event
-    from apsimo.api.routers import host
+    from pacomind.events.journal import append_event
+    from pacomind.api.routers import host
 
     append_event("conversation.turn", {"contact_id": "cid-a", "summary": "talked about the roadmap"})
     append_event("outreach.sent", {"contact_id": "cid-b", "reason": "checked in"})

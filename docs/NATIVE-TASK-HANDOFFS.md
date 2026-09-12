@@ -1,6 +1,6 @@
 # Native task handoff storage
 
-`colony_hermes.task_handoffs.TaskHandoffs` holds durable associations between a
+`pacomind_hermes.task_handoffs.TaskHandoffs` holds durable associations between a
 captured instruction and a Hermes-owned task. It has no worker, scheduler,
 model client, HTTP server, or tool registration. This extraction is available
 to adapters; importing it does not enable background tasks on a fresh install.

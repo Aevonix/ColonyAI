@@ -1,7 +1,7 @@
-"""Tests for apsimo.vector.reranker — reranker providers and factory."""
+"""Tests for pacomind.vector.reranker — reranker providers and factory."""
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from apsimo.vector.reranker import (
+from pacomind.vector.reranker import (
     RerankResult,
     RerankerProvider,
     CUDARerankerProvider,
@@ -11,7 +11,7 @@ from apsimo.vector.reranker import (
     OpenAIAPIRerankerProvider,
     make_reranker_provider,
 )
-from apsimo.vector.tiers import ModelSpec
+from pacomind.vector.tiers import ModelSpec
 
 
 class TestRerankResult:

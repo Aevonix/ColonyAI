@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.source_vectors import SourceVectors
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.source_vectors import SourceVectors
 from test_turn_source_evidence import source_app
 
 
@@ -67,7 +67,7 @@ def test_unsupported_request_time_remains_unresolved(query_text):
 
 @pytest.mark.asyncio
 async def test_pasted_report_remains_recallable_at_its_actual_capture_time(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     monkeypatch.setattr(SourceVectors, 'search', AsyncMock(return_value=([], [])))
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
     ledger.record_source('quartz-report', contact_id='person', session_id='work',
@@ -78,7 +78,7 @@ async def test_pasted_report_remains_recallable_at_its_actual_capture_time(sourc
             'context': {'contact_id': 'person', 'session_id': 'later'},
             'incoming_message': {'role': 'user', 'content': REPORT}})
     assert response.status_code == 200, response.text
-    packet = next((s for s in response.json()['sections'] if s['id'] == 'colony-memory'), None)
+    packet = next((s for s in response.json()['sections'] if s['id'] == 'pacomind-memory'), None)
     assert packet is not None
     assert json.dumps(REPORT, ensure_ascii=False) in packet['body']
     assert packet['citations'] == ledger.source_references(

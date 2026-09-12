@@ -3,7 +3,7 @@
 Fabrication controls under test:
   * evidence MUST be a case-insensitive verbatim substring of the excerpt;
   * create confidence <= 0.5; repetition does not increase confidence;
-  * effective mode = min(COLONY_CAUSAL_EXTRACT, COLONY_WORLD_LLM_EXTRACT);
+  * effective mode = min(PACOMIND_CAUSAL_EXTRACT, PACOMIND_WORLD_LLM_EXTRACT);
   * shadow writes nothing.
 """
 
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.world_model.llm_extract import (
+from pacomind.world_model.llm_extract import (
     WorldLLMExtractor, causal_extract_mode,
 )
 
@@ -86,24 +86,24 @@ def _causal_edges(world):
 # ---------------------------------------------------------------------------
 
 def test_causal_mode_off_by_default(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.delenv("COLONY_CAUSAL_EXTRACT", raising=False)
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.delenv("PACOMIND_CAUSAL_EXTRACT", raising=False)
     assert causal_extract_mode() == "off"
 
 
 def test_causal_mode_never_exceeds_extractor(monkeypatch):
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "shadow")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "shadow")
     assert causal_extract_mode() == "shadow"
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "off")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "off")
     assert causal_extract_mode() == "off"
 
 
 @pytest.mark.asyncio
 async def test_flag_off_writes_and_reports_nothing(monkeypatch):
     """Flag-off regression lock: causal payloads are ignored entirely."""
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.delenv("COLONY_CAUSAL_EXTRACT", raising=False)
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.delenv("PACOMIND_CAUSAL_EXTRACT", raising=False)
     world = FakeWorld()
     x = _Extractor(world, payload=_payload(
         [_causal_claim("The migration caused the outage")]))
@@ -115,8 +115,8 @@ async def test_flag_off_writes_and_reports_nothing(monkeypatch):
 @pytest.mark.asyncio
 async def test_shadow_reports_but_writes_no_causal_edge(monkeypatch):
     """Causal shadow on a live extractor: entities land, causal edges never."""
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "shadow")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "shadow")
     world = FakeWorld()
     x = _Extractor(world, payload=_payload(
         [_causal_claim("The migration caused the outage")]))
@@ -133,8 +133,8 @@ async def test_shadow_reports_but_writes_no_causal_edge(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_fabricated_evidence_is_discarded(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
     x = _Extractor(world, payload=_payload([
         _causal_claim("the CEO confirmed the root cause in the postmortem"),
@@ -148,8 +148,8 @@ async def test_fabricated_evidence_is_discarded(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_evidence_match_is_case_insensitive(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
     x = _Extractor(world, payload=_payload(
         [_causal_claim("the MIGRATION caused THE outage")]))
@@ -164,8 +164,8 @@ async def test_evidence_match_is_case_insensitive(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_create_confidence_capped_at_half(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
     x = _Extractor(world, payload=_payload(
         [_causal_claim("The migration caused the outage", conf=0.95)]))
@@ -177,8 +177,8 @@ async def test_create_confidence_capped_at_half(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_repeated_extraction_has_no_confidence_steps(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
     payload = _payload([_causal_claim("The migration caused the outage")])
     # First run creates at 0.5; repeated claims do not add confidence.
@@ -193,8 +193,8 @@ async def test_repeated_extraction_has_no_confidence_steps(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_repeated_quote_keeps_existing_edge_and_confidence(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_EXTRACT", "live")
     world = FakeWorld()
 
     class _Pinned(_Extractor):

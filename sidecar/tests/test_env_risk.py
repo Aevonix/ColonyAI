@@ -11,9 +11,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.channels.presence import ConversationPresenceStore
-from apsimo.gate.env_risk import (
+from pacomind.api.routers import host as host_mod
+from pacomind.channels.presence import ConversationPresenceStore
+from pacomind.gate.env_risk import (
     R0, R1, R2, R3, classify, env_risk_window_hours, gateway_class)
 
 OWNER = "cid-owner"
@@ -32,10 +32,10 @@ class FakeContacts:
 
 @pytest.fixture()
 def env(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
-    monkeypatch.setenv("COLONY_ENV_RISK_GATEWAY_CLASS",
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_ENV_RISK_GATEWAY_CLASS",
                        "dm:private,kiosk:embodied,web:public")
-    monkeypatch.delenv("COLONY_ENV_RISK_WINDOW_HOURS", raising=False)
+    monkeypatch.delenv("PACOMIND_ENV_RISK_WINDOW_HOURS", raising=False)
 
 
 def _stores(*sightings, tiers=None):
@@ -54,12 +54,12 @@ def _stores(*sightings, tiers=None):
 # ---------------------------------------------------------------------------
 
 def test_gateway_class_default_unclassified(monkeypatch):
-    monkeypatch.delenv("COLONY_ENV_RISK_GATEWAY_CLASS", raising=False)
+    monkeypatch.delenv("PACOMIND_ENV_RISK_GATEWAY_CLASS", raising=False)
     assert gateway_class("dm") == ""
 
 
 def test_gateway_class_parsing(monkeypatch):
-    monkeypatch.setenv("COLONY_ENV_RISK_GATEWAY_CLASS",
+    monkeypatch.setenv("PACOMIND_ENV_RISK_GATEWAY_CLASS",
                        "dm:private, WEB:Public ,junk,bad:sorta")
     assert gateway_class("dm") == "private"
     assert gateway_class("web") == "public"
@@ -68,11 +68,11 @@ def test_gateway_class_parsing(monkeypatch):
 
 
 def test_window_hours_default_and_malformed(monkeypatch):
-    monkeypatch.delenv("COLONY_ENV_RISK_WINDOW_HOURS", raising=False)
+    monkeypatch.delenv("PACOMIND_ENV_RISK_WINDOW_HOURS", raising=False)
     assert env_risk_window_hours() == 48.0
-    monkeypatch.setenv("COLONY_ENV_RISK_WINDOW_HOURS", "banana")
+    monkeypatch.setenv("PACOMIND_ENV_RISK_WINDOW_HOURS", "banana")
     assert env_risk_window_hours() == 48.0
-    monkeypatch.setenv("COLONY_ENV_RISK_WINDOW_HOURS", "-1")
+    monkeypatch.setenv("PACOMIND_ENV_RISK_WINDOW_HOURS", "-1")
     assert env_risk_window_hours() == 48.0
 
 
@@ -123,7 +123,7 @@ async def test_r2_all_trusted_group(env):
 
 @pytest.mark.asyncio
 async def test_r3_default_without_gateway_classification(env, monkeypatch):
-    monkeypatch.delenv("COLONY_ENV_RISK_GATEWAY_CLASS", raising=False)
+    monkeypatch.delenv("PACOMIND_ENV_RISK_GATEWAY_CLASS", raising=False)
     p, c = _stores(("dm:owner", OWNER, "handle"))
     r = await classify("dm:owner", OWNER, presence_store=p, contacts_store=c)
     assert r.level == R3
@@ -140,8 +140,8 @@ async def test_r3_public_and_embodied_gateways(env, gateway):
 
 @pytest.mark.asyncio
 async def test_r3_owner_identity_unset(env, monkeypatch):
-    monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
-    monkeypatch.delenv("COLONY_HOST_CONTACT_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_HOST_CONTACT_ID", raising=False)
     p, c = _stores(("dm:x", "cid-a", "handle"), tiers={"cid-a": "trusted"})
     r = await classify("dm:x", "cid-a", presence_store=p, contacts_store=c)
     assert r.level == R3

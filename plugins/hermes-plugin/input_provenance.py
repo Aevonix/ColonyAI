@@ -16,7 +16,7 @@ import threading
 
 from .client import redact_source_payload, source_input_erased
 
-_CURRENT = ContextVar('colony_supplied_input', default=None)
+_CURRENT = ContextVar('pacomind_supplied_input', default=None)
 
 
 def _refs(value, digest):
@@ -72,7 +72,7 @@ class SourceUpdate:
             self.input_refs, self.source_refs], sort_keys=True, separators=(',', ':'), ensure_ascii=True)
         stamp = json.dumps({'id': self.update_id, 'sha256': hashlib.sha256(payload.encode()).hexdigest(),
                             'sources': self.source_refs}, sort_keys=True, separators=(',', ':'))
-        return '[colony-task-update-v1 ' + stamp + ']\n' + self.instruction + '\n[/colony-task-update-v1]'
+        return '[pacomind-task-update-v1 ' + stamp + ']\n' + self.instruction + '\n[/pacomind-task-update-v1]'
 
 
 def _request_texts(value):
@@ -355,11 +355,11 @@ class SuppliedInput:
             return ''
         stamp = json.dumps({'contact_id': self.contact_id, 'watermark': watermark,
                             'sources': self._sources}, separators=(',', ':'))
-        return ('[colony-recall-v1 ' + stamp + ']\n'
+        return ('[pacomind-recall-v1 ' + stamp + ']\n'
             'The authenticated host supplied these inherited source handles for this task. '
             'Their contents have not been opened in this native request. Use the scoped source '
             'reader when their evidence is needed; a handle alone establishes no factual claim.\n'
-            + json.dumps(self._sources) + '\n[/colony-recall-v1]')
+            + json.dumps(self._sources) + '\n[/pacomind-recall-v1]')
 
     def completed(self, scope, turn_id, sources):
         with self._lock:

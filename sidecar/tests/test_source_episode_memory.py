@@ -5,11 +5,11 @@ from httpx import ASGITransport, AsyncClient
 import jsonschema
 import pytest
 
-from apsimo.beliefs.source_claims import claim_response_schema, validated_claims
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.self_model.judgments import SelfJudgments
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns import source_read
+from pacomind.beliefs.source_claims import claim_response_schema, validated_claims
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.self_model.judgments import SelfJudgments
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns import source_read
 from test_self_judgments import Processor
 from test_self_perspective import perspective, tell
 from test_source_claim_projection import Model

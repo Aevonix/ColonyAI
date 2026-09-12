@@ -9,13 +9,13 @@ import sqlite3
 
 import pytest
 
-from apsimo.tom.visibility import (
+from pacomind.tom.visibility import (
     FactCandidateV1,
     FactVisibilityV1,
     ViewerContextV1,
     content_digest,
 )
-from apsimo.tom.visibility_store import (
+from pacomind.tom.visibility_store import (
     FactVisibilityStore,
     VisibilityEnvelopeConflictError,
     open_visibility_envelope_store,

@@ -1,4 +1,4 @@
-"""L3.3 — server-side guard-context completion (COLONY_GUARD_DERIVE_CONTEXT).
+"""L3.3 — server-side guard-context completion (PACOMIND_GUARD_DERIVE_CONTEXT).
 
 The chat hot path's plugin posts only text + ids, so the context-dependent
 checks evaluated against a null conversation_key and returned [] — dead
@@ -14,11 +14,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.api.schemas.host import ResponseGuardCheckRequest
-from apsimo.gate.context_provenance import (
+from pacomind.api.routers import host as host_mod
+from pacomind.api.schemas.host import ResponseGuardCheckRequest
+from pacomind.gate.context_provenance import (
     ContextProvenanceStore, ProvenanceCrossContextGuard)
-from apsimo.gate.response_guard import GuardMode, ResponseGuard
+from pacomind.gate.response_guard import GuardMode, ResponseGuard
 
 
 class _SpyGuard:
@@ -68,7 +68,7 @@ def spy(monkeypatch):
     monkeypatch.setattr(host_mod, "_contacts_store",
                         _Contacts({"cid-42": "trusted"}))
     monkeypatch.setattr(host_mod, "_conversation_extractor", _Extractor())
-    monkeypatch.delenv("COLONY_GUARD_DERIVE_CONTEXT", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_DERIVE_CONTEXT", raising=False)
     return g
 
 
@@ -117,7 +117,7 @@ async def test_api_caller_cannot_self_attest_owner_authorization(spy):
 
 @pytest.mark.asyncio
 async def test_flag_off_restores_null_key_passthrough(spy, monkeypatch):
-    monkeypatch.setenv("COLONY_GUARD_DERIVE_CONTEXT", "0")
+    monkeypatch.setenv("PACOMIND_GUARD_DERIVE_CONTEXT", "0")
     await host_mod.response_guard_check(ResponseGuardCheckRequest(
         surface="text_chat", response_text="hi", target_contact_id="cid-42",
         incoming_message_text="what about Project Falcon?"))
@@ -153,8 +153,8 @@ async def test_chat_path_cross_context_fires_with_derived_key(monkeypatch):
     """A plugin-shaped request (no conversation_key, no entities) that
     surfaces an entity known only from ANOTHER private conversation is now
     flagged — before L3.3 this evaluated with a null key and passed."""
-    monkeypatch.delenv("COLONY_GUARD_DERIVE_CONTEXT", raising=False)
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.delenv("PACOMIND_GUARD_DERIVE_CONTEXT", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
     store = ContextProvenanceStore(":memory:")
     store.record("rcs:conv-other", ["Project Falcon"])
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,

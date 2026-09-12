@@ -150,7 +150,7 @@ class CommitmentCoordinator:
             return json.dumps({'error': 'Commitment coordination unavailable; no undertaking confirmed'})
 
     def before_tool(self, context):
-        if context.get('tool_name') in {'colony_commitment_work', 'colony_accept_local_draft'}:
+        if context.get('tool_name') in {'pacomind_commitment_work', 'pacomind_accept_local_draft'}:
             # Acceptance validates/releases this exact held token in its transaction;
             # it must also recover an acceptance whose release reply was lost.
             return None
@@ -167,5 +167,5 @@ class CommitmentCoordinator:
                 return None
         except Exception:
             pass
-        return json.dumps({'error': 'This undertaking is unavailable or superseded; stop its tools and inspect colony_commitment_work status',
+        return json.dumps({'error': 'This undertaking is unavailable or superseded; stop its tools and inspect pacomind_commitment_work status',
                            'effect_performed': False, 'commitment_id': current['commitment_id']})

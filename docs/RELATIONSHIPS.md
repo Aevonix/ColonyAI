@@ -2,7 +2,7 @@
 
 Status: DESIGN v1.0 (2026-07-06) — implementation in this release.
 
-Colony's promise is a persistent social memory for an agent: who it talks
+PacoMind's promise is a persistent social memory for an agent: who it talks
 to, what those people are like, what standing each relationship has, and how
 best to approach them. This document is the durable spec for the identity
 and relationship layer that delivers that promise, written against a live
@@ -80,7 +80,7 @@ Resolution ladder, first hit wins:
    keep the sender's separate shadow identity until an explicit correction.
 5. **Shadow contact**: create (tier `unknown`, `interaction_allowed=false`,
    `met_via=<channel_id>`, `import_source=auto:sender`) with the handle
-   attached, when `COLONY_IDENTITY_SHADOW_CONTACTS` (default true).
+   attached, when `PACOMIND_IDENTITY_SHADOW_CONTACTS` (default true).
 
 The resolver also OWNS the machine gate: senderless turns on machine
 channels (`cron:`, `api:` prefixes, configurable) or system-origin text
@@ -135,7 +135,7 @@ resolves a voice to a canonical contact and the gateway syncs the turn with
 `sender={platform:"voice", user_id:<contact_id or enrolled-name>}`. A
 `voice` handle kind links enrolled voiceprint names to contacts so kiosk
 and call interactions accrue to the same person as their texts. Same for
-`face` if a deployment enrolls faces. Colony stays generic: it defines the
+`face` if a deployment enrolls faces. PacoMind stays generic: it defines the
 handle kinds; deployments supply the recognizers.
 
 ### 6. Owner curation tools
@@ -160,22 +160,22 @@ Per contact with enough signal, a compact **RelationshipBrief**:
   observations.
 - **Affect**: current valence/arousal + trend.
 - **Rapport**: top shared-fact topics.
-- **Approach guidance** (`COLONY_APPROACH_GUIDANCE`, default true): derived
+- **Approach guidance** (`PACOMIND_APPROACH_GUIDANCE`, default true): derived
   suggestions — preferred channel (most-used), best time (interaction-hour
   histogram in the contact's timezone), style notes from the psyche dims
   ("direct and brief", "responds to structured detail"), plus standing
   cautions (recent negative affect trend, overdue cadence).
 
 Refresh: `_phase_relationship_profiling` (autonomy loop) re-profiles
-contacts with ≥ `COLONY_RELATIONSHIP_PROFILE_MIN_INTERACTIONS` new
+contacts with ≥ `PACOMIND_RELATIONSHIP_PROFILE_MIN_INTERACTIONS` new
 interactions (default 5) since last profile; briefs cached in
-`colony-relationships.db`.
+`pacomind-relationships.db`.
 
 Consumers:
 - Context assembly injects the brief when the conversation's contact is a
   profiled person (approach section included for non-owner contacts).
-- `colony_relationship_brief(name)` tool + `GET /relationships/{contact_id}`.
-- `colony_outreach_check` enriched with the approach section.
+- `pacomind_relationship_brief(name)` tool + `GET /relationships/{contact_id}`.
+- `pacomind_outreach_check` enriched with the approach section.
 - The relationship initiative generators finally receive real signals.
 
 ### 8. Remediation of poisoned history (deployment runbook)
@@ -199,11 +199,11 @@ Doctor gains `server-relationships`:
 
 | Env | Default | Meaning |
 |---|---|---|
-| `COLONY_IDENTITY_SHADOW_CONTACTS` | `true` | Unknown senders become shadow contacts |
-| `COLONY_IDENTITY_MACHINE_CHANNELS` | `cron,api,internal` | Channel prefixes whose senderless turns are `system` |
-| `COLONY_RELATIONSHIP_PROFILE_MIN_INTERACTIONS` | `5` | New interactions before a (re)profile |
-| `COLONY_RELATIONSHIP_PROFILE_REFRESH_SECS` | `21600` | Profiling phase cadence |
-| `COLONY_APPROACH_GUIDANCE` | `true` | Include approach guidance in briefs |
+| `PACOMIND_IDENTITY_SHADOW_CONTACTS` | `true` | Unknown senders become shadow contacts |
+| `PACOMIND_IDENTITY_MACHINE_CHANNELS` | `cron,api,internal` | Channel prefixes whose senderless turns are `system` |
+| `PACOMIND_RELATIONSHIP_PROFILE_MIN_INTERACTIONS` | `5` | New interactions before a (re)profile |
+| `PACOMIND_RELATIONSHIP_PROFILE_REFRESH_SECS` | `21600` | Profiling phase cadence |
+| `PACOMIND_APPROACH_GUIDANCE` | `true` | Include approach guidance in briefs |
 
 ## Test plan
 

@@ -21,14 +21,14 @@ supplied_review=sys.argv[2]=='owner_supplied'
 erased_history=sys.argv[2]=='owner_erased_history'
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['pacomind'],'pacomind':{
     'owner_contact_id':'fixture-owner','attested_system_platforms':['cli'],
     'execution_registry_enabled':True,'turn_outbox_path':str(home/'outbox.db')}},
     'skills':{'creation_nudge_interval':1,'write_approval':False}}))
 fixture=home/'neutral.txt'; fixture.write_text('NEUTRAL_READ_RESULT')
 def no_network(*a,**kw): raise AssertionError('Controlled review must stay offline')
 socket.socket.connect=no_network; socket.create_connection=no_network
-import apsimo_hermes
+import pacomind_hermes
 observations=[]
 erasure_events=[]
 class Reply:
@@ -45,10 +45,10 @@ def get(self,path,**kw):
         return Reply({'contact_id':'fixture-owner','head':len(erasure_events),
             'through':len(erasure_events),'events':erasure_events,'complete':True})
     raise RuntimeError('No central source service in this isolated qualification')
-apsimo_hermes.ColonyClient.post=post; apsimo_hermes.ColonyClient.get=get
+pacomind_hermes.PacoMindClient.post=post; pacomind_hermes.PacoMindClient.get=get
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
-assert Path(apsimo_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
+assert Path(pacomind_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 from run_agent import AIAgent
 import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
@@ -86,7 +86,7 @@ with ExitStack() as inputs, patch(OPENAI_TARGET,side_effect=[parent_client,revie
     parent._skill_nudge_interval=1
     parent._emit_auxiliary_failure=lambda *args:errors.append([str(arg) for arg in args])
     if supplied_review:
-        from apsimo_hermes.input_provenance import supplied_input
+        from pacomind_hermes.input_provenance import supplied_input
         supplied=inputs.enter_context(supplied_input(contact_id='fixture-owner',session_id=parent.session_id,
             input_refs=[{'source_id':'fixture-input','input_message_hash':'a'*64}]))
     history=[]
@@ -108,7 +108,7 @@ with ExitStack() as inputs, patch(OPENAI_TARGET,side_effect=[parent_client,revie
     if erased_history:
         assert forgotten in str(parent_client.chat.completions.create.call_args_list)
         assert derived in str(parent_client.chat.completions.create.call_args_list)
-        from apsimo_hermes.client import source_message_hash
+        from pacomind_hermes.client import source_message_hash
         erasure_events.append({'sequence':1,'turn_id':'erased-original',
             'session_id':parent.session_id,
             'message_hashes':[source_message_hash(parent.session_id,{'role':'user','content':forgotten})]})
@@ -139,7 +139,7 @@ with ExitStack() as inputs, patch(OPENAI_TARGET,side_effect=[parent_client,revie
     expected='fixture-guest' if guest else 'fixture-owner'
     assert all(row['contact_id']==expected for row in reviews),reviews
     assert all(row['parent_execution_id'] and row['execution_id']!=row['parent_execution_id'] for row in reviews)
-    current=apsimo_hermes._TRANSPORT_SCOPES.for_session(parent.session_id)
+    current=pacomind_hermes._TRANSPORT_SCOPES.for_session(parent.session_id)
     assert current.platform!='background_review',current
     if guest:
         assert 'requires_authorization' in returned and current.contact_id=='fixture-owner',returned
@@ -151,7 +151,7 @@ with ExitStack() as inputs, patch(OPENAI_TARGET,side_effect=[parent_client,revie
         pending=write_approval.list_pending(write_approval.SKILLS)
         assert len(pending)==1 and pending[0]['origin']=='background_review',pending
         assert pending[0]['payload']['name']==skill_name and pending[0]['payload']['content']==content
-        evidence=pending[0]['payload']['_colony_review_evidence']
+        evidence=pending[0]['payload']['_pacomind_review_evidence']
         if failed_read:
             assert evidence['session_id']==parent.session_id
             parent_observation=next(row for row in observations if row['platform']=='cli')
@@ -181,7 +181,7 @@ with ExitStack() as inputs, patch(OPENAI_TARGET,side_effect=[parent_client,revie
         assert ok,message
         assert not saved.exists()
         assert any(row['action']=='rollback' for row in skill_ledger.list_entries(limit=50))
-    rows=apsimo_hermes.TurnOutbox(str(home/'outbox.db')).snapshot()
+    rows=pacomind_hermes.TurnOutbox(str(home/'outbox.db')).snapshot()
     assert len(rows)==1,rows
     if supplied_review:
         assert 'user_message' not in rows[0]['payload']

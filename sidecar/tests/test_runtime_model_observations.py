@@ -1,8 +1,8 @@
 """Actual response metadata is distinct from requested model and forecast."""
 import pytest
 
-from apsimo.self_model import runtime_models as models
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.self_model import runtime_models as models
+from pacomind.turns import TurnIdempotencyLedger
 
 
 @pytest.fixture
@@ -79,7 +79,7 @@ def test_erased_pair_cannot_silently_turn_partial_run_into_complete(runtime):
 
 
 def test_outcome_retains_model_dependency_so_forgetting_retracts_derived_metadata(runtime):
-    from apsimo.self_model.runtime_forecasts import _retain, _current, _identity, VERSION
+    from pacomind.self_model.runtime_forecasts import _retain, _current, _identity, VERSION
     import time
     retain(runtime, 'start'); response = retain(runtime, 'response', response_model='model-a')
     observed = summary(runtime)

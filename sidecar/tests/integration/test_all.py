@@ -1,15 +1,15 @@
-"""Colony Integration Test Suite
+"""PacoMind Integration Test Suite
 
-Comprehensive end-to-end tests against a fully wired, running Colony sidecar.
-Designed to run after `colony init` to verify all systems, and periodically
+Comprehensive end-to-end tests against a fully wired, running PacoMind sidecar.
+Designed to run after `pacomind init` to verify all systems, and periodically
 as a health check.
 
 Usage:
-    # After colony init + colony start
+    # After pacomind init + pacomind start
     pytest tests/integration/ -v
 
     # Against a specific host
-    COLONY_URL=http://node-a:7777 COLONY_API_KEY=xxx pytest tests/integration/ -v
+    PACOMIND_URL=http://node-a:7777 PACOMIND_API_KEY=xxx pytest tests/integration/ -v
 
     # Quick smoke test (subset)
     pytest tests/integration/ -v -m smoke
@@ -19,7 +19,7 @@ Usage:
 
 This historical suite includes mutations. Use an isolated qualification deployment.
 Memory checks are read-only and require a scoped credential plus
-COLONY_TEST_PERSON_ID; useful recall and source persistence are covered by
+PACOMIND_TEST_PERSON_ID; useful recall and source persistence are covered by
 ../test_canonical_memory_search.py and the canonical source suites.
 """
 
@@ -39,8 +39,8 @@ import pytest
 # Configuration
 # ---------------------------------------------------------------------------
 
-BASE_URL = os.environ.get("COLONY_URL", "http://localhost:7777")
-API_KEY = os.environ.get("COLONY_API_KEY", "")
+BASE_URL = os.environ.get("PACOMIND_URL", "http://localhost:7777")
+API_KEY = os.environ.get("PACOMIND_API_KEY", "")
 HEADERS = {"Authorization": f"Bearer {API_KEY}"} if API_KEY else {}
 TIMEOUT = 30.0
 
@@ -85,8 +85,8 @@ def _post(client, path, data, expect_status=200):
 
 
 def _memory_search_payload(query):
-    person = os.environ.get('COLONY_TEST_PERSON_ID', '').strip()
-    assert person, "Set COLONY_TEST_PERSON_ID to this credential's exact participant"
+    person = os.environ.get('PACOMIND_TEST_PERSON_ID', '').strip()
+    assert person, "Set PACOMIND_TEST_PERSON_ID to this credential's exact participant"
     return {'identity': {'host_id': 'integration'}, 'person_id': person,
             'session_id': 'memory-integration', 'query': query, 'limit': 5}
 
@@ -433,16 +433,16 @@ class TestIdentity:
     """Cryptographic identity and chain integrity."""
 
     def test_identity_status(self, client):
-        """Identity status returns with colony_id."""
+        """Identity status returns with pacomind_id."""
         data = _get(client, "/identity/status")
-        assert "colony_id" in data
+        assert "pacomind_id" in data
         assert "initialized" in data
         assert "keys_configured" in data
 
     def test_identity_info_alias(self, client):
         """/identity/info returns same data as /identity/status."""
         data = _get(client, "/identity/info")
-        assert "colony_id" in data
+        assert "pacomind_id" in data
 
     def test_chain_verify(self, client):
         """Chain verification returns a valid/invalid result."""
@@ -567,7 +567,7 @@ class TestWorldModel:
         data = _post(client, "/world/entities/query", {
             "identity": {"host_id": "test"},
             "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": "Colony",
+            "query": "PacoMind",
             "limit": 5,
         })
         assert "entities" in data
@@ -577,7 +577,7 @@ class TestWorldModel:
         data = _post(client, "/world-model/entities", {
             "identity": {"host_id": "test"},
             "context": {"session_id": "s1", "contact_id": "c1"},
-            "query": "Colony",
+            "query": "PacoMind",
             "limit": 5,
         })
         assert "entities" in data
@@ -596,7 +596,7 @@ class TestContextAssembly:
         data = _post(client, "/context/assemble", {
             "identity": {"host_id": "test"},
             "context": {"session_id": "s1", "contact_id": "c1"},
-            "incoming_message": {"content": "Colony project", "role": "user"},
+            "incoming_message": {"content": "PacoMind project", "role": "user"},
             "limit": 10,
         })
         sections = data.get("sections", [])
@@ -608,7 +608,7 @@ class TestContextAssembly:
         data = _post(client, "/context/assemble", {
             "identity": {"host_id": "test"},
             "context": {"session_id": "s1", "contact_id": "c1"},
-            "incoming_message": {"content": "Colony", "role": "user"},
+            "incoming_message": {"content": "PacoMind", "role": "user"},
             "limit": 10,
         })
         for section in data.get("sections", []):
@@ -631,7 +631,7 @@ class TestContextAssembly:
             "limit": 10,
         })
         section_ids = [s["id"] for s in data.get("sections", [])]
-        assert "colony-goals" in section_ids, f"Goals section missing. Got: {section_ids}"
+        assert "pacomind-goals" in section_ids, f"Goals section missing. Got: {section_ids}"
 
     def test_assemble_does_not_advertise_internal_executor_skills(self, client):
         """The host's installed skill catalog is separate from sidecar executors."""
@@ -642,7 +642,7 @@ class TestContextAssembly:
             "limit": 10,
         })
         section_ids = [s["id"] for s in data.get("sections", [])]
-        assert "colony-skills" not in section_ids, f"Internal executor catalog leaked into context: {section_ids}"
+        assert "pacomind-skills" not in section_ids, f"Internal executor catalog leaked into context: {section_ids}"
 
 
 # ===========================================================================
@@ -886,15 +886,15 @@ class TestPersistence:
 
     def test_memories_persisted(self, client):
         """Search previously recorded source evidence after a manual restart."""
-        query = os.environ.get('COLONY_TEST_MEMORY_QUERY', '').strip()
-        assert query, 'Set COLONY_TEST_MEMORY_QUERY to known retained evidence after restart'
+        query = os.environ.get('PACOMIND_TEST_MEMORY_QUERY', '').strip()
+        assert query, 'Set PACOMIND_TEST_MEMORY_QUERY to known retained evidence after restart'
         data = _post(client, '/memory/search', _memory_search_payload(query))
         assert data['count'] > 0 and data['source_refs'], 'Known source evidence was not recalled'
 
     def test_identity_persisted(self, client):
         """Identity/chain state survives a restart."""
         data = _get(client, "/identity/status")
-        assert data.get("colony_id") is not None, "Colony ID lost after restart"
+        assert data.get("pacomind_id") is not None, "PacoMind ID lost after restart"
         assert data.get("initialized") is True, "Identity not initialized after restart"
 
 

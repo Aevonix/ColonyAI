@@ -6,10 +6,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apsimo.api.routers import task_queue as queue_router
-from apsimo.task_queue.models import Job, WorkerCapabilities
-from apsimo.task_queue.queue_manager import QueueManager, TaskQueueManager
-from apsimo.task_queue.scheduler import Scheduler
+from pacomind.api.routers import task_queue as queue_router
+from pacomind.task_queue.models import Job, WorkerCapabilities
+from pacomind.task_queue.queue_manager import QueueManager, TaskQueueManager
+from pacomind.task_queue.scheduler import Scheduler
 
 
 class _Clock:

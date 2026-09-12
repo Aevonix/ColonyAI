@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apsimo.telemetry import TelemetryStore
+from pacomind.telemetry import TelemetryStore
 
 # Mirror the defaults in api/routers/host.py::host_health.
 HEALTH_THRESHOLDS = {"sync": 2.0, "tick": 24.0, "initiative": 48.0, "prefetch": 24.0}
@@ -55,7 +55,7 @@ async def test_stuck_internal_loop_is_still_caught():
 async def test_host_health_enforces_temporal_staleness_by_default(
     monkeypatch, configured,
 ):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
     telemetry = _store(
         last_sync_at=3.0,
@@ -66,9 +66,9 @@ async def test_host_health_enforces_temporal_staleness_by_default(
     monkeypatch.setattr(host, "_telemetry", telemetry)
     monkeypatch.setattr(host, "_embedder", None)
     if configured is None:
-        monkeypatch.delenv("COLONY_TEMPORAL_HEALTH_POLICY", raising=False)
+        monkeypatch.delenv("PACOMIND_TEMPORAL_HEALTH_POLICY", raising=False)
     else:
-        monkeypatch.setenv("COLONY_TEMPORAL_HEALTH_POLICY", configured)
+        monkeypatch.setenv("PACOMIND_TEMPORAL_HEALTH_POLICY", configured)
 
     result = await host.health()
 
@@ -81,7 +81,7 @@ async def test_host_health_enforces_temporal_staleness_by_default(
 async def test_advisory_policy_preserves_stale_flags_without_degrading_health(
     monkeypatch,
 ):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
     telemetry = _store(
         last_sync_at=3.0,
@@ -91,7 +91,7 @@ async def test_advisory_policy_preserves_stale_flags_without_degrading_health(
     )
     monkeypatch.setattr(host, "_telemetry", telemetry)
     monkeypatch.setattr(host, "_embedder", None)
-    monkeypatch.setenv("COLONY_TEMPORAL_HEALTH_POLICY", "advisory")
+    monkeypatch.setenv("PACOMIND_TEMPORAL_HEALTH_POLICY", "advisory")
 
     result = await host.health()
 
@@ -104,8 +104,8 @@ async def test_advisory_policy_preserves_stale_flags_without_degrading_health(
 async def test_failed_probe_paths_degrade_health(monkeypatch):
     """A crashing embedder probe or staleness computation must degrade
     /health — never be swallowed into an unconditional 'ok'."""
-    from apsimo.api.routers import host
-    from apsimo import vector
+    from pacomind.api.routers import host
+    from pacomind import vector
 
     class BrokenEmbedder:
         async def health_check(self):
@@ -139,11 +139,11 @@ async def test_corrupt_telemetry_reset_is_visible_and_flaggable(
     """A corrupt telemetry file must not silently reset to a permanently
     unflaggable 'fresh' store: the reset is logged, state reads 'unknown',
     and a subsystem that never ran past its threshold flags."""
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     (tmp_path / "telemetry.json").write_text("{not json")
 
     s = TelemetryStore()
-    with caplog.at_level(logging.WARNING, logger="apsimo.telemetry"):
+    with caplog.at_level(logging.WARNING, logger="pacomind.telemetry"):
         s.load()
     assert s.state == "unknown"
     assert any("unreadable" in r.getMessage() for r in caplog.records)
@@ -159,8 +159,8 @@ async def test_corrupt_telemetry_reset_is_visible_and_flaggable(
 
 @pytest.mark.asyncio
 async def test_advisory_policy_does_not_clear_model_degradation(monkeypatch):
-    from apsimo.api.routers import host
-    from apsimo import vector
+    from pacomind.api.routers import host
+    from pacomind import vector
 
     class Config:
         model_id = "configured-model"
@@ -187,7 +187,7 @@ async def test_advisory_policy_does_not_clear_model_degradation(monkeypatch):
     monkeypatch.setattr(host, "_telemetry", telemetry)
     monkeypatch.setattr(host, "_embedder", Embedder())
     monkeypatch.setattr(vector, "_store", Store())
-    monkeypatch.setenv("COLONY_TEMPORAL_HEALTH_POLICY", "advisory")
+    monkeypatch.setenv("PACOMIND_TEMPORAL_HEALTH_POLICY", "advisory")
 
     result = await host.health()
 

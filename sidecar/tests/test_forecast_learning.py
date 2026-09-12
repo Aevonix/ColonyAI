@@ -4,9 +4,9 @@ import sqlite3
 
 import pytest
 
-from apsimo.self_model.expectations import ExpectationStore, ExpectationEngine
-from apsimo.self_model import runtime_forecasts
-from apsimo.world_model.expectation_resolvers import register_world_resolvers, CAUSAL_PREFIX
+from pacomind.self_model.expectations import ExpectationStore, ExpectationEngine
+from pacomind.self_model import runtime_forecasts
+from pacomind.world_model.expectation_resolvers import register_world_resolvers, CAUSAL_PREFIX
 
 
 def issue(store, key='one', **changes):
@@ -105,7 +105,7 @@ def test_scope_time_and_evidence_validation(tmp_path):
     with pytest.raises(ValueError,match='scope'):
         observed(store,subject_person_id='other')
     with pytest.raises(ValueError,match='independent'):
-        observed(store,source_kind='colony_event')
+        observed(store,source_kind='pacomind_event')
     # Without an external outcome the old periodic checker must not infer one.
     assert ExpectationEngine(store).check(now=100000) == {'hit':0,'miss':0,'unresolved':0}
     assert store.forecast_history('one')['forecasts'][0]['outcome'] == 'pending'

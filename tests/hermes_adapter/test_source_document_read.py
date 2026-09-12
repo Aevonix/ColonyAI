@@ -6,8 +6,8 @@ def test_native_document_pages_keep_exact_derivative_and_correction_lineage(arti
     probe = annotation.PROBE
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
     assert probe.count(old) == 1
-    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='apsimo_memory_annotate'"))
-    old = "name='apsimo_memory_annotate',arguments=json.dumps(args)"
+    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='pacomind_memory_annotate'"))
+    old = "name='pacomind_memory_annotate',arguments=json.dumps(args)"
     assert probe.count(old) == 1
     probe = probe.replace(old, "name=tool,arguments=json.dumps(args)")
     old = "return json.JSONDecoder().raw_decode(results[0]['content'])[0]"
@@ -19,7 +19,7 @@ def test_native_document_pages_keep_exact_derivative_and_correction_lineage(arti
 import asyncio, base64, copy, hashlib, io
 from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
-from apsimo.turns.media import SourceMedia
+from pacomind.turns.media import SourceMedia
 from agent.codex_responses_adapter import _chat_messages_to_responses_input
 from agent.anthropic_message_convert import convert_messages_to_anthropic
 writer=PdfWriter()
@@ -50,7 +50,7 @@ args={**ref,'view':'document','asset_hash':asset,'page':1}
 pieces=[]; results=[]; selectors=[]
 for index in range(4):
     opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
-        call='document-read-'+str(index),tool='apsimo_memory_read_source')
+        call='document-read-'+str(index),tool='pacomind_memory_read_source')
     assert 'error' not in opened and opened['document']['status']=='complete',opened
     assert opened['document']['page']==1 and opened['document']['page_count']==2,opened
     assert opened['document']['ocr_performed'] is False,opened
@@ -61,15 +61,15 @@ else: raise AssertionError('Bounded PDF page did not finish')
 assert len(pieces)>1
 assert json.loads(''.join(pieces))['document']['text']==page_texts[0]
 second=dispatch({**ref,'view':'document','asset_hash':asset,'page':2},
-    session='reader',task='reader-task',turn='reader-turn',call='document-second',tool='apsimo_memory_read_source')
+    session='reader',task='reader-task',turn='reader-turn',call='document-second',tool='pacomind_memory_read_source')
 assert second['complete'] and json.loads(second['content'])['document']['text']==page_texts[1],second
 assert 'error' in dispatch({**ref,'view':'document','asset_hash':asset,'page':3},
-    session='reader',task='reader-task',turn='reader-turn',call='document-missing',tool='apsimo_memory_read_source')
+    session='reader',task='reader-task',turn='reader-turn',call='document-missing',tool='pacomind_memory_read_source')
 messages=[{'role':'user','content':compose_user_api_content('',recalled,'')}]
 for result,selector in zip(results,selectors):
     messages.extend([{'role':'assistant','content':'','tool_calls':[{
         'id':result['tool_call_id'],'type':'function','function':{
-            'name':'apsimo_memory_read_source','arguments':json.dumps(selector)}}]},result])
+            'name':'pacomind_memory_read_source','arguments':json.dumps(selector)}}]},result])
 _,anthropic=convert_messages_to_anthropic(copy.deepcopy(messages))
 requests=[{'messages':messages},{'input':_chat_messages_to_responses_input(copy.deepcopy(messages))},{'messages':anthropic}]
 for request in requests:
@@ -83,7 +83,7 @@ for request in requests:
     checked=apply_llm_request_middleware(request,session_id='reader',task_id='reader-task',turn_id='reader-turn').payload
     assert 'The first tray holds seven tiles.' not in json.dumps(checked) and 'withheld' in json.dumps(checked),checked
 fresh=dispatch({**ref,'view':'document','asset_hash':asset,'page':2},
-    session='reader',task='reader-task',turn='reader-turn',call='document-corrected',tool='apsimo_memory_read_source')
+    session='reader',task='reader-task',turn='reader-turn',call='document-corrected',tool='pacomind_memory_read_source')
 assert annotation_note['source_id'] in {r['source_id'] for r in fresh['source_refs']},fresh
 assert 'historical draft' in fresh['content'],fresh
 corrected={'messages':[{'role':'user','content':compose_user_api_content('',recalled,'')},copy.deepcopy(dispatch.last_result)]}

@@ -2,8 +2,8 @@
 
 import pytest
 
-from apsimo_hostworker.contract import sha256_json_ascii
-from apsimo_hostworker.intent import (
+from pacomind_hostworker.contract import sha256_json_ascii
+from pacomind_hostworker.intent import (
     HermesActionIntentError,
     HermesToolActionIntentV1,
 )
@@ -23,7 +23,7 @@ CONTEXT = {
 
 def build_intent(**overrides):
     kwargs = {
-        "tool_name": "colony_create_commitment",
+        "tool_name": "pacomind_create_commitment",
         "args": {"description": "Review café ☕ notes", "priority": 60},
         "context": CONTEXT,
     }
@@ -60,7 +60,7 @@ def test_digest_convention_is_ascii(golden_vectors):
     assert intent.args_sha256 == sha256_json_ascii(intent.args)
     # Non-ASCII args make the convention observable: the UTF-8 digest of the
     # same args differs, so a convention swap cannot pass this test.
-    from apsimo_hostworker.contract import sha256_json_utf8
+    from pacomind_hostworker.contract import sha256_json_utf8
 
     assert intent.args_sha256 != sha256_json_utf8(intent.args)
 
@@ -107,7 +107,7 @@ def test_missing_context_field_refused():
 
 def test_ungoverned_tool_refused():
     document = build_intent().to_dict()
-    document["tool_name"] = "colony_send_message"
+    document["tool_name"] = "pacomind_send_message"
     with pytest.raises(HermesActionIntentError):
         HermesToolActionIntentV1.from_mapping(document)
 
@@ -129,4 +129,4 @@ def test_idempotency_key_binds_call_identity():
 def test_approval_display_delegates_to_catalog():
     display = build_intent().approval_display()
     assert set(display) == {"summary", "target", "risk"}
-    assert display["target"] == "Private Colony commitment ledger"
+    assert display["target"] == "Private PacoMind commitment ledger"

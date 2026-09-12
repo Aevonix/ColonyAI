@@ -1,4 +1,4 @@
-"""Hermes↔Colony skills bridge (v0.18.0) — SKILL.md export.
+"""Hermes↔PacoMind skills bridge (v0.18.0) — SKILL.md export.
 
 Covers: render format (frontmatter parses back as YAML), env gating
 (off by default), foreign-file overwrite protection, the approval-hook
@@ -18,7 +18,7 @@ import yaml
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.skills.hermes_export import (
+from pacomind.skills.hermes_export import (
     HERMES_AUTHOR,
     PROVENANCE_MARKER,
     export_approved_skill,
@@ -27,7 +27,7 @@ from apsimo.skills.hermes_export import (
     load_body_source,
     render_skill_md,
 )
-from apsimo.skills.models import SkillManifest, SkillStatus
+from pacomind.skills.models import SkillManifest, SkillStatus
 
 
 # ---------------------------------------------------------------------------
@@ -41,7 +41,7 @@ def _manifest(**overrides) -> SkillManifest:
         name="Fetch Weather Report",
         version="1.0.0",
         description="Solves: fetch the weather report for a city",
-        author_colony_id="colony-test",
+        author_pacomind_id="pacomind-test",
         created_at=now,
         updated_at=now,
         status=SkillStatus.DRAFT,
@@ -70,8 +70,8 @@ PROCEDURAL_PATTERN = {
         "summarize(report)",
     ],
     "source_code": (
-        "async def run(colony, city: string):\n"
-        "    _r0 = await colony.tools.invoke('web_search', {'query': city})\n"
+        "async def run(pacomind, city: string):\n"
+        "    _r0 = await pacomind.tools.invoke('web_search', {'query': city})\n"
         "    return _r0\n"
     ),
 }
@@ -102,7 +102,7 @@ class TestRenderSkillMd:
         md = render_skill_md(_manifest(), PROCEDURAL_PATTERN)
         fm_raw = _frontmatter(md)
         assert f"# {PROVENANCE_MARKER}" in fm_raw
-        assert "colony_skill_id" in fm_raw
+        assert "pacomind_skill_id" in fm_raw
         assert "fetch-weather-report_a1b2c3d4" in fm_raw
         assert "origin_task_id" in fm_raw
         assert "task-123" in fm_raw
@@ -144,7 +144,7 @@ class TestProceduralHeuristic:
         assert is_procedural(_manifest(), PROCEDURAL_PATTERN) is True
 
     def test_tool_invoke_in_source_is_procedural(self):
-        p = {"source_code": "async def run(colony):\n    await colony.tools.invoke('x', {})\n"}
+        p = {"source_code": "async def run(pacomind):\n    await pacomind.tools.invoke('x', {})\n"}
         assert is_procedural(_manifest(), p) is True
 
     def test_mcp_bridged_skill_is_not_procedural(self):
@@ -164,17 +164,17 @@ class TestProceduralHeuristic:
         skill_dir = tmp_path / "skill_v1"
         skill_dir.mkdir()
         (skill_dir / "skill.py").write_text(
-            'async def run(colony, city: str):\n'
+            'async def run(pacomind, city: str):\n'
             '    """Auto-generated skill — replays captured tool sequence.\n\n'
             '    Original task: fetch the weather\n'
             '    """\n'
-            "    _r0 = await colony.tools.invoke('web_search', {'query': city})\n"
+            "    _r0 = await pacomind.tools.invoke('web_search', {'query': city})\n"
             "    return _r0\n",
             encoding="utf-8",
         )
         m = _manifest(skill_dir=str(skill_dir))
         body = load_body_source(m)
-        assert "colony.tools.invoke" in body["source_code"]
+        assert "pacomind.tools.invoke" in body["source_code"]
         assert body["step_sequence"] == ["Invoke the `web_search` tool"]
         assert "Original task: fetch the weather" in body["docstring"]
 
@@ -185,17 +185,17 @@ class TestProceduralHeuristic:
 
 class TestExportToHermes:
     def test_disabled_by_default_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("COLONY_EMIT_HERMES_SKILLS", raising=False)
+        monkeypatch.delenv("PACOMIND_EMIT_HERMES_SKILLS", raising=False)
         out = export_to_hermes(_manifest(), PROCEDURAL_PATTERN, base_dir=tmp_path)
         assert out is None
         assert list(tmp_path.iterdir()) == []
 
     def test_explicit_false_returns_none(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "false")
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "false")
         assert export_to_hermes(_manifest(), PROCEDURAL_PATTERN, base_dir=tmp_path) is None
 
     def test_enabled_writes_skill_md(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
         out = export_to_hermes(_manifest(), PROCEDURAL_PATTERN, base_dir=tmp_path)
         assert out == tmp_path / "fetch-weather-report-a1b2c3d4" / "SKILL.md"
         text = out.read_text(encoding="utf-8")
@@ -205,14 +205,14 @@ class TestExportToHermes:
         assert [p.name for p in out.parent.iterdir()] == ["SKILL.md"]
 
     def test_base_dir_from_env(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "1")
-        monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path / "via-env"))
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "1")
+        monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(tmp_path / "via-env"))
         out = export_to_hermes(_manifest(), PROCEDURAL_PATTERN)
         assert out is not None
         assert out.parent.parent == tmp_path / "via-env"
 
     def test_never_overwrites_foreign_skill_md(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
         target_dir = tmp_path / "fetch-weather-report-a1b2c3d4"
         target_dir.mkdir(parents=True)
         foreign = (
@@ -226,7 +226,7 @@ class TestExportToHermes:
         assert (target_dir / "SKILL.md").read_text(encoding="utf-8") == foreign
 
     def test_overwrites_own_previous_export(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
         first = export_to_hermes(_manifest(), PROCEDURAL_PATTERN, base_dir=tmp_path)
         assert first is not None
         second = export_to_hermes(
@@ -238,8 +238,8 @@ class TestExportToHermes:
         assert "v2" in second.read_text(encoding="utf-8")
 
     def test_export_approved_skill_skips_mcp(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
-        monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path))
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(tmp_path))
         m = _manifest(origin="mcp", mcp_server="github", mcp_tool="list_prs")
         assert export_approved_skill(m, PROCEDURAL_PATTERN) is None
         assert list(tmp_path.iterdir()) == []
@@ -274,7 +274,7 @@ class _FakeRegistry:
 
 @asynccontextmanager
 async def _client_with_registry(registry):
-    from apsimo.api.routers import host as host_mod
+    from pacomind.api.routers import host as host_mod
 
     prev = host_mod._skills_registry
     host_mod._skills_registry = registry
@@ -293,14 +293,14 @@ async def _client_with_registry(registry):
 class TestApprovalHook:
     @pytest.mark.asyncio
     async def test_approve_fires_hermes_export(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
-        monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path))
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(tmp_path))
 
         skill_dir = tmp_path / "library" / "fetch-weather_v1.0.0"
         skill_dir.mkdir(parents=True)
         (skill_dir / "skill.py").write_text(
-            "async def run(colony, city: str):\n"
-            "    _r0 = await colony.tools.invoke('web_search', {'query': city})\n"
+            "async def run(pacomind, city: str):\n"
+            "    _r0 = await pacomind.tools.invoke('web_search', {'query': city})\n"
             "    return _r0\n",
             encoding="utf-8",
         )
@@ -321,8 +321,8 @@ class TestApprovalHook:
 
     @pytest.mark.asyncio
     async def test_approve_with_export_disabled_writes_nothing(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("COLONY_EMIT_HERMES_SKILLS", raising=False)
-        monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path))
+        monkeypatch.delenv("PACOMIND_EMIT_HERMES_SKILLS", raising=False)
+        monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(tmp_path))
 
         manifest = _manifest()
         reg = _FakeRegistry()
@@ -334,9 +334,9 @@ class TestApprovalHook:
 
     @pytest.mark.asyncio
     async def test_export_failure_does_not_block_approval(self, tmp_path, monkeypatch):
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
-        monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path))
-        import apsimo.skills.hermes_export as hx
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(tmp_path))
+        import pacomind.skills.hermes_export as hx
 
         def _boom(*a, **k):
             raise RuntimeError("disk on fire")
@@ -355,8 +355,8 @@ class TestApprovalHook:
     async def test_approval_hook_skips_legacy_namespace_manifest(self, tmp_path, monkeypatch):
         # Manifests from older registries can be bare objects without
         # pattern data: "in doubt" → exported anyway when enabled.
-        monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
-        monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(tmp_path))
+        monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
+        monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(tmp_path))
         bare = SimpleNamespace(
             skill_id="bare-skill_99",
             name="Bare Skill",
@@ -380,8 +380,8 @@ class TestSkillsObservationDomain:
     @pytest.fixture
     def client(self, tmp_path):
         from fastapi.testclient import TestClient
-        from apsimo.api.routers import observations as obs_router
-        from apsimo.observations.store import ObservationStore
+        from pacomind.api.routers import observations as obs_router
+        from pacomind.observations.store import ObservationStore
 
         store = ObservationStore(state_dir=tmp_path)
         app = FastAPI()
@@ -392,7 +392,7 @@ class TestSkillsObservationDomain:
         store.close()
 
     def test_skills_domain_is_known(self):
-        from apsimo.observations.store import (
+        from pacomind.observations.store import (
             OBSERVATION_DOMAINS,
             OBSERVATION_SYNC_INTERVALS,
         )
@@ -418,7 +418,7 @@ class TestSkillsObservationDomain:
                     },
                     {
                         "entity_id": "fetch-weather-report-a1b2c3d4",
-                        "payload": {"description": "Colony export", "source": "hermes"},
+                        "payload": {"description": "PacoMind export", "source": "hermes"},
                     },
                 ],
             },
@@ -433,6 +433,6 @@ class TestSkillsObservationDomain:
         assert by_id["pdf-tools"]["reported_by"] == "hermes-plugin"
 
     def test_skills_domain_never_gets_sync_action(self):
-        from apsimo.initiatives.action_registry import OBSERVATION_SYNC_ACTIONS
+        from pacomind.initiatives.action_registry import OBSERVATION_SYNC_ACTIONS
 
         assert "skills" not in OBSERVATION_SYNC_ACTIONS

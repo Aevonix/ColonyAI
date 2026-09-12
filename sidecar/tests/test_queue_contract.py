@@ -8,17 +8,17 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import required_scope
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import task_queue as queue_router
-from apsimo.task_queue.contract import queue_contract_identity
-from apsimo.task_queue.models import (
+from pacomind.api.authority import required_scope
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import task_queue as queue_router
+from pacomind.task_queue.contract import queue_contract_identity
+from pacomind.task_queue.models import (
     Job,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
-from apsimo.task_queue.routing import AGENT_SYNC_ROUTE
+from pacomind.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.routing import AGENT_SYNC_ROUTE
 
 
 COMMIT_A = "a" * 40
@@ -29,16 +29,16 @@ MANIFEST_B = "d" * 64
 
 @pytest.fixture(autouse=True)
 def _contract_env(monkeypatch):
-    monkeypatch.setenv("COLONY_RELEASE_COMMIT", COMMIT_A)
+    monkeypatch.setenv("PACOMIND_RELEASE_COMMIT", COMMIT_A)
     monkeypatch.setenv(
-        "COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256", MANIFEST_A,
+        "PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256", MANIFEST_A,
     )
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
-    monkeypatch.setenv("COLONY_AGENT_WORKER_ROUTES", "agent_sync")
-    monkeypatch.setenv("COLONY_AGENT_SYNC_WORKER_NODE_ID", "sync-node")
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
-    monkeypatch.delenv("COLONY_HERMES_RUN_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_AGENT_WORKER_ROUTES", "agent_sync")
+    monkeypatch.setenv("PACOMIND_AGENT_SYNC_WORKER_NODE_ID", "sync-node")
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_HERMES_RUN_WORKER_NODE_ID", raising=False)
 
 
 def _write_keyring(path, scopes):
@@ -120,7 +120,7 @@ async def test_contract_endpoint_auth_matrix(tmp_path):
         )
     assert allowed.status_code == 200
     body = allowed.json()
-    assert body["schema"] == "ColonyQueueContractV1"
+    assert body["schema"] == "PacoMindQueueContractV1"
     assert body["version"] == 1
     assert body["release"] == {
         "commit": COMMIT_A,
@@ -215,9 +215,9 @@ async def test_contract_endpoint_auth_matrix(tmp_path):
 async def test_contract_rejects_missing_malformed_or_null_release_identity(
     monkeypatch, commit, manifest,
 ):
-    monkeypatch.setenv("COLONY_RELEASE_COMMIT", commit)
+    monkeypatch.setenv("PACOMIND_RELEASE_COMMIT", commit)
     monkeypatch.setenv(
-        "COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256", manifest,
+        "PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256", manifest,
     )
     app = _app(legacy_key="legacy-secret")
     async with AsyncClient(
@@ -240,21 +240,21 @@ def test_contract_digest_is_deterministic_and_binds_release_and_owners(
     assert first == replay
     assert len(first["contract_sha256"]) == 64
 
-    monkeypatch.setenv("COLONY_RELEASE_COMMIT", COMMIT_B)
+    monkeypatch.setenv("PACOMIND_RELEASE_COMMIT", COMMIT_B)
     changed_commit = queue_contract_identity()
     assert changed_commit["contract_sha256"] != first["contract_sha256"]
 
-    monkeypatch.setenv("COLONY_RELEASE_COMMIT", COMMIT_A)
+    monkeypatch.setenv("PACOMIND_RELEASE_COMMIT", COMMIT_A)
     monkeypatch.setenv(
-        "COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256", MANIFEST_B,
+        "PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256", MANIFEST_B,
     )
     changed_manifest = queue_contract_identity()
     assert changed_manifest["contract_sha256"] != first["contract_sha256"]
 
     monkeypatch.setenv(
-        "COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256", MANIFEST_A,
+        "PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256", MANIFEST_A,
     )
-    monkeypatch.setenv("COLONY_AGENT_SYNC_WORKER_NODE_ID", "new-sync-node")
+    monkeypatch.setenv("PACOMIND_AGENT_SYNC_WORKER_NODE_ID", "new-sync-node")
     changed_owner = queue_contract_identity()
     assert changed_owner["contract_sha256"] != first["contract_sha256"]
 
@@ -263,8 +263,8 @@ def test_contract_digest_is_deterministic_and_binds_release_and_owners(
 async def test_contract_runtime_thought_readiness_is_dynamic_not_in_digest(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_THOUGHT_WORKER_NODE_ID", "thought-node")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_THOUGHT_WORKER_NODE_ID", "thought-node")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "thought.db")
     try:
@@ -291,8 +291,8 @@ async def test_contract_runtime_thought_readiness_is_dynamic_not_in_digest(
 async def test_exact_job_inspection_is_authenticated_and_canary_complete(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "true")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:

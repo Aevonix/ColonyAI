@@ -3,7 +3,7 @@
 Contradictions (opposing WM_CAUSES/WM_ENABLES vs WM_BLOCKS/WM_INHIBITS over
 the same ordered pair) become conflict rows + review initiatives and are
 NEVER auto-resolved, at any mode or trust stage. Stale causal edges
-(unsupported past COLONY_CAUSAL_TTL_DAYS, default 120) lose 0.05 confidence
+(unsupported past PACOMIND_CAUSAL_TTL_DAYS, default 120) lose 0.05 confidence
 per run, floored at 0.2, in live/supervised belief mode only.
 """
 
@@ -14,10 +14,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.beliefs.engine import BeliefEngine
-from apsimo.beliefs.store import BeliefStore
-from apsimo.world_model import causal_maintenance as cm
-from apsimo.world_model.relationships import WorldRelationship
+from pacomind.beliefs.engine import BeliefEngine
+from pacomind.beliefs.store import BeliefStore
+from pacomind.world_model import causal_maintenance as cm
+from pacomind.world_model.relationships import WorldRelationship
 
 
 def _iso(days_ago: float) -> str:
@@ -101,19 +101,19 @@ class TestOpposingPairs:
 
 class TestStaleness:
     def test_ttl_default_120(self, monkeypatch):
-        monkeypatch.delenv("COLONY_CAUSAL_TTL_DAYS", raising=False)
+        monkeypatch.delenv("PACOMIND_CAUSAL_TTL_DAYS", raising=False)
         assert cm.causal_ttl_days() == 120.0
         edges = [_edge("wr-1", "a", "b", "WM_CAUSES", support_days_ago=100),
                  _edge("wr-2", "a", "c", "WM_CAUSES", support_days_ago=150)]
         assert [e.id for e in cm.stale_causal_edges(edges)] == ["wr-2"]
 
     def test_ttl_env_override(self, monkeypatch):
-        monkeypatch.setenv("COLONY_CAUSAL_TTL_DAYS", "10")
+        monkeypatch.setenv("PACOMIND_CAUSAL_TTL_DAYS", "10")
         edges = [_edge("wr-1", "a", "b", "WM_CAUSES", support_days_ago=15)]
         assert len(cm.stale_causal_edges(edges)) == 1
 
     def test_floor_edges_and_inactive_excluded(self, monkeypatch):
-        monkeypatch.setenv("COLONY_CAUSAL_TTL_DAYS", "10")
+        monkeypatch.setenv("PACOMIND_CAUSAL_TTL_DAYS", "10")
         edges = [_edge("wr-1", "a", "b", "WM_CAUSES", conf=0.2,
                        support_days_ago=400),
                  _edge("wr-2", "a", "c", "WM_CAUSES", conf=0.5,
@@ -121,7 +121,7 @@ class TestStaleness:
         assert cm.stale_causal_edges(edges) == []
 
     def test_undateable_edge_never_stale(self, monkeypatch):
-        monkeypatch.setenv("COLONY_CAUSAL_TTL_DAYS", "10")
+        monkeypatch.setenv("PACOMIND_CAUSAL_TTL_DAYS", "10")
         e = WorldRelationship(id="wr-x", source_id="a", target_id="b",
                               relationship_type="WM_CAUSES", confidence=0.5)
         assert cm.stale_causal_edges([e]) == []
@@ -137,8 +137,8 @@ async def test_contradiction_conflict_row_and_review_never_resolved(
     """Live mode, opposing edges: conflict row lands in status 'review',
     a review initiative fires, and NOTHING auto-resolves — the edges are
     untouched even at full live."""
-    monkeypatch.setenv("COLONY_BELIEFS_MODE", "live")
-    monkeypatch.delenv("COLONY_CAUSAL_TTL_DAYS", raising=False)
+    monkeypatch.setenv("PACOMIND_BELIEFS_MODE", "live")
+    monkeypatch.delenv("PACOMIND_CAUSAL_TTL_DAYS", raising=False)
     pos = _edge("wr-p", "we-a", "we-b", "WM_CAUSES", conf=0.6,
                 props={"evidence": "a caused b"})
     neg = _edge("wr-n", "we-a", "we-b", "WM_BLOCKS", conf=0.5,
@@ -165,7 +165,7 @@ async def test_contradiction_conflict_row_and_review_never_resolved(
 
 @pytest.mark.asyncio
 async def test_contradiction_detected_in_shadow_too(monkeypatch):
-    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_BELIEFS_MODE", "shadow")
     world = FakeCausalWorld([_edge("wr-p", "a", "b", "WM_ENABLES"),
                              _edge("wr-n", "a", "b", "WM_INHIBITS")])
     store = BeliefStore()
@@ -179,8 +179,8 @@ async def test_contradiction_detected_in_shadow_too(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stale_causal_decay_live(monkeypatch):
-    monkeypatch.setenv("COLONY_BELIEFS_MODE", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_TTL_DAYS", "30")
+    monkeypatch.setenv("PACOMIND_BELIEFS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_TTL_DAYS", "30")
     original_support = _iso(90)
     stale = WorldRelationship(
         id="wr-s", source_id="a", target_id="b",
@@ -202,8 +202,8 @@ async def test_stale_causal_decay_live(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stale_causal_decay_floors_at_02(monkeypatch):
-    monkeypatch.setenv("COLONY_BELIEFS_MODE", "live")
-    monkeypatch.setenv("COLONY_CAUSAL_TTL_DAYS", "30")
+    monkeypatch.setenv("PACOMIND_BELIEFS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_CAUSAL_TTL_DAYS", "30")
     e = _edge("wr-s", "a", "b", "WM_CAUSES", conf=0.22,
               support_days_ago=90)
     world = FakeCausalWorld([e])
@@ -218,8 +218,8 @@ async def test_stale_causal_decay_floors_at_02(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stale_causal_decay_shadow_does_not_mutate(monkeypatch):
-    monkeypatch.setenv("COLONY_BELIEFS_MODE", "shadow")
-    monkeypatch.setenv("COLONY_CAUSAL_TTL_DAYS", "30")
+    monkeypatch.setenv("PACOMIND_BELIEFS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_CAUSAL_TTL_DAYS", "30")
     e = _edge("wr-s", "a", "b", "WM_CAUSES", conf=0.5, support_days_ago=90)
     world = FakeCausalWorld([e])
     report = await BeliefEngine(BeliefStore(), world_store=world).run()
@@ -230,7 +230,7 @@ async def test_stale_causal_decay_shadow_does_not_mutate(monkeypatch):
 @pytest.mark.asyncio
 async def test_extractor_stamps_last_support_at(monkeypatch):
     """Creation stamps support; repeated claims cannot reset its age."""
-    from apsimo.world_model.llm_extract import WorldLLMExtractor
+    from pacomind.world_model.llm_extract import WorldLLMExtractor
     world = FakeCausalWorld([])
     x = WorldLLMExtractor(world)
     x._seen_rels = set()

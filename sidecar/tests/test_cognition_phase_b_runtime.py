@@ -7,27 +7,27 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.cognition.goal_spine import (
+from pacomind.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtOutputV1,
     ThoughtProposalPresentationSink,
 )
-from apsimo.proposals import ProposalStore
-from apsimo.cognition.runtime import CognitionRuntimeContractV1
-from apsimo.self_model.workspace import ConcernStore
-from apsimo.task_queue.handlers.inference import (
+from pacomind.proposals import ProposalStore
+from pacomind.cognition.runtime import CognitionRuntimeContractV1
+from pacomind.self_model.workspace import ConcernStore
+from pacomind.task_queue.handlers.inference import (
     InferenceHandler,
     ThoughtOnlyInferenceHandler,
 )
-from apsimo.task_queue.handlers.registry import build_default_handlers
-from apsimo.task_queue.models import Job, JobType
-from apsimo.task_queue.worker import JobHandler, WorkerNode
-from apsimo.server import (
+from pacomind.task_queue.handlers.registry import build_default_handlers
+from pacomind.task_queue.models import Job, JobType
+from pacomind.task_queue.worker import JobHandler, WorkerNode
+from pacomind.server import (
     _cognition_owner_spec,
     _cognition_worker_profile,
 )
-from apsimo.autonomy.loop import _record_p3_thinker_candidates
+from pacomind.autonomy.loop import _record_p3_thinker_candidates
 
 
 NOW = datetime(2026, 7, 12, 18, 0, tzinfo=timezone.utc)
@@ -35,8 +35,8 @@ NOW = datetime(2026, 7, 12, 18, 0, tzinfo=timezone.utc)
 
 @pytest.fixture(autouse=True)
 def _phase_b_env(monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
 
 
 def _runtime(**updates):
@@ -371,10 +371,10 @@ def test_configured_cognition_attachment_failure_never_selects_generic_worker():
 async def test_self_directed_shadow_provenance_is_not_laundered_by_live_workspace(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKSPACE", "live")
+    monkeypatch.setenv("PACOMIND_WORKSPACE", "live")
     concerns = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = SimpleNamespace()
-    from apsimo.self_model.workspace import WorkspaceEngine
+    from pacomind.self_model.workspace import WorkspaceEngine
 
     workspace = WorkspaceEngine(concerns)
     initiative = SimpleNamespace(

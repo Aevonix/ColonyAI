@@ -56,7 +56,7 @@ def handle(args, scope, client, request_memory, context):
                 or result['count'] == 0 and (result['content'] or refs or checks)
                 or refs and not checks):
             raise ValueError('invalid_canonical_search_response')
-        text = json.dumps({**result, 'apsimo_memory_search_v1': True,
+        text = json.dumps({**result, 'pacomind_memory_search_v1': True,
             'evidence_basis': 'recalled_excerpt', 'full_source_opened': False,
             'guidance': 'Search returns selected evidence excerpts. Preserve their speaker, time and corrections. '
                         'Open a returned source_id and source_version with the memory source reader '

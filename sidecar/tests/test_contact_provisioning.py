@@ -6,9 +6,9 @@ import json
 
 import pytest
 
-from apsimo.channels.phone_gateways import set_channel_store_ref
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
+from pacomind.channels.phone_gateways import set_channel_store_ref
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
 
 
 async def _store(tmp_path) -> SQLiteContactStore:

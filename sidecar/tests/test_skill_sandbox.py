@@ -3,7 +3,7 @@
 Two classes of tests here:
 
 1. **Runner-direct tests** (`test_runner_*`) shell out to
-   ``python -m apsimo.skills.sandbox_runner`` with a crafted
+   ``python -m pacomind.skills.sandbox_runner`` with a crafted
    stdin payload and assert on the JSON emitted to stdout. These pin
    the real process-boundary behaviour on Linux.
 
@@ -32,7 +32,7 @@ import pytest
 def _run_sandbox(payload: dict, *, timeout: float = 10.0) -> subprocess.CompletedProcess:
     """Execute the runner as a subprocess and return the completed process."""
     return subprocess.run(
-        [sys.executable, "-m", "apsimo.skills.sandbox_runner"],
+        [sys.executable, "-m", "pacomind.skills.sandbox_runner"],
         input=json.dumps(payload).encode("utf-8"),
         capture_output=True,
         timeout=timeout,
@@ -158,7 +158,7 @@ def test_runner_blocks_memory_balloon():
 
 def test_runner_invalid_stdin_reports_failure():
     result = subprocess.run(
-        [sys.executable, "-m", "apsimo.skills.sandbox_runner"],
+        [sys.executable, "-m", "pacomind.skills.sandbox_runner"],
         input=b"not json at all",
         capture_output=True,
         timeout=5.0,
@@ -202,7 +202,7 @@ class _PassGuard:
 
 def _build_skill(tmp_path: Path, source: str, *, skill_id: str = "skill-test") -> "SkillManifest":
     """Write skill.py with a matching manifest and return the manifest."""
-    from apsimo.skills.models import (
+    from pacomind.skills.models import (
         SkillManifest, SkillPermissions, SkillStatus,
     )
     from datetime import datetime, timezone
@@ -219,7 +219,7 @@ def _build_skill(tmp_path: Path, source: str, *, skill_id: str = "skill-test") -
         name="test",
         version="1.0",
         description="",
-        author_colony_id="col-x",
+        author_pacomind_id="col-x",
         created_at=datetime.now(timezone.utc),
         updated_at=datetime.now(timezone.utc),
         status=SkillStatus.ACTIVE,
@@ -230,8 +230,8 @@ def _build_skill(tmp_path: Path, source: str, *, skill_id: str = "skill-test") -
 
 
 def _make_executor(manifest, sandbox_mode: str = "subprocess"):
-    from apsimo.skills.executor import SkillExecutor
-    from apsimo.skills.security.scanner import ASTScanner
+    from pacomind.skills.executor import SkillExecutor
+    from pacomind.skills.security.scanner import ASTScanner
 
     registry = _FakeRegistry(manifest)
     executor = SkillExecutor(
@@ -345,16 +345,16 @@ async def test_executor_populates_peak_memory_from_runner(tmp_path):
 
 
 def test_sandbox_mode_env_var_resolution(monkeypatch):
-    """COLONY_SKILL_SANDBOX overrides the platform default."""
-    from apsimo.skills.executor import _resolve_sandbox_mode
+    """PACOMIND_SKILL_SANDBOX overrides the platform default."""
+    from pacomind.skills.executor import _resolve_sandbox_mode
 
-    monkeypatch.setenv("COLONY_SKILL_SANDBOX", "inprocess")
+    monkeypatch.setenv("PACOMIND_SKILL_SANDBOX", "inprocess")
     assert _resolve_sandbox_mode() == "inprocess"
 
-    monkeypatch.setenv("COLONY_SKILL_SANDBOX", "subprocess")
+    monkeypatch.setenv("PACOMIND_SKILL_SANDBOX", "subprocess")
     assert _resolve_sandbox_mode() == "subprocess"
 
-    monkeypatch.delenv("COLONY_SKILL_SANDBOX", raising=False)
+    monkeypatch.delenv("PACOMIND_SKILL_SANDBOX", raising=False)
     mode = _resolve_sandbox_mode()
     # Default depends on platform; must always resolve to one of the two.
     assert mode in ("subprocess", "inprocess")

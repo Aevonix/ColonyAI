@@ -13,7 +13,7 @@ sys.path.insert(0,sys.argv[1])
 def no_network(*a,**kw): raise AssertionError('No network in native boundary qualification')
 socket.socket.connect=no_network; socket.create_connection=no_network
 from agent import relay_runtime, relay_llm
-from apsimo_hermes.native_memory import NativeMemoryRequests
+from pacomind_hermes.native_memory import NativeMemoryRequests
 checks=[]; sends=[]
 def memory(request,scope):
     checks.append(scope.session_id)

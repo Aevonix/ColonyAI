@@ -19,14 +19,14 @@ def no_network(*a,**k):raise AssertionError('Memory transfer regression is offli
 socket.socket.connect=no_network;socket.create_connection=no_network
 from agent.memory_manager import MemoryManager
 from agent.memory_provider import MemoryProvider
-from apsimo.setup import _prepare_hermes_config
+from pacomind.setup import _prepare_hermes_config
 home=Path(os.environ['HERMES_HOME']);home.mkdir(parents=True,exist_ok=True)
 path=home/'config.yaml';path.write_text('{}\n')
 refs=[{'source_id':'source:'+str(i)+'a'*64,'source_version':'b'*64} for i in range(8)]
-payload='[colony-recall-v1 '+json.dumps({'contact_id':'fixture-owner','watermark':0,'sources':refs})+']\n'+json.dumps({'original':'original evidence '*800,'correction':'attributed correction '*600})+'\n[/colony-recall-v1]'
+payload='[pacomind-recall-v1 '+json.dumps({'contact_id':'fixture-owner','watermark':0,'sources':refs})+']\n'+json.dumps({'original':'original evidence '*800,'correction':'attributed correction '*600})+'\n[/pacomind-recall-v1]'
 assert 24000<len(payload)<65536
 class Provider(MemoryProvider):
-    name='apsimo-memory'
+    name='pacomind-memory'
     def initialize(self,**kwargs):pass
     def is_available(self):return True
     def get_tool_schemas(self):return []
@@ -51,10 +51,10 @@ def test_guided_config_preserves_complete_native_memory_packet(tmp_path):
     python=python or sys.executable
     env={key:os.environ[key] for key in ('PATH','HOME','LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path/'hermes'),HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
-               COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',HERMES_DISABLE_LAZY_INSTALLS='1',
+               PACOMIND_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',HERMES_DISABLE_LAZY_INSTALLS='1',
                HERMES_DISABLE_TELEMETRY='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result=subprocess.run([python,'-I','-B','-c',CHECK,str(ROOT/'sidecar'),
-        os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),os.environ.get('AEVA_HERMES_TEST_SOURCE','')],
+        os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH',''),os.environ.get('AEVA_HERMES_TEST_SOURCE','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode==0,result.stdout+result.stderr
     assert json.loads(result.stdout.splitlines()[-1])['aligned_packet_exact']

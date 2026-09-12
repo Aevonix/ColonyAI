@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from apsimo.initiatives import approval_authority as authority
+from pacomind.initiatives import approval_authority as authority
 
 
 def _payload() -> dict:
@@ -68,8 +68,8 @@ def _mint_grant(
 def test_default_grant_envelope_preserves_30_day_100_use_caps(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.delenv("COLONY_GRANT_MAX_TTL_SECONDS", raising=False)
-    monkeypatch.delenv("COLONY_GRANT_MAX_USES", raising=False)
+    monkeypatch.delenv("PACOMIND_GRANT_MAX_TTL_SECONDS", raising=False)
+    monkeypatch.delenv("PACOMIND_GRANT_MAX_USES", raising=False)
 
     envelope = authority.resolve_grant_envelope()
 
@@ -105,7 +105,7 @@ def test_default_grant_envelope_preserves_30_day_100_use_caps(
     assert uses_error.value.code == "invalid_grant_uses"
 
     from pydantic import ValidationError
-    from apsimo.api.routers.task_queue import BoundedGrantRequest
+    from pacomind.api.routers.task_queue import BoundedGrantRequest
 
     with pytest.raises(ValidationError):
         BoundedGrantRequest(expires_in_seconds=envelope.max_ttl_seconds + 1)
@@ -114,8 +114,8 @@ def test_default_grant_envelope_preserves_30_day_100_use_caps(
 
 
 def test_configured_finite_grant_envelope_is_honoured(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", str(60 * 24 * 60 * 60))
-    monkeypatch.setenv("COLONY_GRANT_MAX_USES", "250")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_TTL_SECONDS", str(60 * 24 * 60 * 60))
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_USES", "250")
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store = authority.ApprovalAuthorityStore(tmp_path / "authority.db")
 
@@ -148,22 +148,22 @@ def test_configured_finite_grant_envelope_is_honoured(tmp_path, monkeypatch):
         )
     assert uses_error.value.code == "invalid_grant_uses"
 
-    from apsimo.api.routers.task_queue import BoundedGrantRequest
+    from pacomind.api.routers.task_queue import BoundedGrantRequest
 
     assert BoundedGrantRequest(
         expires_in_seconds=45 * 24 * 60 * 60,
         max_uses=200,
     ).max_uses == 200
-    monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", "60")
-    monkeypatch.setenv("COLONY_GRANT_MAX_USES", "1")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_TTL_SECONDS", "60")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_USES", "1")
     narrowed_defaults = BoundedGrantRequest()
     assert narrowed_defaults.expires_in_seconds == 60
     assert narrowed_defaults.max_uses == 1
 
 
 def test_standing_grant_neither_expires_nor_exhausts(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", "unlimited")
-    monkeypatch.setenv("COLONY_GRANT_MAX_USES", "unlimited")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_TTL_SECONDS", "unlimited")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_USES", "unlimited")
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store = authority.ApprovalAuthorityStore(tmp_path / "authority.db")
     grant = _mint_grant(store, now=now, ttl_seconds=60, max_uses=1)
@@ -222,14 +222,14 @@ def test_standing_grant_neither_expires_nor_exhausts(tmp_path, monkeypatch):
 def test_revoke_grant_kills_standing_authority_at_point_of_use(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", "unlimited")
-    monkeypatch.setenv("COLONY_GRANT_MAX_USES", "unlimited")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_TTL_SECONDS", "unlimited")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_USES", "unlimited")
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
     store = authority.ApprovalAuthorityStore(tmp_path / "authority.db")
     grant = _mint_grant(store, now=now, ttl_seconds=60, max_uses=1)
     assert store.grant_envelope.standing_dimensions == (
-        "COLONY_GRANT_MAX_TTL_SECONDS",
-        "COLONY_GRANT_MAX_USES",
+        "PACOMIND_GRANT_MAX_TTL_SECONDS",
+        "PACOMIND_GRANT_MAX_USES",
     )
 
     assert store.revoke_grant(grant["grant_id"], now=now + timedelta(seconds=1))
@@ -243,18 +243,18 @@ def test_revoke_grant_kills_standing_authority_at_point_of_use(
 def test_non_grantable_tool_is_refused_under_standing_envelope(monkeypatch):
     """Exercise both the worker allowlist and its in-transaction backstop."""
 
-    monkeypatch.setenv("COLONY_GRANT_MAX_TTL_SECONDS", "unlimited")
-    monkeypatch.setenv("COLONY_GRANT_MAX_USES", "unlimited")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_TTL_SECONDS", "unlimited")
+    monkeypatch.setenv("PACOMIND_GRANT_MAX_USES", "unlimited")
     assert authority.resolve_grant_envelope().standing_dimensions
 
     repo_root = Path(__file__).resolve().parents[2]
     monkeypatch.syspath_prepend(str(repo_root / "hostworker"))
-    from apsimo_hostworker.catalog import GRANT_AUTHORIZABLE_TOOL_NAMES
-    from apsimo_hostworker.conformance.harness import sqlite_harness
-    from apsimo_hostworker.conformance.suite import (
+    from pacomind_hostworker.catalog import GRANT_AUTHORIZABLE_TOOL_NAMES
+    from pacomind_hostworker.conformance.harness import sqlite_harness
+    from pacomind_hostworker.conformance.suite import (
         check_non_grantable_tool_with_grant_proof,
     )
 
-    assert "colony_autonomy_enable" not in GRANT_AUTHORIZABLE_TOOL_NAMES
-    assert "colony_autonomy_disable" not in GRANT_AUTHORIZABLE_TOOL_NAMES
+    assert "pacomind_autonomy_enable" not in GRANT_AUTHORIZABLE_TOOL_NAMES
+    assert "pacomind_autonomy_disable" not in GRANT_AUTHORIZABLE_TOOL_NAMES
     check_non_grantable_tool_with_grant_proof(sqlite_harness)

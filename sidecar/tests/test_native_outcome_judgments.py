@@ -6,9 +6,9 @@ import sqlite3
 
 import pytest
 
-from apsimo.api.routers import initiative_work
-from apsimo.self_model.judgments import SelfJudgments
-from apsimo.turns import get_turn_idempotency_ledger
+from pacomind.api.routers import initiative_work
+from pacomind.self_model.judgments import SelfJudgments
+from pacomind.turns import get_turn_idempotency_ledger
 from test_accepted_local_work import local_api
 from test_self_judgments import Processor
 from test_turn_source_evidence import source_app
@@ -17,7 +17,7 @@ from test_self_perspective import perspective
 
 @pytest.fixture
 def observation(local_api, monkeypatch):
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     api, _, initiatives, _, native = local_api
     api.app.include_router(initiative_work.router)
     row = initiatives.create(type='operational', source_type='operational', created_by='autonomy_loop',
@@ -34,7 +34,7 @@ def observation(local_api, monkeypatch):
             max_runtime_seconds INTEGER,profile TEXT,summary TEXT,error TEXT)''')
         db.execute('CREATE TABLE task_events(task_id TEXT,kind TEXT,created_at INTEGER)')
         db.execute('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-            ('native-task','colony-initiative','colony-initiative:'+row.id,'cid-owner',
+            ('native-task','pacomind-initiative','pacomind-initiative:'+row.id,'cid-owner',
              selected['execution']['worker_profile'],
              'blocked',None,None,selected['review']['body'],None,'explicit-task-model',None))
     body = {'contact_id':'cid-owner','native_board':'default','native_task_id':'native-task',
@@ -73,7 +73,7 @@ def sources(fixture):
 
 @pytest.mark.asyncio
 async def test_disabled_judgments_preserve_runtime_observation_without_queue(observation, monkeypatch):
-    monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED')
+    monkeypatch.delenv('PACOMIND_SELF_JUDGMENTS_ENABLED')
     end_run(observation)
     assert observe(observation)['status'] == 'failed'
     retained = sources(observation)
@@ -147,7 +147,7 @@ def test_wrong_native_tenant_cannot_supply_runtime_observation(observation):
 
 
 def test_runtime_source_and_judgment_enqueue_share_transaction(observation,monkeypatch):
-    from apsimo.self_model import judgments
+    from pacomind.self_model import judgments
     end_run(observation)
     def fail(*args,**kwargs):raise sqlite3.OperationalError('controlled queue write failure')
     original=judgments.enqueue

@@ -4,11 +4,11 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.server import _attach_p8_runtime
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.server import _attach_p8_runtime
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.turns import TurnIdempotencyLedger
 from test_recall_unified_context import Graph, Reranker, belief, calibrate
 from test_scoped_api_authority import _principal, _write_keyring
 from test_tom_p8_server_integration import _authority, _request
@@ -17,9 +17,9 @@ from test_turn_source_evidence import source_app
 
 @pytest.fixture
 def contact_context(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
-    monkeypatch.setenv('COLONY_OWNER_PERSON_ID', 'contact-a')
-    monkeypatch.setenv('COLONY_RECIPIENT_SIMULATOR_MODE', 'shadow')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_OWNER_PERSON_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_RECIPIENT_SIMULATOR_MODE', 'shadow')
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
     facts = SharedFactsStore(str(tmp_path/'facts.db'), source_ledger=ledger)
     monkeypatch.setattr(host, '_facts_store', facts)
@@ -66,8 +66,8 @@ async def context(client, query, *, person='contact-a', credential='owner'):
         })
     assert response.status_code == 200, response.text
     sections = response.json()['sections']
-    assert not any(s['id'] == 'colony-shared-facts' for s in sections)
-    memories = [s['body'] for s in sections if s['id'] == 'colony-memory']
+    assert not any(s['id'] == 'pacomind-shared-facts' for s in sections)
+    memories = [s['body'] for s in sections if s['id'] == 'pacomind-memory']
     assert len(memories) <= 1
     return memories[0] if memories else ''
 
@@ -75,7 +75,7 @@ async def context(client, query, *, person='contact-a', credential='owner'):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('reranker_unavailable', [False, True])
 async def test_empty_greeting_and_irrelevant_query_do_not_inject_authorized_facts(contact_context, monkeypatch, reranker_unavailable):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     if reranker_unavailable:
         reranker = Reranker(fail=True)
         calibrate(monkeypatch, reranker)
@@ -109,7 +109,7 @@ async def test_contact_estimates_share_real_selection_abstention_and_budget(cont
     reranker = DiscriminatingReranker()
     calibrate(monkeypatch, reranker)
     monkeypatch.setattr(host, '_reranker', reranker)
-    monkeypatch.setenv('COLONY_RECALL_CONTEXT_MAX_CHARS', '1600')
+    monkeypatch.setenv('PACOMIND_RECALL_CONTEXT_MAX_CHARS', '1600')
     for i in range(8):
         runtime.add(f'The hydrofoil departure desk has neutral marker {i}.')
     rejected = runtime.add('The hydrofoil hull has a cosmetic scratch.')
@@ -150,7 +150,7 @@ async def test_other_viewer_and_unenveloped_history_never_reach_reranker(contact
 @pytest.mark.asyncio
 async def test_source_erasure_removes_estimate_from_full_context(contact_context, monkeypatch):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     runtime.ledger.record_source('fact-origin', contact_id='contact-a', session_id='earlier',
         messages=[{'role':'user','content':'The hydrofoil departure gate is violet.'}], derive_claims=False)
     lineage, _ = runtime.facts.source_input('fact-origin', 'contact-a')
@@ -168,7 +168,7 @@ async def test_source_erasure_removes_estimate_from_full_context(contact_context
 @pytest.mark.asyncio
 async def test_explicit_search_uses_same_current_contact_projection_and_selector(contact_context, monkeypatch):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     own = runtime.add('The hydrofoil departure desk is amber.')
     foreign = runtime.add('The hydrofoil departure private marker is copper.', person='contact-b')
     unlinked = runtime.add('The hydrofoil departure marker is bronze.', enveloped=False)

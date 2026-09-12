@@ -6,9 +6,9 @@ from typing import Any
 
 import pytest
 
-from apsimo.self_model.event_concerns import EventConcernReducer
-from apsimo.self_model.workspace import ConcernStore
-from apsimo.api.authority import required_scope
+from pacomind.self_model.event_concerns import EventConcernReducer
+from pacomind.self_model.workspace import ConcernStore
+from pacomind.api.authority import required_scope
 
 
 class FakeJournal:
@@ -50,10 +50,10 @@ def event(seq: int, kind: str, data: Any, *, event_id: str | None = None):
 
 @pytest.fixture(autouse=True)
 def reducer_env(monkeypatch):
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS", "shadow")
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.delenv("COLONY_EVENT_CONCERNS_GAP_POLICY", raising=False)
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.delenv("PACOMIND_EVENT_CONCERNS_GAP_POLICY", raising=False)
 
 
 def make(tmp_path, journal: FakeJournal):
@@ -67,7 +67,7 @@ def make(tmp_path, journal: FakeJournal):
 
 
 def test_tail_bootstrap_does_not_invent_historical_concerns(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_BOOTSTRAP", "tail")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_BOOTSTRAP", "tail")
     journal = FakeJournal([
         event(1, "commitment.overdue", {
             "commitment_id": "cm-old", "person_id": "person-owner",
@@ -284,7 +284,7 @@ def test_retention_gap_stops_until_explicit_acknowledgement(tmp_path, monkeypatc
     assert store.event_cursor(reducer.consumer_id) == 3
     assert store.active() == []
 
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_GAP_POLICY", "acknowledge")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_GAP_POLICY", "acknowledge")
     resumed = reducer.run_once()
     assert resumed["dispositions"] == {"created": 1}
     status = reducer.status()
@@ -366,7 +366,7 @@ def test_internal_concern_sequence_gap_requires_acknowledgement(
     assert store.event_cursor(reducer.consumer_id) == 1
     assert len(store.active()) == 1
 
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_GAP_POLICY", "acknowledge")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_GAP_POLICY", "acknowledge")
     resumed = reducer.run_once()
     assert resumed["dispositions"] == {"resolved": 1}
     assert store.event_cursor(reducer.consumer_id) == 3

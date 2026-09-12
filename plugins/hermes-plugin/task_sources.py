@@ -12,7 +12,7 @@ from .input_provenance import _refs, current
 from .task_handoffs import TaskHandoffError
 
 
-_NON_DIRECT = frozenset({'cron', 'subagent', 'background_review', 'colony_task'})
+_NON_DIRECT = frozenset({'cron', 'subagent', 'background_review', 'pacomind_task'})
 _ORIGIN_FIELDS = ('platform', 'authority_gateway', 'sender_id', 'session_id', 'turn_id')
 
 

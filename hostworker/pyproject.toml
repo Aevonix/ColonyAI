@@ -3,15 +3,15 @@ requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "apsimo-hostworker"
-version = "0.2.1"
-description = "Stateless, stdlib-only core for governed Apsimo host workers"
+name = "pacomind-hostworker"
+version = "0.3.0"
+description = "Stateless, stdlib-only core for governed PacoMind host workers"
 requires-python = ">=3.11"
 readme = "README.md"
 license = "MIT"
 license-files = ["LICENSE"]
 # Deliberately empty: this distribution is stdlib-only and must never grow a
-# dependency on FastAPI or apsimo (see apsimo_hostworker/contract.py).
+# dependency on FastAPI or pacomind (see pacomind_hostworker/contract.py).
 dependencies = []
 
 [project.optional-dependencies]
@@ -19,7 +19,7 @@ dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo_hostworker*"]
+include = ["pacomind_hostworker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

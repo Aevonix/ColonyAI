@@ -10,12 +10,11 @@ import threading
 import time
 
 from .followups import capture_instruction
-from .naming import operation
 from .request_work import replace_context
 
 MAX_BYTES = 16384
-_EXCLUDED = {'session_search', 'colony_memory_retain_observation', 'apsimo_memory_retain_observation'}
-_HINT_MARKER = 'apsimo-observation-candidates-v1'
+_EXCLUDED = {'session_search', 'pacomind_memory_retain_observation', 'pacomind_memory_retain_observation'}
+_HINT_MARKER = 'pacomind-observation-candidates-v1'
 _CATALOG_HEADER = 'Deferred tool catalog (call schemas via `tool_describe`, invoke via `tool_call`):'
 
 
@@ -36,7 +35,7 @@ def _available_retention(request):
     functions = [tool.get('function', tool) for tool in schemas if isinstance(tool, dict)]
     named = {fn['name']: fn for fn in functions if isinstance(fn, dict) and isinstance(fn.get('name'), str)}
     for name in named:
-        if operation(name) == 'colony_memory_retain_observation':
+        if name == 'pacomind_memory_retain_observation':
             return name, False
     if not {'tool_search', 'tool_describe', 'tool_call'} <= named.keys():
         return None
@@ -47,14 +46,14 @@ def _available_retention(request):
         names = [line[2:].split(':', 1)[0]] if line.startswith('- ') else line.split(',')
         for name in names:
             name = name.strip()
-            if operation(name) == 'colony_memory_retain_observation':
+            if name == 'pacomind_memory_retain_observation':
                 return name, True
     return None
 
 
 def _key(scope):
     if (scope is None or not scope.valid_participant or scope.authority_lane not in {'owner', 'system'}
-            or scope.platform in {'cron', 'subagent', 'background_review', 'colony_task'}
+            or scope.platform in {'cron', 'subagent', 'background_review', 'pacomind_task'}
             or getattr(scope, 'parent_session_id', '')
             or not isinstance(getattr(scope, 'user_message', None), str)
             or not scope.user_message.strip() or len(scope.user_message) > 32768
@@ -141,7 +140,7 @@ def native_original(scope, call_id, expected):
     content = SessionDB._decode_content(row['content'])
     if (not isinstance(content, str) or len(content.encode()) > MAX_BYTES
             or hashlib.sha256(content.encode()).hexdigest() != expected['sha256']
-            or (row['tool_name'] and operation(row['tool_name']) != expected['name'])
+            or (row['tool_name'] and row['tool_name'] != expected['name'])
             or type(row['timestamp']) not in (int, float) or not math.isfinite(row['timestamp'])
             or row['timestamp'] <= 0):
         raise ValueError('The native original does not match the observed completed call')
@@ -195,7 +194,7 @@ class ToolObservations:
                 record['visible'].pop(request_id, None)
                 identity = calls.get(call_id)
                 name, arguments_hash = identity if identity is not None else (None, None)
-                if (isinstance(name, str) and operation(name) == record['name']
+                if (isinstance(name, str) and name == record['name']
                         and (arguments_hash is None or arguments_hash == record['arguments_sha256']) and isinstance(text, str)
                         and hashlib.sha256(text.encode()).hexdigest() == record['sha256']):
                     record['visible'][request_id] = name

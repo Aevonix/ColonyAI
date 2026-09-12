@@ -2,8 +2,8 @@
 
 import pytest
 
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.contacts.config import ContactsConfig
 
 
 @pytest.mark.asyncio
@@ -35,7 +35,7 @@ async def test_migration_adds_timezone_to_legacy_db(tmp_path):
     column on connect() — the real production upgrade path."""
     import re
     import aiosqlite
-    from apsimo.contacts.store import _SCHEMA_FILE
+    from pacomind.contacts.store import _SCHEMA_FILE
 
     # Reconstruct the previous schema = current schema minus the timezone column.
     legacy_schema = re.sub(

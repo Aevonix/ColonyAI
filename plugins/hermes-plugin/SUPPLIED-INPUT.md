@@ -1,7 +1,7 @@
 # Already captured host input
 
 An authenticated host may run an existing native task inside
-`apsimo_hermes.input_provenance.supplied_input(contact_id=..., session_id=...,
+`pacomind_hermes.input_provenance.supplied_input(contact_id=..., session_id=...,
 input_refs=[...], source_refs=[...])`. The caller must first validate the
 participant, original input hashes and current inherited source revisions.
 `contact_id` is a consistency check, never an authority grant. Ordinary native

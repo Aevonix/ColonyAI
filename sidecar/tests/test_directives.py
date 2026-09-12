@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from apsimo.directives import (
+from pacomind.directives import (
     DirectiveStore, DirectiveManager, DirectiveGuard, Action, Directive, Polarity,
 )
-from apsimo.directives.extractor import extract_directives, is_revocation
+from pacomind.directives.extractor import extract_directives, is_revocation
 
 
 # ---------------------------------------------------------------------------
@@ -13,10 +13,10 @@ from apsimo.directives.extractor import extract_directives, is_revocation
 # ---------------------------------------------------------------------------
 
 def test_extract_prohibition_dont_touch_repo():
-    d = extract_directives("From now on, don't touch the colony-web repo, it is a side project")
+    d = extract_directives("From now on, don't touch the pacomind-web repo, it is a side project")
     assert len(d) == 1
     assert d[0].polarity == Polarity.PROHIBIT
-    assert "colony-web" in d[0].match_terms
+    assert "pacomind-web" in d[0].match_terms
 
 
 def test_extract_prohibition_variants():
@@ -28,10 +28,10 @@ def test_extract_prohibition_variants():
 
 
 def test_read_only_adjective_does_not_escalate_boundary_to_observe():
-    from apsimo.directives.models import Level
+    from pacomind.directives.models import Level
 
     goal = extract_directives(
-        "Goal: verify Colony cognition is live with a read-only internal "
+        "Goal: verify PacoMind cognition is live with a read-only internal "
         "plan; do not contact anyone or change external systems"
     )
     blackout = extract_directives("From now on, don't read the billing spreadsheet")
@@ -52,7 +52,7 @@ def test_extract_skips_pure_style():
 
 
 def test_extract_revocation():
-    d = extract_directives("actually you can go ahead and work on colony-web again")
+    d = extract_directives("actually you can go ahead and work on pacomind-web again")
     assert d and is_revocation(d[0])
 
 
@@ -67,10 +67,10 @@ def test_extract_nothing_on_ordinary_message():
 
 def test_store_add_list_active_revoke():
     s = DirectiveStore(db_path=None)
-    d = Directive(subject="repo colony-web", polarity=Polarity.PROHIBIT)
+    d = Directive(subject="repo pacomind-web", polarity=Polarity.PROHIBIT)
     s.add(d)
     assert s.count_active() == 1
-    assert s.get(d.id).subject == "repo colony-web"
+    assert s.get(d.id).subject == "repo pacomind-web"
     assert s.revoke(d.id) is True
     assert s.count_active() == 0
     # still listable by status
@@ -96,16 +96,16 @@ def _guard_with(*directives) -> DirectiveGuard:
 
 
 def test_guard_blocks_specific_subject():
-    g = _guard_with(Directive(subject="colony-web repo", polarity=Polarity.PROHIBIT,
-                              raw_text="don't touch colony-web"))
-    v = g.check(Action(kind="directed_action", text="clone and refactor the colony-web repo",
+    g = _guard_with(Directive(subject="pacomind-web repo", polarity=Polarity.PROHIBIT,
+                              raw_text="don't touch pacomind-web"))
+    v = g.check(Action(kind="directed_action", text="clone and refactor the pacomind-web repo",
                        high_risk=True))
     assert v.allowed is False
-    assert "colony-web" in v.reason
+    assert "pacomind-web" in v.reason
 
 
 def test_guard_allows_unrelated_action():
-    g = _guard_with(Directive(subject="colony-web repo", polarity=Polarity.PROHIBIT))
+    g = _guard_with(Directive(subject="pacomind-web repo", polarity=Polarity.PROHIBIT))
     v = g.check(Action(kind="directed_action", text="update the billing dashboard"))
     assert v.allowed is True
 
@@ -142,12 +142,12 @@ def test_guard_action_kind_scope():
 
 
 def test_guard_records_recent_blocks():
-    g = _guard_with(Directive(subject="colony-web", polarity=Polarity.PROHIBIT,
-                              raw_text="don't touch colony-web"))
-    assert g.check(Action(kind="directed_action", text="refactor colony-web")).allowed is False
+    g = _guard_with(Directive(subject="pacomind-web", polarity=Polarity.PROHIBIT,
+                              raw_text="don't touch pacomind-web"))
+    assert g.check(Action(kind="directed_action", text="refactor pacomind-web")).allowed is False
     blocks = g.recent_blocks()
     assert len(blocks) == 1
-    assert "colony-web" in blocks[0]["subjects"]
+    assert "pacomind-web" in blocks[0]["subjects"]
     assert blocks[0]["directive_ids"] and blocks[0]["action_kind"] == "directed_action"
     # an allowed action is not recorded
     g.check(Action(kind="research", text="unrelated topic"))
@@ -171,11 +171,11 @@ def test_guard_entity_scoped_match_by_alias():
 
 def test_guard_context_brief():
     g = _guard_with(
-        Directive(subject="colony-web", polarity=Polarity.PROHIBIT, raw_text="don't touch colony-web"),
+        Directive(subject="pacomind-web", polarity=Polarity.PROHIBIT, raw_text="don't touch pacomind-web"),
         Directive(subject="check before deploy", polarity=Polarity.REQUIRE, raw_text="always check before deploy"),
     )
     brief = g.context_brief()
-    assert "MUST NOT" in brief and "colony-web" in brief
+    assert "MUST NOT" in brief and "pacomind-web" in brief
     assert "MUST" in brief and "deploy" in brief
 
 
@@ -207,7 +207,7 @@ def test_act_boundary_allows_read_blocks_actions():
     m = DirectiveManager(DirectiveStore(db_path=None))
     m.capture_from_message("From now on, leave the widget-api repo alone")
     d = m.store.active()[0]
-    from apsimo.directives.models import Level
+    from pacomind.directives.models import Level
     assert d.level == Level.ACT                              # default level
     # reads / perception stay OPEN
     assert m.check(Action(kind="repo_read", text="widget-api README")).allowed is True
@@ -223,7 +223,7 @@ def test_observe_boundary_blocks_reads_too():
     m = DirectiveManager(DirectiveStore(db_path=None))
     m.capture_from_message("From now on, don't look at the widget-api repo")
     d = m.store.active()[0]
-    from apsimo.directives.models import Level
+    from pacomind.directives.models import Level
     assert d.level == Level.OBSERVE
     v = m.check(Action(kind="repo_read", text="widget-api README"))
     assert v.allowed is False
@@ -277,10 +277,10 @@ def test_critical_flag_fires_once_via_guarded_delivery():
 
 def test_manager_capture_then_enforce():
     m = DirectiveManager(DirectiveStore(db_path=None))
-    m.capture_from_message("From now on, Don't touch the colony-web repo")
+    m.capture_from_message("From now on, Don't touch the pacomind-web repo")
     assert m.store.count_active() == 1
-    # an autonomous action on colony-web is now refused
-    v = m.check(Action(kind="directed_action", text="open a PR in colony-web", high_risk=True))
+    # an autonomous action on pacomind-web is now refused
+    v = m.check(Action(kind="directed_action", text="open a PR in pacomind-web", high_risk=True))
     assert v.allowed is False
 
 
@@ -317,8 +317,8 @@ def test_manager_non_affirmation_does_not_lift():
 # ---------------------------------------------------------------------------
 
 def _mgr():
-    from apsimo.directives.service import DirectiveManager
-    from apsimo.directives.store import DirectiveStore
+    from pacomind.directives.service import DirectiveManager
+    from pacomind.directives.store import DirectiveStore
     return DirectiveManager(DirectiveStore())
 
 
@@ -326,7 +326,7 @@ def test_anaphora_fragment_subjects_are_refused():
     m = _mgr()
     # Each of these was found LIVE in the poisoned store.
     for msg in (
-        "please stop that and wipe it from colony",
+        "please stop that and wipe it from pacomind",
         "don't attempt them",
         "you should never do Y and I hate it",
     ):
@@ -362,20 +362,20 @@ def test_duplicate_captures_do_not_pile_up():
 
 
 def test_common_term_fragment_cannot_match_everything():
-    from apsimo.directives.guard import _terms_match
-    from apsimo.directives.models import normalize_terms
+    from pacomind.directives.guard import _terms_match
+    from pacomind.directives.models import normalize_terms
     # A fragment whose only surviving terms are generic + the product name
-    # ("wipe", "colony") must not bind an unrelated internal job text.
-    directive_terms = normalize_terms("that and wipe it from colony")
+    # ("wipe", "pacomind") must not bind an unrelated internal job text.
+    directive_terms = normalize_terms("that and wipe it from pacomind")
     action_terms = normalize_terms(
         "Observe the system domain through your own connections and report "
-        "snapshots to Colony")
+        "snapshots to PacoMind")
     assert _terms_match(directive_terms, action_terms) is False
 
 
 def test_specific_subjects_still_match():
-    from apsimo.directives.guard import _terms_match
-    from apsimo.directives.models import normalize_terms
+    from pacomind.directives.guard import _terms_match
+    from pacomind.directives.models import normalize_terms
     # Real boundaries keep binding: distinctive token…
     assert _terms_match(normalize_terms("touching the payments-api repo"),
                         normalize_terms("open a PR against payments-api"))
@@ -385,8 +385,8 @@ def test_specific_subjects_still_match():
 
 
 def test_mid_generic_word_alone_is_not_distinctive():
-    from apsimo.directives.guard import _terms_match
-    from apsimo.directives.models import normalize_terms
+    from pacomind.directives.guard import _terms_match
+    from pacomind.directives.models import normalize_terms
     # "attempt them" -> ["attempt"]; a random action that happens to contain
     # "attempting" must not be blocked by the fragment.
     assert _terms_match(normalize_terms("attempt them"),
@@ -394,8 +394,8 @@ def test_mid_generic_word_alone_is_not_distinctive():
 
 
 def test_short_word_is_not_a_stem_of_a_long_term():
-    from apsimo.directives.guard import _terms_match
-    from apsimo.directives.models import normalize_terms
+    from pacomind.directives.guard import _terms_match
+    from pacomind.directives.models import normalize_terms
     # "what" must not count as a morphological variant of "whatsapp": a
     # WhatsApp boundary cannot bind every sentence containing "what".
     assert _terms_match(

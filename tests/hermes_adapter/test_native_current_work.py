@@ -41,8 +41,8 @@ try:
     while not (home/'scripts'/'started').exists() and thread.is_alive() and time.monotonic()<deadline:
         time.sleep(.02)
     assert (home/'scripts'/'started').exists(), errors
-    from apsimo.turns.hermes_work import cron_view
-    from apsimo.turns.executions import registry, format_view
+    from pacomind.turns.hermes_work import cron_view
+    from pacomind.turns.executions import registry, format_view
     view=registry().view(contact_id='fixture-owner', owner=True)
     view['native_cron']=cron_view()
     active=view['native_cron']['items']
@@ -77,14 +77,14 @@ native=sys.argv[3]
 if native: sys.path.insert(2,native)
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['pacomind'],'pacomind':{
     'owner_contact_id':'fixture-owner','attested_system_platforms':['cli'],
     'execution_registry_enabled':True,'turn_outbox_path':str(home/'outbox.db')}}}))
 fixture=home/'neutral.txt'; fixture.write_text('NEUTRAL_CHILD_FILE')
 def no_network(*a, **kw): raise AssertionError('No network in controlled native qualification')
 socket.socket.connect=no_network; socket.create_connection=no_network
-from apsimo.turns.executions import registry
-import apsimo_hermes
+from pacomind.turns.executions import registry
+import pacomind_hermes
 calls=[]
 parent_ending=threading.Event(); child_queued=threading.Event(); child_ended=threading.Event()
 class Reply:
@@ -108,21 +108,21 @@ def post(self,path,**kw):
 def get(self,path,**kw):
     if path=='/v1/host/contacts/resolve': return Reply({'contact_id':'fixture-guest'})
     raise RuntimeError('No central service configured')
-apsimo_hermes.ColonyClient.post=post; apsimo_hermes.ColonyClient.get=get
+pacomind_hermes.PacoMindClient.post=post; pacomind_hermes.PacoMindClient.get=get
 from hermes_cli.plugins import get_plugin_manager
 if native:
     import hermes_cli.plugins
     assert Path(hermes_cli.plugins.__file__).resolve().is_relative_to(Path(native).resolve())
 plugin_manager=get_plugin_manager()
 plugin_manager.discover_and_load()
-assert plugin_manager._plugins['apsimo'].enabled
+assert plugin_manager._plugins['pacomind'].enabled
 condition=plugin_manager._hook_timeout_running_cond
 original_wait=condition.wait
 def observe_wait(timeout=None):
     if parent_ending.is_set() and not child_ended.is_set():
         child_queued.set()
     return original_wait(timeout)
-assert Path(apsimo_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
+assert Path(pacomind_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 from run_agent import AIAgent
 import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
@@ -210,15 +210,15 @@ print(json.dumps({'native_delegation_return':True,'owner_child_completed':True,'
 
 def environment(tmp_path):
     env={key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'profile'),COLONY_STATE_DIR=str(tmp_path/'colony'),
+    env.update(HERMES_HOME=str(tmp_path/'profile'),PACOMIND_STATE_DIR=str(tmp_path/'pacomind'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'), HERMES_DISABLE_TELEMETRY='1',
-        HERMES_DISABLE_LAZY_INSTALLS='1', COLONY_GENERAL_PLUGIN_ACTIVE='1',
-        COLONY_MEMORY_WORKER_TOOLS='0', COLONY_MEMORY_TURN_WRITER='disabled', COLONY_GUARD_CHAT_MODE='off')
+        HERMES_DISABLE_LAZY_INSTALLS='1', PACOMIND_GENERAL_PLUGIN_ACTIVE='1',
+        PACOMIND_MEMORY_WORKER_TOOLS='0', PACOMIND_MEMORY_TURN_WRITER='disabled', PACOMIND_GUARD_CHAT_MODE='off')
     return env
 
 
 def test_actual_native_no_agent_cron_fire_reaches_owner_current_work(tmp_path):
-    native=os.environ.get('COLONY_TEST_HERMES_PATH','')
+    native=os.environ.get('PACOMIND_TEST_HERMES_PATH','')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual native firing')
     result=run_python('-I','-c',CRON,Path(__file__).resolve().parents[2]/'sidecar',native,cwd=tmp_path,env=environment(tmp_path))
@@ -226,7 +226,7 @@ def test_actual_native_no_agent_cron_fire_reaches_owner_current_work(tmp_path):
 
 
 def test_actual_native_delegated_return_and_inherited_scope(artifacts,tmp_path):
-    native=os.environ.get('COLONY_TEST_HERMES_PATH','')
+    native=os.environ.get('PACOMIND_TEST_HERMES_PATH','')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual child execution')
     _,_,_,installed=artifacts

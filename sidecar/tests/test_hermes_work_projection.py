@@ -9,9 +9,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions, host
-from apsimo.turns.hermes_work import cron_view
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions, host
+from pacomind.turns.hermes_work import cron_view
 
 
 @pytest.fixture
@@ -19,7 +19,7 @@ def native(tmp_path, monkeypatch):
     state, home = tmp_path/'state', tmp_path/'profile'
     state.mkdir()
     (home/'cron').mkdir(parents=True)
-    monkeypatch.setenv('COLONY_STATE_DIR', str(state))
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(state))
     monkeypatch.setenv('HERMES_HOME', str(home))
     path = home/'cron'/'executions.db'
     with sqlite3.connect(path) as conn:
@@ -72,7 +72,7 @@ def test_unavailable_schema_does_not_claim_no_work(native):
 
 
 def test_request_projection_keeps_bounded_cron_name_with_exact_native_identity(native):
-    from apsimo.turns.executions import request_work_context
+    from pacomind.turns.executions import request_work_context
     _, _, path = native
     before = path.read_bytes()
     now = datetime(2026, 9, 6, 12, 3, tzinfo=timezone.utc).timestamp()
@@ -89,13 +89,13 @@ def test_request_projection_keeps_bounded_cron_name_with_exact_native_identity(n
 
 @pytest.mark.asyncio
 async def test_only_attested_owner_current_work_and_context_can_read_native_profile(native, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'fixture-owner')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'fixture-owner')
     monkeypatch.setattr(host, '_task_queue', None)
     authority = [None]
     app = FastAPI()
     @app.middleware('http')
     async def identity(request, next_call):
-        request.state.colony_authority = authority[0]
+        request.state.pacomind_authority = authority[0]
         return await next_call(request)
     app.include_router(executions.router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
@@ -110,11 +110,11 @@ async def test_only_attested_owner_current_work_and_context_can_read_native_prof
                 assert (await client.get('/v1/host/executions', params={'contact_id':'fixture-owner'})).status_code == 403
             else:
                 assert response.json()['native_cron']['total'] == 2
-                from apsimo.api.schemas.host import ContextAssembleRequest
+                from pacomind.api.schemas.host import ContextAssembleRequest
                 body = ContextAssembleRequest(identity={'host_id':'fixture'},
                     context={'contact_id':person,'session_id':'different-session'},
                     incoming_message={'role':'user','content':'What are you doing now?'})
-                context = await host.context_assemble(body, SimpleNamespace(state=SimpleNamespace(colony_authority=authority[0])))
-                section = next(section for section in context.sections if section.id=='colony-executions')
+                context = await host.context_assemble(body, SimpleNamespace(state=SimpleNamespace(pacomind_authority=authority[0])))
+                section = next(section for section in context.sections if section.id=='pacomind-executions')
                 assert 'Neutral local check' in section.body and 'unknown' in section.body
                 assert 'not a complete process inventory' in section.body

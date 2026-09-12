@@ -4,9 +4,9 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host
-from apsimo.tom.tom2 import Tom2Store
-from apsimo.turns.source_annotations import append as annotate
+from pacomind.api.routers import host
+from pacomind.tom.tom2 import Tom2Store
+from pacomind.turns.source_annotations import append as annotate
 from test_contact_fact_recall import contact_context
 from test_turn_source_evidence import source_app
 from test_tom2_wiring import world, _arm_level2, _req, OWNER, READER, FACT_TEXT
@@ -28,7 +28,7 @@ def correct(facts, fact, identifier='correction'):
 async def test_owner_api_omits_unsupported_inference_without_uuid_fallback(
         contact_context, monkeypatch, p8_enabled, change):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_TOM2_CONTEXT', '1')
+    monkeypatch.setenv('PACOMIND_TOM2_CONTEXT', '1')
     if not p8_enabled:
         monkeypatch.setattr(host, '_p8_runtime', None)
     fact = runtime.add('The hydrofoil gate is violet.', source_linked=change != 'unlinked')
@@ -45,7 +45,7 @@ async def test_owner_api_omits_unsupported_inference_without_uuid_fallback(
             response = await client.post('/v1/host/context/assemble',
                 headers={'Authorization': 'Bearer owner-key'}, json=payload)
             assert response.status_code == 200, response.text
-            return [s for s in response.json()['sections'] if s['id'] == 'colony-tom2']
+            return [s for s in response.json()['sections'] if s['id'] == 'pacomind-tom2']
         if change != 'unlinked':
             before = await sections()
             assert len(before) == 1 and fact['fact'] in before[0]['body']
@@ -67,10 +67,10 @@ async def test_owner_api_omits_unsupported_inference_without_uuid_fallback(
 @pytest.mark.parametrize('reader', [OWNER, READER])
 @pytest.mark.parametrize('when', ['before', 'after_render', 'erased_note'])
 async def test_all_automatic_tom2_sections_omit_corrected_knowledge(world, monkeypatch, reader, when):
-    monkeypatch.setenv('COLONY_TOM2_CONTEXT', '1')
+    monkeypatch.setenv('PACOMIND_TOM2_CONTEXT', '1')
     _arm_level2(monkeypatch)
     before = await host.context_assemble(_req(reader))
-    expected = {'colony-tom2'} if reader == OWNER else {'colony-tom2-l1', 'colony-tom2-l2'}
+    expected = {'pacomind-tom2'} if reader == OWNER else {'pacomind-tom2-l1', 'pacomind-tom2-l2'}
     assert {s.id for s in before.sections if s.id in expected} == expected
     if when == 'after_render':
         class Telemetry:
@@ -94,7 +94,7 @@ async def test_unlinked_self_unawareness_does_not_create_content_free_prior(worl
     old = world.facts.create_fact(contact_id=READER, fact='Unlinked historical queue update.')
     world.tom2.record_inference(contact_id=READER, kind='unaware_of', fact_ref=old['id'], confidence=.4)
     response = await host.context_assemble(_req(READER))
-    assert not any(s.id == 'colony-tom2-l1' for s in response.sections)
+    assert not any(s.id == 'pacomind-tom2-l1' for s in response.sections)
     assert world.facts.get_fact(old['id']) is not None
 
 
@@ -102,7 +102,7 @@ async def test_unlinked_self_unawareness_does_not_create_content_free_prior(worl
 @pytest.mark.parametrize('change', ['erase', 'replace', 'append'])
 async def test_p8_cached_tom2_fact_does_not_survive_source_change_during_final_await(contact_context, monkeypatch, change):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_TOM2_CONTEXT', '1')
+    monkeypatch.setenv('PACOMIND_TOM2_CONTEXT', '1')
     fact = runtime.add('The hydrofoil gate is violet.')
     tom2 = Tom2Store()
     monkeypatch.setattr(host, '_tom2_store', tom2)
@@ -123,4 +123,4 @@ async def test_p8_cached_tom2_fact_does_not_survive_source_change_during_final_a
             'identity':{'host_id':'native-fixture'}, 'context':{'contact_id':'contact-a','session_id':'s1'},
             'incoming_message':{'role':'user','content':'hello'}})
     assert response.status_code == 200, response.text
-    assert not any(section['id'] == 'colony-tom2' for section in response.json()['sections'])
+    assert not any(section['id'] == 'pacomind-tom2' for section in response.json()['sections'])

@@ -1,6 +1,6 @@
 # Competence evidence reconciliation
 
-Colony treats competence as earned authority, so an unverified completion may
+PacoMind treats competence as earned authority, so an unverified completion may
 not be repaired by editing a counter. `CompetenceStore` keeps the original
 event and aggregate intact and applies an append-only reconciliation ledger at
 read time.
@@ -10,7 +10,7 @@ There are two safe outcomes:
 - If an external artifact proves the exact event, invalidate it or replace its
   outcome using its row id and immutable fingerprint.
 - If the old data cannot be correlated one-to-one, declare an exact domain and
-  half-open time window unavailable. Colony excludes that window from trust
+  half-open time window unavailable. PacoMind excludes that window from trust
   evidence and publishes affected benchmark metrics with `value: null` and an
   evidence-gap reason. It never estimates which rows were probably wrong.
 
@@ -30,7 +30,7 @@ does not migrate the database:
 
 ```bash
 PYTHONPATH=sidecar python3 scripts/reconcile_competence.py inspect \
-  --db /path/to/colony-self-model.db \
+  --db /path/to/pacomind-self-model.db \
   --domain worker:agent_action \
   --since 2026-07-06T00:00:00Z \
   --until 2026-07-13T00:00:00Z
@@ -43,7 +43,7 @@ An exact-event manifest looks like this:
 
 ```json
 {
-  "schema": "colony.competence-reconciliation/v1",
+  "schema": "pacomind.competence-reconciliation/v1",
   "created_by": "owner-or-named-operator",
   "reason": "policy-skipped callbacks were recorded as completed work",
   "provenance": {
@@ -69,7 +69,7 @@ When correlation is insufficient, use an evidence gap instead:
 
 ```json
 {
-  "schema": "colony.competence-reconciliation/v1",
+  "schema": "pacomind.competence-reconciliation/v1",
   "created_by": "owner-or-named-operator",
   "reason": "legacy callbacks have no stable job-to-event linkage",
   "provenance": {
@@ -91,7 +91,7 @@ legacy schema migration, and leaves the source database untouched:
 
 ```bash
 PYTHONPATH=sidecar python3 scripts/reconcile_competence.py apply \
-  --db /path/to/colony-self-model.db \
+  --db /path/to/pacomind-self-model.db \
   --manifest /path/to/reconciliation.json
 ```
 
@@ -101,10 +101,10 @@ its SHA-256 digest:
 
 ```bash
 PYTHONPATH=sidecar python3 scripts/reconcile_competence.py apply \
-  --db /path/to/colony-self-model.db \
+  --db /path/to/pacomind-self-model.db \
   --manifest /path/to/reconciliation.json \
   --commit \
-  --backup /path/to/backups/colony-self-model.before-reconciliation.db
+  --backup /path/to/backups/pacomind-self-model.before-reconciliation.db
 ```
 
 Restore that backup to roll back both the additive schema and ledger. Never
@@ -136,5 +136,5 @@ POST /v1/host/self/benchmark/compute?week=2026-W28
 ```
 
 Confirm the returned `actions.success.detail.metric_definition` is
-`colony.actions-success/v2` and its reconciliation revision matches the
+`pacomind.actions-success/v2` and its reconciliation revision matches the
 effective ledger. Do not copy a number from the old rollup into the new one.

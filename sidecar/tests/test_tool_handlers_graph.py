@@ -1,7 +1,7 @@
 """Regression tests for the graph/world-model tool handlers.
 
 These handlers previously called methods that don't exist on the wired
-objects (ColonyGraph.search / WorldModelStore.query), so every call raised
+objects (PacoMindGraph.search / WorldModelStore.query), so every call raised
 AttributeError and returned an error to the reasoner. They must now call the
 real methods (recall / find_entities) and map results correctly.
 """
@@ -16,7 +16,7 @@ from typing import Optional
 
 import pytest
 
-from apsimo.tools.handlers import (
+from pacomind.tools.handlers import (
     handle_memory_search,
     handle_query_entities,
 )
@@ -108,5 +108,5 @@ async def test_query_entities_passes_specific_type():
 
 @pytest.mark.asyncio
 async def test_registry_exposes_world_model():
-    from apsimo.autonomy.registry import SubsystemRegistry
+    from pacomind.autonomy.registry import SubsystemRegistry
     assert hasattr(SubsystemRegistry, "world_model")

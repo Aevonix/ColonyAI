@@ -9,17 +9,17 @@ from pathlib import Path
 
 import pytest
 
-from apsimo.workers import colony_worker, queue_worker, skills_sync
+from pacomind.workers import pacomind_worker, queue_worker, skills_sync
 
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     for var in (
-        "COLONY_URL", "COLONY_API_KEY", "COLONY_JOBS_WEBHOOK_URL",
-        "COLONY_WORKER_NODE_ID", "COLONY_AGENT_NAME", "COLONY_WORKER_MAX_JOBS",
-        "HERMES_SKILLS_DIR", "COLONY_STATE_DIR", "COLONY_HOME",
-        "COLONY_INIT_DEFAULTS",
-        "COLONY_AGENT_JOB_CLAIMS_ENABLED", "COLONY_WORKER_JOB_TYPES",
+        "PACOMIND_URL", "PACOMIND_API_KEY", "PACOMIND_JOBS_WEBHOOK_URL",
+        "PACOMIND_WORKER_NODE_ID", "PACOMIND_AGENT_NAME", "PACOMIND_WORKER_MAX_JOBS",
+        "HERMES_SKILLS_DIR", "PACOMIND_STATE_DIR", "PACOMIND_HOME",
+        "PACOMIND_INIT_DEFAULTS",
+        "PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "PACOMIND_WORKER_JOB_TYPES",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -37,22 +37,22 @@ def _no_network(monkeypatch):
 
 def test_queue_worker_load_config_defaults():
     cfg = queue_worker.load_config()
-    assert cfg["colony_url"] == "http://127.0.0.1:7777"
+    assert cfg["pacomind_url"] == "http://127.0.0.1:7777"
     assert cfg["api_key"] == "dev-mode-no-key"
-    assert cfg["webhook_url"] == "http://127.0.0.1:8644/webhooks/colony-jobs"
+    assert cfg["webhook_url"] == "http://127.0.0.1:8644/webhooks/pacomind-jobs"
     assert cfg["node_id"] == "hermes-agent"
     assert cfg["max_jobs"] == 1
 
 
 def test_queue_worker_node_id_derived_from_agent_name(monkeypatch):
-    monkeypatch.setenv("COLONY_AGENT_NAME", "My Agent")
+    monkeypatch.setenv("PACOMIND_AGENT_NAME", "My Agent")
     assert queue_worker.load_config()["node_id"] == "my-agent-agent"
-    monkeypatch.setenv("COLONY_WORKER_NODE_ID", "explicit-node")
+    monkeypatch.setenv("PACOMIND_WORKER_NODE_ID", "explicit-node")
     assert queue_worker.load_config()["node_id"] == "explicit-node"
 
 
 def test_queue_worker_max_jobs_env(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKER_MAX_JOBS", "3")
+    monkeypatch.setenv("PACOMIND_WORKER_MAX_JOBS", "3")
     assert queue_worker.load_config()["max_jobs"] == 3
 
 
@@ -129,7 +129,7 @@ def test_queue_worker_starts_claim_before_handing_it_to_agent(monkeypatch):
 
 def test_global_claim_kill_switch_stops_standalone_queue_worker(
         monkeypatch):
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "false")
     monkeypatch.setattr(
         queue_worker, "register_worker",
         lambda _cfg: (_ for _ in ()).throw(
@@ -145,24 +145,24 @@ def test_global_claim_kill_switch_stops_standalone_queue_worker(
     assert queue_worker.run(queue_worker.load_config()) == 0
 
 
-def test_global_claim_kill_switch_removes_agent_action_from_colony_worker(
+def test_global_claim_kill_switch_removes_agent_action_from_pacomind_worker(
         monkeypatch):
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
-    monkeypatch.setenv("COLONY_WORKER_JOB_TYPES", "agent_action")
-    cfg = colony_worker.load_config()
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_WORKER_JOB_TYPES", "agent_action")
+    cfg = pacomind_worker.load_config()
     assert cfg["job_types"] == []
     monkeypatch.setattr(
-        colony_worker, "register_worker",
+        pacomind_worker, "register_worker",
         lambda _cfg: (_ for _ in ()).throw(
             AssertionError("registration must stay dark")
         ),
     )
-    assert colony_worker.run_cycle(cfg) == 0
+    assert pacomind_worker.run_cycle(cfg) == 0
 
 
 def test_queue_worker_main_dry_run_no_network(monkeypatch, capsys):
     _no_network(monkeypatch)
-    monkeypatch.setenv("COLONY_WORKER_NODE_ID", "dry-node")
+    monkeypatch.setenv("PACOMIND_WORKER_NODE_ID", "dry-node")
     assert queue_worker.main(["--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "dry run" in out
@@ -235,13 +235,13 @@ def test_skills_sync_main_no_skills_no_network(tmp_path, monkeypatch, capsys):
 def test_worker_install_commands_are_published():
     sidecar = Path(__file__).resolve().parents[1]
     scripts = tomllib.loads((sidecar / "pyproject.toml").read_text())["project"]["scripts"]
-    assert scripts["apsimo-queue-worker"] == "apsimo.workers.queue_worker:main"
-    assert scripts["apsimo-skills-sync"] == "apsimo.workers.skills_sync:main"
-    deploy = sidecar / "apsimo/workers/deploy"
-    plist = plistlib.loads((deploy / "colony-worker.plist").read_bytes())
+    assert scripts["pacomind-queue-worker"] == "pacomind.workers.queue_worker:main"
+    assert scripts["pacomind-skills-sync"] == "pacomind.workers.skills_sync:main"
+    deploy = sidecar / "pacomind/workers/deploy"
+    plist = plistlib.loads((deploy / "pacomind-worker.plist").read_bytes())
     executable = plist["ProgramArguments"][0].split("/")[-1]
-    assert scripts[executable] == "apsimo.workers.colony_worker:main"
-    service = (deploy / "colony-worker.service").read_text()
+    assert scripts[executable] == "pacomind.workers.pacomind_worker:main"
+    service = (deploy / "pacomind-worker.service").read_text()
     command = next(line.split("=", 1)[1] for line in service.splitlines()
                    if line.startswith("ExecStart="))
-    assert scripts[command.split("/")[-1]] == "apsimo.workers.colony_worker:main"
+    assert scripts[command.split("/")[-1]] == "pacomind.workers.pacomind_worker:main"

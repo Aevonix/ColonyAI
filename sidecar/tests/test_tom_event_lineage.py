@@ -10,16 +10,16 @@ import sqlite3
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.contacts.comms import CommsLog
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.intelligence.relationships.profiler import RelationshipProfiler
-from apsimo.tom.affect import AffectStore
-from apsimo.tom.engagement import EngagementStore, build_guidance
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.idempotency import SourceErased
+from pacomind.api.routers import host
+from pacomind.contacts.comms import CommsLog
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.intelligence.relationships.profiler import RelationshipProfiler
+from pacomind.tom.affect import AffectStore
+from pacomind.tom.engagement import EngagementStore, build_guidance
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.idempotency import SourceErased
 from test_tom_source_lineage import runtime, ingest, forget
 from test_turn_source_evidence import source_app
 from test_turn_source_evidence import envelope, recalled
@@ -53,13 +53,13 @@ async def engagement_brief(client):
         'incoming_message': {'role': 'user', 'content': 'neutral query'},
     })
     assert response.status_code == 200
-    return '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'colony-engagement')
+    return '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'pacomind-engagement')
 
 
 @pytest.fixture
 async def approach(relations, monkeypatch, tmp_path):
-    from apsimo.contacts import store as contact_module
-    from apsimo import identity
+    from pacomind.contacts import store as contact_module
+    from pacomind import identity
     monkeypatch.setattr(contact_module, '_gen_id', lambda prefix: 'contact-a')
     monkeypatch.setattr(identity, 'get_owner_contact_id', lambda: 'owner')
     contacts = SQLiteContactStore(config=ContactsConfig(sqlite_path=str(tmp_path / 'contacts.db')))
@@ -108,9 +108,9 @@ async def test_cached_approach_forget_reopen_changes_next_ordinary_context(appro
         retained_legacy_affect(r)
         brief = await r.profiler.profile('contact-a')
         before = await relationship_context(client)
-        assert 'neutral-source-topic' not in before['colony-approach']
-        assert 'mood is negative' not in before['colony-approach']
-        assert 'Recent mood:' not in before['colony-approach']
+        assert 'neutral-source-topic' not in before['pacomind-approach']
+        assert 'mood is negative' not in before['pacomind-approach']
+        assert 'Recent mood:' not in before['pacomind-approach']
         assert 'mood is negative' in brief.render()  # Explicit inspection remains.
         cached = json.loads(r.profiler._conn.execute('SELECT brief_json FROM relationship_briefs').fetchone()[0])
         assert not {'affect_valence', 'affect_trend', 'psyche_guidance', 'psyche_motivators'} & cached.keys()
@@ -129,10 +129,10 @@ async def test_cached_approach_forget_reopen_changes_next_ordinary_context(appro
         monkeypatch.setattr(host, '_relationship_profiler', r.profiler)
         after = await relationship_context(client)
         assert 'neutral-source-topic' not in '\n'.join(after.values())
-        assert 'mood is negative' not in after['colony-approach']
-        assert 'independent topic' not in after['colony-approach']
+        assert 'mood is negative' not in after['pacomind-approach']
+        assert 'independent topic' not in after['pacomind-approach']
         assert 'independent topic' in r.engagement.get_profile('contact-a')['legacy_profile']['qual']['topics']
-        assert 'mostly via test:thread-a' in after['colony-approach']
+        assert 'mostly via test:thread-a' in after['pacomind-approach']
         assert (await r.contacts.get('contact-a')).interaction_count == count
         assert (await r.profiler.refresh_due())['profiled'] == 0
 
@@ -143,13 +143,13 @@ async def test_ordinary_ingress_no_longer_produces_legacy_numeric_observations(a
     async with AsyncClient(transport=ASGITransport(app=r.app), base_url='http://test') as client:
         await ingest(client, r)
         await r.profiler.profile('contact-a')
-        assert 'later-source-topic' not in (await relationship_context(client))['colony-approach']
+        assert 'later-source-topic' not in (await relationship_context(client))['pacomind-approach']
         async def changed(*args, **kwargs):
             return {'topics': ['later-source-topic']}
         monkeypatch.setattr(r.extractor, 'extract_engagement', changed)
         await ingest(client, r, turn_id='turn-b', session='session-b')
         assert (await r.profiler.refresh_due())['profiled'] == 0
-        assert 'later-source-topic' not in (await relationship_context(client))['colony-approach']
+        assert 'later-source-topic' not in (await relationship_context(client))['pacomind-approach']
         assert 'later-source-topic' not in r.engagement.get_profile('contact-a')['legacy_profile']['qual'].get('topics', [])
         assert r.engagement._conn.execute('SELECT count(*) FROM engagement_observations WHERE source_lineage_json IS NOT NULL').fetchone()[0] == 0
 
@@ -171,7 +171,7 @@ async def test_old_cached_advice_is_omitted_when_current_store_unavailable(appro
                 raise OSError('controlled source projection unavailable')
             monkeypatch.setattr(r.affect, 'get_state', failed)
             monkeypatch.setattr(r.engagement, 'get_profile', failed)
-        after = (await relationship_context(client))['colony-approach']
+        after = (await relationship_context(client))['pacomind-approach']
         assert 'neutral-source-topic' not in after and 'mood is negative' not in after
         assert 'Recent mood:' not in after
         assert 'mostly via test:thread-a' in after and 'no contact in 40 days' in after
@@ -231,10 +231,10 @@ async def test_ingress_does_not_run_retired_engagement_extractor(relations, monk
 async def test_badge_turn_keeps_source_learning_without_mood_inference_or_injection(approach, monkeypatch, judgments_enabled):
     r = approach
     if judgments_enabled:
-        monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+        monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     else:
-        monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED', raising=False)
-    monkeypatch.setattr('apsimo.identity.get_owner_contact_id', lambda: 'contact-a')
+        monkeypatch.delenv('PACOMIND_SELF_JUDGMENTS_ENABLED', raising=False)
+    monkeypatch.setattr('pacomind.identity.get_owner_contact_id', lambda: 'contact-a')
     async def forbidden(*args, **kwargs):
         raise AssertionError('Ordinary badge recall must not infer a mood')
     monkeypatch.setattr(r.extractor, 'extract_affect', forbidden)
@@ -265,8 +265,8 @@ async def test_badge_turn_keeps_source_learning_without_mood_inference_or_inject
         })
         assert response.status_code == 200, response.text
         sections = {section['id']: section['body'] for section in response.json()['sections']}
-        assert 'cobalt-716' in sections['colony-memory']
-        assert 'colony-affect' not in sections
+        assert 'cobalt-716' in sections['pacomind-memory']
+        assert 'pacomind-affect' not in sections
         assert 'valence' not in '\n'.join(sections.values())
         history = await client.get('/v1/host/affect/history/contact-a')
         assert history.status_code == 200

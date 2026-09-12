@@ -9,8 +9,8 @@ from typing import Optional
 
 import pytest
 
-from apsimo.events.journal import replay_events
-from apsimo.tom.affect import AffectStore
+from pacomind.events.journal import replay_events
+from pacomind.tom.affect import AffectStore
 
 
 # --- journal: newest_first drops the OLD end of an over-cap window -----------
@@ -21,7 +21,7 @@ def _write_event(d, seq, recorded_at, etype="test.event"):
 
 
 def test_replay_newest_first_keeps_recent(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path))
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for i in range(10):
         _write_event(tmp_path, i, (base + timedelta(minutes=i)).isoformat())
@@ -43,7 +43,7 @@ def test_replay_has_more_boundary_and_types(tmp_path, monkeypatch):
     """cap == N-1: the single unprocessed boundary file must count toward
     hasMore (remaining[1:] used to drop it); and hasMore must honor the
     types filter."""
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path))
     base = datetime(2026, 1, 1, tzinfo=timezone.utc)
     for i in range(5):
         _write_event(tmp_path, i, (base + timedelta(minutes=i)).isoformat(),
@@ -104,7 +104,7 @@ class _FakeGoalEngine:
 
 
 def test_goal_engine_aggregator(tmp_path):
-    from apsimo.briefings.aggregators import GoalEngineAggregator
+    from pacomind.briefings.aggregators import GoalEngineAggregator
     now = datetime.now(timezone.utc)
     created = now - timedelta(hours=1)   # explicit: default-now would land after period_end
     overdue = _FakeGoal("g1", "ship the report", deadline=now - timedelta(hours=2),
@@ -130,7 +130,7 @@ def test_goal_engine_aggregator(tmp_path):
     assert 0.0 < stats.completion_rate <= 1.0
 
 
-# --- tools: colony_list_goals handler uses the real engine API ---------------
+# --- tools: pacomind_list_goals handler uses the real engine API ---------------
 
 class _Registry:
     def __init__(self, goals):
@@ -138,7 +138,7 @@ class _Registry:
 
 
 async def test_handle_list_goals_returns_goals():
-    from apsimo.tools.handlers import handle_list_goals
+    from pacomind.tools.handlers import handle_list_goals
     from enum import Enum
 
     class _St(str, Enum):
@@ -164,14 +164,14 @@ async def test_handle_list_goals_returns_goals():
 # --- autonomy: hourly condition-check phase exists and dedups ----------------
 
 async def test_phase_condition_checks_runs_and_dedups(monkeypatch):
-    from apsimo.autonomy.loop import AutonomyLoop
+    from pacomind.autonomy.loop import AutonomyLoop
     calls = {"n": 0}
 
     async def fake_check(params):
         calls["n"] += 1
         return {"condition_met": False}
 
-    import apsimo.autonomy.condition_worker as cw
+    import pacomind.autonomy.condition_worker as cw
     monkeypatch.setattr(cw, "_check_commitment_overdue", fake_check)
     monkeypatch.setattr(cw, "_check_affect_decline", fake_check)
     monkeypatch.setattr(cw, "_check_surprise_accumulation", fake_check)

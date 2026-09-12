@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.directed import DirectedActionService, ScopedTaskStore
-from apsimo.self_model import (
+from pacomind.directed import DirectedActionService, ScopedTaskStore
+from pacomind.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
 

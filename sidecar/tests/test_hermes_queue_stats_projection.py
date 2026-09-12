@@ -1,4 +1,4 @@
-"""colony_queue_stats returns a fixed count-only projection.
+"""pacomind_queue_stats returns a fixed count-only projection.
 
 The raw sidecar payload carries a literal "failed" status key and free text
 (hold reasons, delivery errors). The projection keeps the counts, drops the
@@ -18,7 +18,7 @@ import pytest
 PLUGIN_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 
 
-def _load_plugin(name: str = "colony_hermes_queue_stats_projection_test"):
+def _load_plugin(name: str = "pacomind_hermes_queue_stats_projection_test"):
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(
         name, PLUGIN_DIR / "__init__.py",
@@ -53,7 +53,7 @@ def _raw():
 def test_projection_keeps_counts_and_drops_text():
     module = _load_plugin()
     out = module._bounded_queue_stats(_raw())
-    assert out["schema"] == "ColonyQueueStatsProjectionV1"
+    assert out["schema"] == "PacoMindQueueStatsProjectionV1"
     assert out["tasks_by_status"] == {
         "status_cancelled": 10, "status_completed": 11272, "status_failed": 22}
     assert out["tasks_by_type"] == {

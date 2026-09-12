@@ -1,4 +1,4 @@
-"""Tests for colony.intelligence.components.
+"""Tests for pacomind.intelligence.components.
 
 Covers all 8 intelligence components:
     - ToolLearner
@@ -17,42 +17,42 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from apsimo.intelligence.components.tool_learner import (
+from pacomind.intelligence.components.tool_learner import (
     ToolLearner,
     ToolPreference,
     ToolUsage,
 )
-from apsimo.intelligence.components.self_reflector import (
+from pacomind.intelligence.components.self_reflector import (
     Reflection,
     SelfReflector,
 )
-from apsimo.intelligence.components.task_planner import (
+from pacomind.intelligence.components.task_planner import (
     SubTask,
     TaskPlan,
     TaskPlanner,
     TaskPriority,
 )
-from apsimo.intelligence.components.session_continuity import (
+from pacomind.intelligence.components.session_continuity import (
     SessionContext,
     SessionContinuity,
 )
-from apsimo.intelligence.components.research_orchestrator import (
+from pacomind.intelligence.components.research_orchestrator import (
     ResearchOrchestrator,
     ResearchReport,
     ResearchResult,
     ResearchSource,
     SourceType,
 )
-from apsimo.intelligence.components.preference_learner import (
+from pacomind.intelligence.components.preference_learner import (
     Preference,
     PreferenceLearner,
 )
-from apsimo.intelligence.components.anomaly_detector import (
+from pacomind.intelligence.components.anomaly_detector import (
     Anomaly,
     AnomalyDetector,
     AnomalyType,
 )
-from apsimo.intelligence.components.initiative_engine import (
+from pacomind.intelligence.components.initiative_engine import (
     Initiative,
     InitiativeEngine,
     InitiativeType,
@@ -448,7 +448,7 @@ class TestResearchModels:
         assert result.citations == []
 
     def test_report_construction(self):
-        report = ResearchReport(query="what is colony?")
+        report = ResearchReport(query="what is pacomind?")
         assert report.results == []
         assert report.synthesized_summary is None
         assert report.confidence == 0.0
@@ -853,7 +853,7 @@ class TestPackageImports:
     """Verify all components are importable from the package."""
 
     def test_all_imports(self):
-        from apsimo.intelligence.components import (
+        from pacomind.intelligence.components import (
             ToolLearner,
             ToolUsage,
             ToolPreference,

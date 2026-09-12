@@ -7,9 +7,9 @@ by that track record.
 
 import pytest
 
-from apsimo.skills_memory.models import Skill, situation_signature
-from apsimo.skills_memory.retrieve import relevant_skills
-from apsimo.skills_memory.store import SkillStore
+from pacomind.skills_memory.models import Skill, situation_signature
+from pacomind.skills_memory.retrieve import relevant_skills
+from pacomind.skills_memory.store import SkillStore
 
 
 def _skill(title: str, situation: str, domain: str = "research") -> Skill:
@@ -29,7 +29,7 @@ class _FakeInitiative:
 
 
 def _executor(store):
-    from apsimo.services.initiative_executor import (
+    from pacomind.services.initiative_executor import (
         InitiativeExecutorService,
     )
     return InitiativeExecutorService(

@@ -1,16 +1,16 @@
 # Runtime logs
 
-`apsimo start` uses Python's `RotatingFileHandler`, with a 20 MiB threshold
+`pacomind start` uses Python's `RotatingFileHandler`, with a 20 MiB threshold
 and four numbered archives. A private instance writes
-`<instance>/service/sidecar.log`. `APSIMO_LOG_PATH`, `APSIMO_LOG_MAX_BYTES`
-and `APSIMO_LOG_BACKUPS` select another path, size threshold or archive count
+`<instance>/service/sidecar.log`. `PACOMIND_LOG_PATH`, `PACOMIND_LOG_MAX_BYTES`
+and `PACOMIND_LOG_BACKUPS` select another path, size threshold or archive count
 at process startup. Log files and the writer declaration have mode `0600`.
 
 Managed instance services capture Python stdout and stderr in the same sink.
 Applications that embed the sidecar can call
-`apsimo.runtime_logging.configure_runtime_logging(path, redirect_stdio=True)`
+`pacomind.runtime_logging.configure_runtime_logging(path, redirect_stdio=True)`
 before importing the ASGI application. Direct Uvicorn launches can set
-`APSIMO_RUNTIME_LOGGING=1`; the shipped service template selects this path.
+`PACOMIND_RUNTIME_LOGGING=1`; the shipped service template selects this path.
 One process owns each log. The handler does not coordinate multiple server
 workers writing the same file.
 

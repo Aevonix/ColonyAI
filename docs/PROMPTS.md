@@ -1,7 +1,7 @@
-# Colony Prompt Architecture
+# PacoMind Prompt Architecture
 
 All internal LLM cognition roles share one composable prompt system:
-`colony_sidecar/cognition/charter.py`. This replaces per-module hand-rolled
+`pacomind/cognition/charter.py`. This replaces per-module hand-rolled
 system prompts that had drifted into inconsistent identities, duplicated
 output rules, and no shared agency doctrine.
 
@@ -81,7 +81,7 @@ role blocks.
 The charter is capability doctrine, not personality. A deployment's persona
 (its SOUL) lives in the deployment layer (e.g. the framework's SOUL.md) and
 should not duplicate doctrine; conversely the charter never contains
-persona. `COLONY_AGENT_NAME` supplies the agent's name at compose time.
+persona. `PACOMIND_AGENT_NAME` supplies the agent's name at compose time.
 
 ## Integration status
 

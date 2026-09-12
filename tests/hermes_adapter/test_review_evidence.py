@@ -7,7 +7,7 @@ import copy,hashlib,json,sys
 from contextvars import copy_context
 from types import SimpleNamespace as NS
 sys.path.insert(0,sys.argv[1])
-from apsimo_hermes.review_evidence import capture,current
+from pacomind_hermes.review_evidence import capture,current
 scope=NS(valid_participant=True,authority_lane='owner',platform='cli',session_id='session-a',turn_id='turn-a')
 raw=json.dumps({'error':'regex parse error: look-around is not supported'})
 messages=[{'role':'assistant','tool_calls':[{'id':'call-a','function':{'name':'search_files','arguments':'{}'}}]},

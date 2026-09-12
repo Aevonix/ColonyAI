@@ -1,6 +1,6 @@
-"""Tests for apsimo.vector.tiers — tier definitions and selection."""
+"""Tests for pacomind.vector.tiers — tier definitions and selection."""
 import pytest
-from apsimo.vector.tiers import TIERS, TierConfig, ModelSpec, get_tier, get_tier_by_memory
+from pacomind.vector.tiers import TIERS, TierConfig, ModelSpec, get_tier, get_tier_by_memory
 
 
 class TestModelSpec:

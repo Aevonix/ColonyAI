@@ -7,10 +7,10 @@ agent_action, so it is surfaced, never auto-executed.
 
 import pytest
 
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.identity.resolver import reset_identity_resolver
-from apsimo.intelligence.components.initiative_engine import (
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.identity.resolver import reset_identity_resolver
+from pacomind.intelligence.components.initiative_engine import (
     InitiativeEngine,
     InitiativeType,
 )
@@ -77,7 +77,7 @@ async def test_candidates_blank_org_not_paired(store):
 @pytest.mark.asyncio
 async def test_engine_proposes_owner_gated_introduction(monkeypatch):
     reset_identity_resolver()
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner")
     try:
         engine = InitiativeEngine(graph_client=None, event_bus=None, mind_model=None)
         engine.add_context("introduction_candidates", [
@@ -105,7 +105,7 @@ def _engine():
 
 
 def _init(type_, priority, n, action_hint=None):
-    from apsimo.intelligence.components.initiative_engine import Initiative
+    from pacomind.intelligence.components.initiative_engine import Initiative
     return Initiative(
         id=f"{type_.value}-{n}", type=type_, description=f"{type_.value} {n}",
         priority=priority, rationale="x", dedup_key=f"{type_.value}:{n}",
@@ -144,7 +144,7 @@ def test_apply_cap_no_overflow_when_under_limit():
 @pytest.mark.asyncio
 async def test_engine_skips_owner_party(monkeypatch):
     reset_identity_resolver()
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner")
     try:
         engine = InitiativeEngine(graph_client=None, event_bus=None, mind_model=None)
         engine.add_context("introduction_candidates", [

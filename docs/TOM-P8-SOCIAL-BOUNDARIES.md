@@ -1,12 +1,12 @@
 # P8 fact-level social boundaries and conversational arcs
 
-Status: core primitives plus a default-off, shared Colony shadow integration.
+Status: core primitives plus a default-off, shared PacoMind shadow integration.
 See `docs/P8-SHARED-INTEGRATION.md`; live enforcement and every real-time voice
 path remain unwired.
 
 ## Outcome
 
-P8 adds three small, generic Colony primitives:
+P8 adds three small, generic PacoMind primitives:
 
 - `tom/visibility.py` defines an immutable, digest-bound fact visibility
   envelope and filters fact content before ranking, prose generation, or
@@ -47,7 +47,7 @@ and character bounds before exposing content. Unknown identity, stale facts,
 low confidence, and conflicting content under one fact reference fail closed.
 An empty scoped result remains empty; there is no global retry.
 The shared integration supplies a positive floor to every projection via
-`COLONY_P8_FACT_MIN_CONFIDENCE` (default `0.5`; invalid/non-positive fails safe
+`PACOMIND_P8_FACT_MIN_CONFIDENCE` (default `0.5`; invalid/non-positive fails safe
 to the default). Per-call overrides can only raise that floor.
 
 ## Conversational arc contract
@@ -82,7 +82,7 @@ corrupt history is counted but never returned.
 
 ## Recipient simulation contract
 
-`COLONY_RECIPIENT_SIMULATOR_MODE=off|shadow|live` defaults to `off`; an unknown
+`PACOMIND_RECIPIENT_SIMULATOR_MODE=off|shadow|live` defaults to `off`; an unknown
 value is also `off`.
 
 - `off` does not query facts or arcs and returns `no_effect`.

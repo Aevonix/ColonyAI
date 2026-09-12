@@ -8,8 +8,8 @@ import tempfile
 
 import pytest
 
-from apsimo.repos import RepoMirrorManager, parse_mirror_config
-from apsimo.directives import DirectiveManager, DirectiveStore
+from pacomind.repos import RepoMirrorManager, parse_mirror_config
+from pacomind.directives import DirectiveManager, DirectiveStore
 
 
 def _make_source_repo(base: str) -> str:

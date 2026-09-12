@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.world_model.entities import ProductEntity
-from apsimo.world_model.populator import _is_low_quality
-from apsimo.world_model.sqlite.backend import SQLiteBackend, _fts_escape
+from pacomind.world_model.entities import ProductEntity
+from pacomind.world_model.populator import _is_low_quality
+from pacomind.world_model.sqlite.backend import SQLiteBackend, _fts_escape
 
 
 # ---------------------------------------------------------------------------
@@ -26,7 +26,7 @@ def test_urls_and_paths_rejected_as_names():
 
 def test_operational_phrases_rejected_as_persons():
     for bad in ("Root Cause", "Orphan Messages",
-                "Initiatives Spawn Fresh Sessions", "Colony Operations"):
+                "Initiatives Spawn Fresh Sessions", "PacoMind Operations"):
         assert _is_low_quality(bad, "person"), bad
 
 
@@ -43,7 +43,7 @@ def test_real_names_still_pass():
 def test_fts_escape_preserves_token_boundaries():
     # deleting the hyphen used to fuse tokens into an unmatchable term
     assert _fts_escape("huggingface-hub") == "huggingface hub"
-    assert _fts_escape("colony-operations") == "colony operations"
+    assert _fts_escape("pacomind-operations") == "pacomind operations"
     assert _fts_escape('robert"; DROP TABLE') == "robert DROP TABLE"
 
 

@@ -1,6 +1,6 @@
 # Current work during a native turn
 
-Hermes requests Apsimo memory once at the beginning of a turn. A turn can then
+Hermes requests PacoMind memory once at the beginning of a turn. A turn can then
 make several model calls while tools run or other sessions finish tasks. The
 initial work snapshot is therefore explicitly labeled as observed at turn start.
 
@@ -62,7 +62,7 @@ and whether it remains unexpired; expired, absent or future-dated observations
 do not prove liveness. The view does not claim or reschedule jobs.
 
 An enrolled process heartbeat may include `state.work_snapshot` using
-`ColonyWorkSnapshotV1`. This is a bounded, read-only projection of an existing
+`PacoMindWorkSnapshotV1`. This is a bounded, read-only projection of an existing
 producer's selected ledger. It carries observation time, per-source availability,
 state counts and up to four delivery/provider cursor rows. Genuine delivery,
 intent, request and attempt identifiers remain distinct. `total` counts producer
@@ -74,13 +74,13 @@ snapshot provides no recipient read proof and always has `complete=false`.
 The generic reader strips recipients, message content and undeclared fields;
 it never opens a ledger, follows a path embedded in a report, dispatches work
 or grants authority. The deployment explicitly enrolls the heartbeat through
-the existing `COLONY_WORKER_STATUS_PATHS` mapping. Unsupported, failed or
+the existing `PACOMIND_WORKER_STATUS_PATHS` mapping. Unsupported, failed or
 partial snapshots remain explicit; stale or future timestamps cannot establish
 current execution. A terminal download report remains an unverified terminal
 record even while its enclosing file is readable. An optional gateway outcome
 cache is not a substitute for the selected producer/provider sources.
 
-One request-only block, delimited by `colony-work-request-v1`, supersedes the
+One request-only block, delimited by `pacomind-work-request-v1`, supersedes the
 turn-start snapshot. A later call replaces that block instead of accumulating
 snapshots. Chat requests use a system message; Responses requests use the
 instructions field. User content, tool results and native transcript storage
@@ -102,7 +102,7 @@ states. Unrecognized statuses become `ended`, not successful completion. A
 missing observation or unavailable service still becomes unknown on expiry.
 
 Hermes can also skip `pre_llm_call` when another session is still invoking that
-same callback. The Apsimo memory provider's existing synchronous `on_turn_start`
+same callback. The PacoMind memory provider's existing synchronous `on_turn_start`
 now retains a transient copy of the clean native text input and transport context.
 The supported request middleware binds it to one exact session/task/turn and
 can run the missed initialization before recall, work and tool authority are
@@ -137,7 +137,7 @@ and task ownership contracts.
 
 Qualified Hermes 0.21.1 adds its assigned-worker instructions whenever
 `kanban_show` is available. Ordinary profiles may expose the same tools without
-owning a dispatcher task. Apsimo corrects this known mismatch through its existing
+owning a dispatcher task. PacoMind corrects this known mismatch through its existing
 `llm_request` middleware: it removes the exact native assignment block from
 instruction fields unless the existing Hermes task binding and context-local
 dispatcher-ownership predicate both apply. Actual assigned workers keep their

@@ -11,15 +11,15 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 from starlette.requests import Request
 
-from apsimo.api.authority import (
+from pacomind.api.authority import (
     RequestAuthority,
     anonymous_authority,
     legacy_authority,
     required_scope,
 )
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.api.schemas.host import (
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.api.schemas.host import (
     ContextAssembleRequest,
     HostIdentity,
     HostMessage,
@@ -30,25 +30,25 @@ from apsimo.api.schemas.host import (
     SharedFactUpdateRequest,
     ToolInvokeRequest,
 )
-from apsimo.server import (
+from pacomind.server import (
     _attach_p8_runtime,
     _build_research_pipeline,
 )
-from apsimo.intelligence.relationships.profiler import (
+from pacomind.intelligence.relationships.profiler import (
     RelationshipProfiler,
 )
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.integration import P8Runtime
-from apsimo.tom.leveled import render_level1
-from apsimo.tom.tom2 import Tom2Store
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.integration import P8Runtime
+from pacomind.tom.leveled import render_level1
+from pacomind.tom.tom2 import Tom2Store
+from pacomind.turns import TurnIdempotencyLedger
 
 
 def current_fact_source(facts, tmp_path, person, text):
     """Actual canonical support for automatic-context fixture positives."""
     import uuid
     from pathlib import Path
-    from apsimo import get_state_dir
+    from pacomind import get_state_dir
     ledger = TurnIdempotencyLedger(Path(get_state_dir()) / 'turn-idempotency.db')
     facts._source_ledger = ledger
     turn = 'fact-support-' + uuid.uuid4().hex
@@ -58,9 +58,9 @@ def current_fact_source(facts, tmp_path, person, text):
 
 
 P8_FILES = (
-    "colony-p8-visibility.db",
-    "colony-p8-arcs.db",
-    "colony-p8-recipient-audit.db",
+    "pacomind-p8-visibility.db",
+    "pacomind-p8-arcs.db",
+    "pacomind-p8-recipient-audit.db",
 )
 
 
@@ -97,7 +97,7 @@ def _request(authority: RequestAuthority) -> Request:
         "client": ("127.0.0.1", 1),
         "scheme": "http",
     })
-    request.state.colony_authority = authority
+    request.state.pacomind_authority = authority
     return request
 
 
@@ -115,8 +115,8 @@ def _context(person: str) -> ContextAssembleRequest:
 
 @pytest.fixture(autouse=True)
 def _restore_host_globals(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     names = (
         "_p8_runtime", "_facts_store", "_graph", "_tom2_store",
         "_relationship_profiler", "_embedder", "_goals_store",
@@ -398,9 +398,9 @@ async def test_p8_non_owner_never_queries_untyped_global_context(
 ):
     """Reproduce the legacy-global P8 leak before adding its boundary."""
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -430,9 +430,9 @@ async def test_p8_non_owner_never_queries_untyped_global_context(
 async def test_p8_unsealed_owner_claim_never_queries_untyped_global_context(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -453,9 +453,9 @@ async def test_p8_unsealed_owner_claim_never_queries_untyped_global_context(
 async def test_p8_exact_owner_retains_untyped_global_context(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -489,8 +489,8 @@ async def test_p8_exact_owner_retains_untyped_global_context(
 async def test_p8_off_scoped_guest_uses_canonical_projection_without_global_producers(
     monkeypatch,
 ):
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     host.set_p8_runtime(None)
     spies = _LegacyGlobalContextSpies()
     spies.wire(monkeypatch)
@@ -510,8 +510,8 @@ async def test_p8_off_scoped_guest_uses_canonical_projection_without_global_prod
 
 @pytest.mark.asyncio
 async def test_p8_off_exact_owner_keeps_legacy_global_context(monkeypatch):
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     host.set_p8_runtime(None)
     spies = _LegacyGlobalContextSpies()
     spies.wire(monkeypatch)
@@ -528,7 +528,7 @@ async def test_p8_off_exact_owner_keeps_legacy_global_context(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_p8_off_legacy_migration_keeps_historical_context(monkeypatch):
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
     host.set_p8_runtime(None)
     spies = _LegacyGlobalContextSpies()
     spies.wire(monkeypatch)
@@ -569,8 +569,8 @@ async def test_p8_temporal_keeps_global_owner_heads_up_owner_only(
                 "cadence_days": 3,
             }]
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -601,9 +601,9 @@ async def test_p8_temporal_keeps_global_owner_heads_up_owner_only(
 async def test_p8_unsealed_selector_never_queries_person_context(
     tmp_path, monkeypatch, selector,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -624,9 +624,9 @@ async def test_p8_unsealed_selector_never_queries_person_context(
 async def test_p8_scoped_non_owner_queries_only_exact_person_commitments(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -651,12 +651,12 @@ async def test_p8_scoped_non_owner_queries_only_exact_person_commitments(
 
 @pytest.mark.asyncio
 async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
-    from apsimo.contacts.comms import CommsLog
+    from pacomind.contacts.comms import CommsLog
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_OWNER_NAME", "PRIVATE OWNER NAME")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_OWNER_NAME", "PRIVATE OWNER NAME")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -670,7 +670,7 @@ async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
         _context("alice"), request=_request(_authority("alice")))
     comms = next(
         section for section in response.sections
-        if section.id == "colony-comms-landscape"
+        if section.id == "pacomind-comms-landscape"
     )
     assert "PRIVATE OWNER NAME" not in comms.body
     assert "owner approval" in comms.body.lower()
@@ -683,7 +683,7 @@ async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
 async def test_p8_off_preserves_blank_person_legacy_queries(
     monkeypatch,
 ):
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
     host.set_p8_runtime(None)
     spies = _PersonalContextSpies()
     spies.wire()
@@ -727,7 +727,7 @@ class _ToolDirectives:
 async def test_tool_executor_blocks_mutation_on_boundary_or_guard_failure(
     directives,
 ):
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
     calls = []
 
@@ -758,10 +758,10 @@ async def test_tool_executor_blocks_mutation_on_boundary_or_guard_failure(
 async def test_p8_direct_tool_requires_sealed_owner_mutation_authority(
     tmp_path, monkeypatch,
 ):
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -807,10 +807,10 @@ async def test_p8_direct_tool_requires_sealed_owner_mutation_authority(
 
 @pytest.mark.asyncio
 async def test_p8_non_owner_retains_public_read_tool_only(tmp_path, monkeypatch):
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -854,7 +854,7 @@ async def test_p8_non_owner_retains_public_read_tool_only(tmp_path, monkeypatch)
 async def test_p8_model_tool_batch_cannot_call_filtered_mutation(
     tmp_path, monkeypatch,
 ):
-    from apsimo.reasoning import ReasoningLoop, ToolExecutor
+    from pacomind.reasoning import ReasoningLoop, ToolExecutor
 
     class Model:
         def __init__(self):
@@ -880,8 +880,8 @@ async def test_p8_model_tool_batch_cannot_call_filtered_mutation(
             )])
             return SimpleNamespace(raw=raw, content="done", usage={})
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -920,7 +920,7 @@ async def test_p8_model_tool_batch_cannot_call_filtered_mutation(
 
 @pytest.mark.asyncio
 async def test_tool_executor_rejects_malformed_mutation_verdict():
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
     class MalformedDirectives:
         def check(self, _action):
@@ -950,8 +950,8 @@ async def test_tool_executor_rejects_malformed_mutation_verdict():
 
 @pytest.mark.asyncio
 async def test_unknown_dynamic_tool_defaults_to_mutation_authority():
-    from apsimo.reasoning.executor import ToolExecutor
-    from apsimo.reasoning.tool_policy import ToolActorPolicy
+    from pacomind.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.tool_policy import ToolActorPolicy
 
     calls = []
 
@@ -1016,10 +1016,10 @@ def _collision_authority(name):
 async def test_p8_direct_dynamic_collision_fails_before_name_authority(
     tmp_path, monkeypatch, name,
 ):
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1055,14 +1055,14 @@ async def test_p8_direct_dynamic_collision_fails_before_name_authority(
 async def test_p8_model_dynamic_collision_fails_before_model_call(
     tmp_path, monkeypatch, name,
 ):
-    from apsimo.reasoning import ReasoningLoop, ToolExecutor
+    from pacomind.reasoning import ReasoningLoop, ToolExecutor
 
     class Model:
         async def complete(self, *_args, **_kwargs):
             raise AssertionError("colliding definitions must not reach the model")
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1099,7 +1099,7 @@ async def test_p8_model_dynamic_collision_fails_before_model_call(
 
 @pytest.mark.asyncio
 async def test_p8_off_direct_dynamic_tool_contract_is_unchanged():
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
     host._p8_runtime = None
     calls = []
@@ -1128,10 +1128,10 @@ async def test_p8_off_direct_dynamic_tool_contract_is_unchanged():
 async def test_p8_legacy_bearer_cannot_body_claim_private_tool_authority(
     tmp_path, monkeypatch,
 ):
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1154,8 +1154,8 @@ async def test_p8_legacy_bearer_cannot_body_claim_private_tool_authority(
 async def test_p8_reasoning_body_cannot_broaden_scoped_viewer(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1182,10 +1182,10 @@ def test_default_off_and_live_request_create_no_p8_state(tmp_path, monkeypatch):
     for configured in (None, "off", "live", "unknown"):
         if configured is None:
             monkeypatch.delenv(
-                "COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+                "PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
         else:
             monkeypatch.setenv(
-                "COLONY_RECIPIENT_SIMULATOR_MODE", configured)
+                "PACOMIND_RECIPIENT_SIMULATOR_MODE", configured)
         runtime = _attach_p8_runtime(
             state_dir=tmp_path, facts_store=facts)
         assert runtime is None
@@ -1208,7 +1208,7 @@ def test_shadow_installs_graph_wide_mirror_exclusion_and_off_clears_it(
 
     graph = GraphPolicy()
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     runtime = _attach_p8_runtime(
         state_dir=tmp_path, facts_store=facts, graph=graph)
     assert runtime is not None
@@ -1218,7 +1218,7 @@ def test_shadow_installs_graph_wide_mirror_exclusion_and_off_clears_it(
     ]
     runtime.close()
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "off")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "off")
     assert _attach_p8_runtime(
         state_dir=tmp_path, facts_store=facts, graph=graph) is None
     assert graph.calls[-1] == ((), ())
@@ -1233,7 +1233,7 @@ def test_research_wiring_preserves_off_ownership_and_borrows_only_for_p8(
         def __init__(self, *args, **kwargs):
             calls.append((args, kwargs))
 
-    import apsimo.research.pipeline as pipeline_module
+    import pacomind.research.pipeline as pipeline_module
     monkeypatch.setattr(
         pipeline_module, "ResearchPipeline", PipelineSpy)
     graph = object()
@@ -1251,9 +1251,9 @@ def test_research_wiring_preserves_off_ownership_and_borrows_only_for_p8(
 def test_shadow_attaches_one_runtime_and_restart_closes_cleanly(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_P8_FACT_MIN_CONFIDENCE", "0")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_P8_FACT_MIN_CONFIDENCE", "0")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
 
     first = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1274,7 +1274,7 @@ def test_shadow_attaches_one_runtime_and_restart_closes_cleanly(
 def test_viewer_is_sealed_from_scoped_authority_not_body_or_legacy(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     scoped = _request(_authority("alice", person_ids=("carol",)))
     viewer = host._p8_viewer_for_request(scoped, "alice")
     assert viewer.attested is True
@@ -1305,8 +1305,8 @@ def test_viewer_is_sealed_from_scoped_authority_not_body_or_legacy(
 def test_new_fact_uses_typed_envelope_and_legacy_row_stays_excluded(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1354,8 +1354,8 @@ def test_new_fact_uses_typed_envelope_and_legacy_row_stays_excluded(
 async def test_shared_fact_handlers_seal_create_and_update_from_exact_authority(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1389,9 +1389,9 @@ async def test_shared_fact_handlers_seal_create_and_update_from_exact_authority(
 async def test_context_renders_only_authenticated_enveloped_facts(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1416,7 +1416,7 @@ async def test_context_renders_only_authenticated_enveloped_facts(
     query.incoming_message.content = "allowed alice context"
     response = await host.context_assemble(query, request=alice_request)
     section = next(
-        part for part in response.sections if part.id == "colony-memory")
+        part for part in response.sections if part.id == "pacomind-memory")
     assert "allowed alice context" in section.body
     assert "legacy row must not render" not in section.body
     assert "Bob private context" not in section.body
@@ -1455,7 +1455,7 @@ async def test_p8_context_filters_shared_fact_graph_mirrors_before_render(
                 },
             ]
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1487,7 +1487,7 @@ async def test_default_off_never_queries_obsolete_graph_recall(monkeypatch):
                 "score": 0.7,
             }]
 
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
     host.set_p8_runtime(None)
     host._graph = StrictGraphRecall()
     # The legacy migration lane keeps the exact historical recall call.  A
@@ -1505,9 +1505,9 @@ async def test_default_off_never_queries_obsolete_graph_recall(monkeypatch):
 async def test_p8_fact_view_is_the_only_tom2_context_content_path(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "alice")
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "alice")
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1551,7 +1551,7 @@ async def test_p8_fact_view_is_the_only_tom2_context_content_path(
         _context("alice"), request=alice_request)
     tom2_section = next(
         section for section in response.sections
-        if section.id == "colony-tom2"
+        if section.id == "pacomind-tom2"
     )
     assert "authorized typed Tom2 fact" in tom2_section.body
     assert "legacy untyped Tom2 secret" not in tom2_section.body
@@ -1572,7 +1572,7 @@ async def test_p8_fact_view_is_the_only_tom2_context_content_path(
     legacy_response = await host.context_assemble(
         _context("alice"), request=_request(legacy_authority()))
     assert all(
-        section.id != "colony-tom2"
+        section.id != "pacomind-tom2"
         for section in legacy_response.sections
     )
     assert required_scope("GET", "/v1/host/tom2/report") == "tom:read"
@@ -1582,8 +1582,8 @@ async def test_p8_fact_view_is_the_only_tom2_context_content_path(
 async def test_canonical_context_never_falls_through_to_raw_legacy_facts(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1626,8 +1626,8 @@ async def test_relationship_topics_require_request_sealed_exact_viewer(
         def list_facts(self, **_kwargs):
             raise AssertionError("raw SharedFacts bypassed P8")
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     host.set_facts_store(facts)
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
@@ -1656,14 +1656,14 @@ async def test_relationship_topics_require_request_sealed_exact_viewer(
         _context("alice"), request=alice_request)
     scoped_approach = next(
         section for section in scoped.sections
-        if section.id == "colony-approach"
+        if section.id == "pacomind-approach"
     )
     assert "telescope" in scoped_approach.body
 
     legacy = await host.context_assemble(
         _context("alice"), request=_request(legacy_authority()))
     assert all(
-        section.id != "colony-approach"
+        section.id != "pacomind-approach"
         for section in legacy.sections
     )
 
@@ -1762,14 +1762,14 @@ async def test_p8_multimodal_memory_search_filters_before_content_response(
             self.calls.append(rows)
             return [row for row in rows if row["id"] == "ordinary"]
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     store = Store()
     graph = Graph()
     host._embedder = Embedder()
     host._graph = graph
-    import apsimo.vector as vector_module
+    import pacomind.vector as vector_module
     monkeypatch.setattr(vector_module, "get_store", lambda: store)
 
     response = await host.memory_search_multimodal(
@@ -1819,8 +1819,8 @@ def _principal(
 async def test_scoped_status_and_deck_endpoints_fail_closed_across_people(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     assert runtime is not None
@@ -1902,8 +1902,8 @@ async def test_scoped_status_and_deck_endpoints_fail_closed_across_people(
 def test_restart_replays_envelopes_and_all_runtime_stores_close(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     viewer = host._p8_viewer_for_request(_request(_authority("alice")), "alice")

@@ -13,19 +13,19 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.autonomy.config import AutonomyConfig
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.gate.rejection import (
+from pacomind.autonomy.config import AutonomyConfig
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.gate.rejection import (
     FeedbackLoopResult, GateRejectionEvent, RejectionFeedbackLoop,
     RejectionStore,
 )
-from apsimo.gate.response_guard import (
+from pacomind.gate.response_guard import (
     GuardFinding,
     GuardMode,
     GuardResult,
     response_text_digest,
 )
-from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+from pacomind.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
 
 def _blocked(reason="secret_leak", excerpt="sk-123", response_text=""):
@@ -192,11 +192,11 @@ def _loop(llm=None):
 
 
 def _wire_guard(monkeypatch, tmp_path, guard):
-    import apsimo.api.routers.host as host
+    import pacomind.api.routers.host as host
     monkeypatch.setattr(host, "_response_guard", guard)
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
-    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-xyz")
+    monkeypatch.delenv("PACOMIND_DELIVERY_TRANSPORT", raising=False)
 
 
 def test_delivery_enforce_block_revised_and_sent(monkeypatch, tmp_path):
@@ -270,7 +270,7 @@ def test_delivery_block_stands_without_llm(monkeypatch, tmp_path):
 def test_delivery_clean_message_unchanged(monkeypatch, tmp_path):
     """A canonical enforce ALLOW bound to the exact candidate may ship."""
     _wire_guard(monkeypatch, tmp_path, FakeGuard())
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(
@@ -461,7 +461,7 @@ def test_delivery_enforce_rejects_malformed_or_unbound_verdicts(
             return result
 
     _wire_guard(monkeypatch, tmp_path, MalformedGuard())
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(
@@ -486,7 +486,7 @@ def test_delivery_enforce_rejects_verdict_with_missing_bindings(
             )
 
     _wire_guard(monkeypatch, tmp_path, IncompleteGuard())
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(
@@ -496,10 +496,10 @@ def test_delivery_enforce_rejects_verdict_with_missing_bindings(
 
 
 def test_delivery_enforce_blocks_when_guard_is_unavailable(monkeypatch, tmp_path):
-    import apsimo.api.routers.host as host
+    import pacomind.api.routers.host as host
 
     _wire_guard(monkeypatch, tmp_path, None)
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(
@@ -510,7 +510,7 @@ def test_delivery_enforce_blocks_when_guard_is_unavailable(monkeypatch, tmp_path
 
 
 def test_delivery_enforce_blocks_when_guard_raises(monkeypatch, tmp_path):
-    from apsimo.gate.response_guard import GuardMode
+    from pacomind.gate.response_guard import GuardMode
 
     class BrokenGuard:
         configured_mode = GuardMode.ENFORCE
@@ -519,7 +519,7 @@ def test_delivery_enforce_blocks_when_guard_raises(monkeypatch, tmp_path):
             raise RuntimeError("guard unavailable")
 
     _wire_guard(monkeypatch, tmp_path, BrokenGuard())
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(
@@ -531,7 +531,7 @@ def test_delivery_enforce_blocks_when_guard_raises(monkeypatch, tmp_path):
 def test_environment_enforce_cannot_be_weakened_by_stale_shadow_guard(
     monkeypatch, tmp_path,
 ):
-    from apsimo.gate.response_guard import GuardMode
+    from pacomind.gate.response_guard import GuardMode
 
     class StaleShadowGuard:
         configured_mode = GuardMode.SHADOW
@@ -543,7 +543,7 @@ def test_environment_enforce_cannot_be_weakened_by_stale_shadow_guard(
             )
 
     _wire_guard(monkeypatch, tmp_path, StaleShadowGuard())
-    monkeypatch.setenv("COLONY_GUARD_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "enforce")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(
@@ -554,7 +554,7 @@ def test_environment_enforce_cannot_be_weakened_by_stale_shadow_guard(
 
 def test_delivery_shadow_guard_outage_remains_fail_open(monkeypatch, tmp_path):
     _wire_guard(monkeypatch, tmp_path, None)
-    monkeypatch.setenv("COLONY_GUARD_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_GUARD_MODE", "shadow")
     loop = _loop()
     delivery = _FakeDelivery()
     ok = asyncio.run(loop._route_reachout_delivery(

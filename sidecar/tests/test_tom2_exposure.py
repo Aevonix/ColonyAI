@@ -11,11 +11,11 @@ import sqlite3
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.tom.exposure import (
+from pacomind.api.routers import host as host_mod
+from pacomind.tom.exposure import (
     Tom2ExposureStore, budget_global_day, budget_pair_day,
     budget_reader_day)
-from apsimo.tom.facts import SharedFactsStore
+from pacomind.tom.facts import SharedFactsStore
 
 
 def _expose(s, reader="cid-alice", subject="cid-bob", fact_ref="fact-1",
@@ -30,9 +30,9 @@ def _expose(s, reader="cid-alice", subject="cid-bob", fact_ref="fact-1",
 # ---------------------------------------------------------------------------
 
 def test_budget_defaults(monkeypatch):
-    for var in ("COLONY_TOM2_BUDGET_PAIR_DAY",
-                "COLONY_TOM2_BUDGET_READER_DAY",
-                "COLONY_TOM2_BUDGET_GLOBAL_DAY"):
+    for var in ("PACOMIND_TOM2_BUDGET_PAIR_DAY",
+                "PACOMIND_TOM2_BUDGET_READER_DAY",
+                "PACOMIND_TOM2_BUDGET_GLOBAL_DAY"):
         monkeypatch.delenv(var, raising=False)
     assert budget_pair_day() == 1
     assert budget_reader_day() == 3
@@ -40,14 +40,14 @@ def test_budget_defaults(monkeypatch):
 
 
 def test_malformed_budget_is_zero(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_BUDGET_PAIR_DAY", "many")
+    monkeypatch.setenv("PACOMIND_TOM2_BUDGET_PAIR_DAY", "many")
     assert budget_pair_day() == 0
-    monkeypatch.setenv("COLONY_TOM2_BUDGET_PAIR_DAY", "-4")
+    monkeypatch.setenv("PACOMIND_TOM2_BUDGET_PAIR_DAY", "-4")
     assert budget_pair_day() == 0
 
 
 def test_pair_budget_binds(monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_BUDGET_PAIR_DAY", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_BUDGET_PAIR_DAY", raising=False)
     s = Tom2ExposureStore()
     assert s.budget_ok("cid-alice", "cid-bob") is True
     _expose(s)                                     # pair budget (1) spent
@@ -56,7 +56,7 @@ def test_pair_budget_binds(monkeypatch):
 
 
 def test_reader_budget_binds(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_BUDGET_READER_DAY", "2")
+    monkeypatch.setenv("PACOMIND_TOM2_BUDGET_READER_DAY", "2")
     s = Tom2ExposureStore()
     _expose(s, subject="cid-b1")
     _expose(s, subject="cid-b2")
@@ -65,7 +65,7 @@ def test_reader_budget_binds(monkeypatch):
 
 
 def test_global_budget_binds(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_BUDGET_GLOBAL_DAY", "2")
+    monkeypatch.setenv("PACOMIND_TOM2_BUDGET_GLOBAL_DAY", "2")
     s = Tom2ExposureStore()
     _expose(s, reader="cid-r1", subject="cid-s1")
     _expose(s, reader="cid-r2", subject="cid-s2")

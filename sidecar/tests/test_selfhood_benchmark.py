@@ -7,8 +7,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import apsimo.api.routers.host as host_mod
-from apsimo.self_model.benchmark import (
+import pacomind.api.routers.host as host_mod
+from pacomind.self_model.benchmark import (
     BenchmarkStore, SelfhoodBenchmark, previous_week, week_window,
 )
 

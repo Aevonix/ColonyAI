@@ -25,7 +25,7 @@ route from an accepted autonomous objective to execution.
 
 ## Modes
 
-`COLONY_COGNITION_SPINE=off|shadow|live` defaults to `off`.
+`PACOMIND_COGNITION_SPINE=off|shadow|live` defaults to `off`.
 
 - `off`: no P3 behavior and no legacy behavior changes.
 - `shadow`: queue and validate bounded thoughts and record policy decisions,
@@ -190,7 +190,7 @@ this path.
 ## Durable state and rollback
 
 `CognitionSpineStore` adds its own SQLite database (recommended live path:
-`$COLONY_HOME/data/colony-cognition.db`) containing immutable jobs, results,
+`$PACOMIND_HOME/data/pacomind-cognition.db`) containing immutable jobs, results,
 proposals, policy decisions, project links, routed non-action proposals, and
 revision-keyed admission history. Admission keys include the concern material,
 producer/promotion, runtime mode, boundary policy, situation, and active
@@ -210,6 +210,6 @@ outcome, provenance, scope, authority, and fingerprint columns. Old code
 ignores these additions. No migration deletes or rewrites a legacy goal,
 initiative, project, event, or competence row.
 
-Setting `COLONY_COGNITION_SPINE=off` is the immediate functional rollback.
+Setting `PACOMIND_COGNITION_SPINE=off` is the immediate functional rollback.
 Keep the new database and additive columns as audit evidence; restore a
 pre-cutover database copy only if an older binary cannot open the files.

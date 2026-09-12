@@ -1,4 +1,4 @@
-"""feeds-manage — agent tools over the Colony feeds framework.
+"""feeds-manage — agent tools over the PacoMind feeds framework.
 
 Gives the agent real tools to create/list/manage spec-driven intelligence
 feeds conversationally.  "Keep me informed about X" -> the agent authors a
@@ -6,10 +6,10 @@ feed spec (YAML) and calls feed_create; when the spec names no destination,
 the feed is wired to deliver into the conversation the request came from.
 
 The plugin shells out to the feeds CLI so the framework can live in any
-python install.  Config (~/.colony-feeds.json):
+python install.  Config (~/.pacomind-feeds.json):
     {
       "python":      "/path/to/python3",          # with PyYAML available
-      "pythonpath":  "/path/to/ApsimoAGI/sidecar", # where apsimo lives
+      "pythonpath":  "/path/to/PacoMind/sidecar", # where pacomind lives
       "specs_dir":   "~/.hermes/data/feeds/_specs"
     }
 """
@@ -21,7 +21,7 @@ import subprocess
 
 logger = logging.getLogger("hermes.plugin.feeds_manage")
 
-_CFG_PATH = os.path.expanduser("~/.colony-feeds.json")
+_CFG_PATH = os.path.expanduser("~/.pacomind-feeds.json")
 _DEFAULTS = {
     "python": "python3",
     "pythonpath": "",
@@ -45,7 +45,7 @@ def _cli(*args, timeout=180):
     if cfg["pythonpath"]:
         env["PYTHONPATH"] = os.path.expanduser(cfg["pythonpath"])
     proc = subprocess.run(
-        [os.path.expanduser(cfg["python"]), "-m", "apsimo.feeds.cli", *args],
+        [os.path.expanduser(cfg["python"]), "-m", "pacomind.feeds.cli", *args],
         capture_output=True, text=True, timeout=timeout, env=env)
     out = (proc.stdout + ("\n" + proc.stderr if proc.stderr.strip() else "")).strip()
     return proc.returncode, out

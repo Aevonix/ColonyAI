@@ -1,4 +1,4 @@
-"""Tests for apsimo.router.tiers — provider presets and host config builds."""
+"""Tests for pacomind.router.tiers — provider presets and host config builds."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ import pytest
 # skip the whole file cleanly where it isn't installed.
 pytest.importorskip("litellm")
 
-from apsimo.router.tiers import (
+from pacomind.router.tiers import (
     ModelTier,
     TierConfig,
     _PROVIDER_PRESETS,

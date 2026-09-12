@@ -12,8 +12,8 @@ PLANNERS = ('engine', 'decomposer', 'inference', 'priority', 'queue_bridge', 're
 
 
 def isolated(tmp_path, code):
-    environment = {**os.environ, 'COLONY_STATE_DIR': str(tmp_path / 'state'),
-                   'COLONY_SKIP_DOTENV': '1', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
+    environment = {**os.environ, 'PACOMIND_STATE_DIR': str(tmp_path / 'state'),
+                   'PACOMIND_SKIP_DOTENV': '1', 'LITELLM_LOCAL_MODEL_COST_MAP': 'True',
                    'HOME': str(tmp_path), 'PYTHONDONTWRITEBYTECODE': '1'}
     result = subprocess.run([sys.executable, '-I', '-B', '-c',
         'import sys\nsys.path.insert(0, sys.argv[1])\n' + code,
@@ -23,30 +23,30 @@ def isolated(tmp_path, code):
     return result.stdout
 
 
-@pytest.mark.parametrize('entry', ('apsimo.api.routers.host', 'apsimo.server'))
+@pytest.mark.parametrize('entry', ('pacomind.api.routers.host', 'pacomind.server'))
 def test_actual_api_and_server_import_do_not_load_legacy_planner(tmp_path, entry):
     isolated(tmp_path, f'''
 import importlib
 entry = importlib.import_module({entry!r})
 assert entry is not None
-from apsimo.goals import Goal, GoalStore, GoalNotFoundError
-assert Goal.__module__ == 'apsimo.goals.models'
-assert GoalStore.__module__ == 'apsimo.goals.store'
-assert GoalNotFoundError.__module__ == 'apsimo.goals.store'
+from pacomind.goals import Goal, GoalStore, GoalNotFoundError
+assert Goal.__module__ == 'pacomind.goals.models'
+assert GoalStore.__module__ == 'pacomind.goals.store'
+assert GoalNotFoundError.__module__ == 'pacomind.goals.store'
 for name in {PLANNERS!r}:
-    assert 'apsimo.goals.' + name not in sys.modules, name
+    assert 'pacomind.goals.' + name not in sys.modules, name
 ''')
-    assert not (tmp_path / 'state' / 'colony-goals.db').exists()
+    assert not (tmp_path / 'state' / 'pacomind-goals.db').exists()
 
 
 def test_explicit_legacy_exports_retain_identity_and_durable_behavior(tmp_path):
     isolated(tmp_path, '''
 import importlib
 from pathlib import Path
-import apsimo.goals as goals
+import pacomind.goals as goals
 assert set(goals.__all__) <= set(dir(goals))
 for name, module in goals._PLANNER_EXPORTS.items():
-    assert getattr(goals, name) is getattr(importlib.import_module('apsimo.goals.' + module), name)
+    assert getattr(goals, name) is getattr(importlib.import_module('pacomind.goals.' + module), name)
 try:
     goals.NotARealGoalExport
 except AttributeError:

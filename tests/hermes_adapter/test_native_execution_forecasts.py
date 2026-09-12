@@ -35,7 +35,7 @@ import json,os,socket,sys,types,time,ast,inspect,logging
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,sys.argv[1])
-package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[2]];sys.modules['apsimo_hermes']=package
+package=types.ModuleType('pacomind_hermes');package.__path__=[sys.argv[2]];sys.modules['pacomind_hermes']=package
 def no_network(*a,**kw): raise AssertionError('No network in execution qualification')
 socket.socket.connect=no_network
 from hermes_cli import lifecycle
@@ -46,25 +46,25 @@ from agent.turn_api_request import _fire_pre_api_request_hook
 from agent.turn_response_intake import _fire_post_api_request_hook
 from agent.api_request_hooks import ApiRequestHooksMixin
 from agent import turn_finalizer
-from apsimo_hermes.executions import ExecutionObserver
-from apsimo.api.routers.executions import ExecutionObservation
-from apsimo.api.routers import host
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.executions import ExecutionRegistry
-from apsimo.self_model.expectations import ExpectationStore,ExpectationEngine
-from apsimo.self_model import execution_forecasts as forecasts
+from pacomind_hermes.executions import ExecutionObserver
+from pacomind.api.routers.executions import ExecutionObservation
+from pacomind.api.routers import host
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.executions import ExecutionRegistry
+from pacomind.self_model.expectations import ExpectationStore,ExpectationEngine
+from pacomind.self_model import execution_forecasts as forecasts
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions
-state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions
+state=Path(os.environ['PACOMIND_STATE_DIR']);state.mkdir()
 profile=Path(os.environ['HERMES_HOME']);profile.mkdir(exist_ok=True);(profile/'config.yaml').write_text('plugins: {enabled: []}\n')
 registry=ExecutionRegistry(TurnIdempotencyLedger(state/'turns.db'))
 host._expectations=ExpectationEngine(ExpectationStore(str(state/'expectations.db')))
 app=FastAPI()
 @app.middleware('http')
 async def authority(request,next_call):
- request.state.colony_authority=RequestAuthority(principal_id='fixture-host',credential_id='fixture',
+ request.state.pacomind_authority=RequestAuthority(principal_id='fixture-host',credential_id='fixture',
   scopes=frozenset({'turns:write','context:read'}),viewer_person_id='owner',person_ids=frozenset({'owner'}),
   audiences=frozenset({'viewer'}),authenticated=True)
  return await next_call(request)
@@ -97,7 +97,7 @@ if case=='truncated':
  agent._api_request_payload_for_hook=lambda kwargs:{'_truncated':True,'preview':'private truncated request'}
 manager=plugins.PluginManager()
 def capture_request(request,**kwargs):
- return observer.request_metadata({'request':request,'source':'colony'},**kwargs)
+ return observer.request_metadata({'request':request,'source':'pacomind'},**kwargs)
 manager._middleware['llm_request']=[capture_request]
 if case=='large_later_rewrite':
  manager._middleware['llm_request'].append(lambda request,**kw:
@@ -187,8 +187,8 @@ def test_actual_hermes_execution_callbacks(tmp_path, case):
         pytest.skip('Use qualified Hermes interpreter for native integration')
     root = Path(__file__).resolve().parents[2]
     env = {k:os.environ[k] for k in ('PATH','HOME','LANG') if k in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'hermes'),COLONY_STATE_DIR=str(tmp_path/'state'),
-        COLONY_OWNER_CONTACT_ID='owner',COLONY_EXPECTATIONS='on',COLONY_SKIP_DOTENV='1',
+    env.update(HERMES_HOME=str(tmp_path/'hermes'),PACOMIND_STATE_DIR=str(tmp_path/'state'),
+        PACOMIND_OWNER_CONTACT_ID='owner',PACOMIND_EXPECTATIONS='on',PACOMIND_SKIP_DOTENV='1',
         PYTHONDONTWRITEBYTECODE='1',PYTHON_DOTENV_DISABLED='1',HERMES_DISABLE_TELEMETRY='1',
         HERMES_DISABLE_LAZY_INSTALLS='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),str(root/'plugins/hermes-plugin'),case],

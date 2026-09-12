@@ -8,11 +8,11 @@ import pytest
 
 from datetime import datetime, timedelta, timezone
 
-from apsimo.task_queue.models import (
+from pacomind.task_queue.models import (
     Job, JobType, WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
-from apsimo.task_queue.worker import JobHandler, WorkerNode
+from pacomind.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.worker import JobHandler, WorkerNode
 
 
 class _EchoHandler(JobHandler):
@@ -324,7 +324,7 @@ async def test_worker_never_learns_from_semantic_failed_completion():
 @pytest.mark.asyncio
 async def test_worker_stop_cancels_and_closes_jobs_after_drain_timeout(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")
     handler = _BlockingHandler()

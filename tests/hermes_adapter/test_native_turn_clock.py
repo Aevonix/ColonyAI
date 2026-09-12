@@ -12,14 +12,14 @@ from pathlib import Path
 sys.path.insert(0,sys.argv[1])
 if sys.argv[2]:sys.path.insert(0,sys.argv[2])
 home=Path(os.environ['HERMES_HOME']);home.mkdir(exist_ok=True)
-(home/'config.yaml').write_text('plugins: {enabled: []}\nmemory: {provider: apsimo-memory}\n')
+(home/'config.yaml').write_text('plugins: {enabled: []}\nmemory: {provider: pacomind-memory}\n')
 def no_network(*args,**kwargs):raise AssertionError('Clock annotation must be local')
 socket.socket.connect=no_network;socket.create_connection=no_network
 from plugins.memory import load_memory_provider
 from hermes_cli.plugins import get_plugin_manager, invoke_hook
 from agent.turn_context import compose_user_api_content, substitute_api_content
 from hermes_state import SessionDB
-provider=load_memory_provider('apsimo-memory',register_skills=False)
+provider=load_memory_provider('pacomind-memory',register_skills=False)
 assert provider is not None
 assert len(get_plugin_manager()._hooks.get('pre_llm_call',[]))==1
 clocks=iter(('Monday, April 01, 2030, 9:00 AM UTC',
@@ -80,10 +80,10 @@ def test_native_clock_annotation_remains_historical_on_later_turns(artifacts, tm
     if not os.environ.get('AEVA_HERMES_TEST_PYTHON') and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Use qualified Hermes interpreter for native integration')
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'hermes'), COLONY_HERMES_HOME=str(tmp_path/'hermes'),
+    env.update(HERMES_HOME=str(tmp_path/'hermes'), PACOMIND_HERMES_HOME=str(tmp_path/'hermes'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
         HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
+        PACOMIND_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = run_python('-I', '-B', '-c', PROBE, artifacts[3],
         os.environ.get('HERMES_TEST_SOURCE', ''), cwd=tmp_path, env=env)
     assert '"two_turn_api_replay": true' in result.stdout

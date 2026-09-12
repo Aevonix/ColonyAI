@@ -9,7 +9,7 @@ import json
 
 import pytest
 
-from apsimo.turns.executions import request_work_context
+from pacomind.turns.executions import request_work_context
 
 
 def execution(number, *, parent=None, age=1, session=None):
@@ -43,7 +43,7 @@ def concurrent_view():
                     'result': {'report_sha256': 'a' * 64}}]},
             'native_kanban': {'available': True, 'items': [], 'total': 0, 'recent_total': 8,
                 'selection': 'configured_boards', 'partial': False,
-                'boards': [{'board': board, 'available': True} for board in ('default', 'colony-drafts')],
+                'boards': [{'board': board, 'available': True} for board in ('default', 'pacomind-drafts')],
                 'recent': [{'native_task_id': 'old-board-task', 'label': 'Previous inventory review',
                     'status': 'done', 'liveness': 'native_terminal_record'}]},
             'reported_worker': {'available': True, 'items': [
@@ -177,7 +177,7 @@ def test_terminal_task_outcome_precedes_unrelated_expired_execution(same_session
 
 
 def test_expired_phase_is_historical_in_both_contexts_without_inventing_completion():
-    from apsimo.turns.executions import format_view
+    from pacomind.turns.executions import format_view
 
     stale = execution(2, age=500)
     view = {'items': [stale], 'total': 1, 'truncated': False}

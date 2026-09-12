@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from apsimo.turns.source_read import read
+from pacomind.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 from test_source_media import image_bytes, message
 
@@ -47,7 +47,7 @@ def image_runtime(runtime):
     rt.current = current
     rt.middleware.observe(rt.scope, [current], user_message=current['content'])
     stamp = json.dumps({'contact_id': 'owner', 'watermark': 0, 'sources': [rt.ref]})
-    current['api_content'] = current['content'] + '\n\n<memory-context>\n[colony-recall-v1 ' + stamp + ']\n' + rt.asset + '\n[/colony-recall-v1]\n</memory-context>'
+    current['api_content'] = current['content'] + '\n\n<memory-context>\n[pacomind-recall-v1 ' + stamp + ']\n' + rt.asset + '\n[/pacomind-recall-v1]\n</memory-context>'
     rt.wire = {'role': 'user', 'content': current['api_content']}
     rt.middleware({'messages': [rt.wire]}, rt.scope)
     helper = importlib.import_module(rt.module.__package__ + '.source_read')
@@ -65,7 +65,7 @@ def request(rt, shape):
                        {'type': 'input_image', 'image_url': image['image_url']['url']}]}]}
     if shape == 'anthropic':
         return {'messages': [rt.wire, {'role': 'assistant', 'content': [{'type': 'tool_use',
-            'id': 'actual-image', 'name': 'colony_memory_read_source', 'input': {
+            'id': 'actual-image', 'name': 'pacomind_memory_read_source', 'input': {
                 **rt.ref, 'view': 'image', 'asset_hash': rt.asset}}]},
             {'role': 'user', 'content': [{'type': 'tool_result',
             'tool_use_id': 'actual-image', 'content': [text, {'type': 'image', 'source': {
@@ -90,7 +90,7 @@ def test_original_parts_verified_on_each_request_then_withheld_when_stale(image_
             **rt.ref, excerpt='Please retain this reference image.', correction='This is a diagram, not a photograph.',
             author_principal='operator')
     elif change == 'attribution':
-        from apsimo.turns.source_attribution import correct
+        from pacomind.turns.source_attribution import correct
         correct(rt.ledger, operation_id='identity-correction', performed_by='operator', old_contact_id='owner',
                 contact_id='actual-person', source_ids=['image'], evidence_refs=['owner-confirmation'])
     else:

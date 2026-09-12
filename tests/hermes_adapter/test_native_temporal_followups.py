@@ -15,22 +15,22 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
 if len(sys.argv)>4 and sys.argv[4]:sys.path.insert(0,sys.argv[4])
-package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[2]];sys.modules['apsimo_hermes']=package
+package=types.ModuleType('pacomind_hermes');package.__path__=[sys.argv[2]];sys.modules['pacomind_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native followup qualification')
 socket.socket.connect=no_network
 from hermes_cli import kanban_db as kb
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import temporal_followups,host
-from apsimo.commitments.store import CommitmentStore
-from apsimo.commitments.work import CommitmentWork
-from apsimo.initiatives.temporal_followup import TemporalFollowups
-from apsimo.turns import get_turn_idempotency_ledger
-from apsimo_hermes.initiative_work import NativeFollowups
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import temporal_followups,host
+from pacomind.commitments.store import CommitmentStore
+from pacomind.commitments.work import CommitmentWork
+from pacomind.initiatives.temporal_followup import TemporalFollowups
+from pacomind.turns import get_turn_idempotency_ledger
+from pacomind_hermes.initiative_work import NativeFollowups
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
 (root/'config.yaml').write_text('plugins: {enabled: []}\n')
-state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
+state=Path(os.environ['PACOMIND_STATE_DIR']);state.mkdir()
 store=CommitmentStore(state/'commitments.db');host._commitment_store=store
 waiting=TemporalFollowups(store)
 source_ledger=get_turn_idempotency_ledger(state)
@@ -38,7 +38,7 @@ app=FastAPI()
 @app.middleware('http')
 async def authority(request,next_call):
  person=request.headers.get('fixture-person','owner')
- request.state.colony_authority=RequestAuthority(principal_id='fixture-native',credential_id='fixture',
+ request.state.pacomind_authority=RequestAuthority(principal_id='fixture-native',credential_id='fixture',
      scopes=frozenset({'turns:write','context:read'}),viewer_person_id=person,person_ids=frozenset({person}),
      audiences=frozenset({'viewer'}),authenticated=True)
  return await next_call(request)
@@ -81,7 +81,7 @@ def seed_historical_task(identifier, client=None):
  review=value['review']
  with kb.connect(board='default') as db:
   tid=kb.create_task(db,title=review['title'],body=review['body'],assignee='default',
-      created_by='colony-followup',tenant='owner',idempotency_key='colony-followup:'+identifier,
+      created_by='pacomind-followup',tenant='owner',idempotency_key='pacomind-followup:'+identifier,
       workspace_kind='scratch',initial_status='blocked',goal_mode=True,goal_max_turns=4,
       max_runtime_seconds=480,max_retries=1)
  response=(client or clients[0]).post(base+'/'+identifier+'/native-task',json={
@@ -149,7 +149,7 @@ try:seed_historical_task(third,LostAck())
 except RuntimeError:pass
 else:raise AssertionError('missing lost ACK')
 with kb.connect(board='default') as db:
- row=db.execute('SELECT id FROM tasks WHERE idempotency_key=?',('colony-followup:'+third,)).fetchone()
+ row=db.execute('SELECT id FROM tasks WHERE idempotency_key=?',('pacomind-followup:'+third,)).fetchone()
  assert kb.get_task(db,row['id']).status=='blocked'
 recovered=reviews[1].work(third)
 with kb.connect(board='default') as db:
@@ -190,13 +190,13 @@ def test_actual_native_reply_wait_lifecycle(tmp_path):
     root = Path(__file__).resolve().parents[2]
     env = {key:os.environ[key] for key in ('PATH','HOME','LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path/'hermes'),HERMES_KANBAN_HOME=str(tmp_path/'hermes'),
-        COLONY_HERMES_HOME=str(tmp_path/'hermes'),COLONY_HERMES_WORK_BOARDS='["default"]',
-        COLONY_STATE_DIR=str(tmp_path/'state'),COLONY_OWNER_CONTACT_ID='owner',
+        PACOMIND_HERMES_HOME=str(tmp_path/'hermes'),PACOMIND_HERMES_WORK_BOARDS='["default"]',
+        PACOMIND_STATE_DIR=str(tmp_path/'state'),PACOMIND_OWNER_CONTACT_ID='owner',
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),PYTHONDONTWRITEBYTECODE='1',
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
+        PACOMIND_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-        str(root/'plugins/hermes-plugin'),os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),
+        str(root/'plugins/hermes-plugin'),os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH',''),
         os.environ.get('AEVA_HERMES_TEST_SOURCE','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode == 0,result.stdout+result.stderr

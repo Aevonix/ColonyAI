@@ -23,8 +23,8 @@ home = Path(os.environ["HERMES_HOME"])
 home.mkdir(mode=0o700)
 Path(os.environ["HERMES_BUNDLED_PLUGINS"]).mkdir()
 config = {
-    "plugins": {"enabled": ["apsimo"], "apsimo": {"owner_contact_id": "test-owner"}},
-    "memory": {"provider": "apsimo-memory", "config": {"contact_id": "test-owner"}},
+    "plugins": {"enabled": ["pacomind"], "pacomind": {"owner_contact_id": "test-owner"}},
+    "memory": {"provider": "pacomind-memory", "config": {"contact_id": "test-owner"}},
 }
 (home / "config.yaml").write_text(json.dumps(config))
 def offline(*args, **kwargs):
@@ -39,13 +39,13 @@ from agent.conversation_compression import (
     compress_context, CompressionCheckpointUnavailable,
     _direct_messages_for_pre_compress_memory,
 )
-from apsimo_hermes.client import TurnOutbox
-from apsimo_hermes import evidence
+from pacomind_hermes.client import TurnOutbox
+from pacomind_hermes import evidence
 
 plugins = get_plugin_manager()
 plugins.discover_and_load()
-assert plugins._plugins["apsimo"].enabled
-provider = load_memory_provider("apsimo-memory")
+assert plugins._plugins["pacomind"].enabled
+provider = load_memory_provider("pacomind-memory")
 manager = MemoryManager()
 manager.add_provider(provider)
 manager.initialize_all("session-a", hermes_home=str(home))
@@ -66,7 +66,7 @@ manager.on_pre_compress(
 )
 assert raw == original
 assert provider.get_diagnostics()["checkpoint"]["state"] == "pending"
-path = home / "state" / "colony-turn-outbox.sqlite3"
+path = home / "state" / "pacomind-turn-outbox.sqlite3"
 outbox = TurnOutbox(path)
 rows = outbox.snapshot()
 assert len(rows) == 1
@@ -130,19 +130,19 @@ import httpx
 def accepted(self, route, **kwargs):
     wire.append((route, kwargs["json"]))
     return httpx.Response(201, json={"accepted": True, "source_recorded": True}, request=httpx.Request("PUT", "http://test" + route))
-client = evidence.ColonyClient(url="http://127.0.0.1:7777", api_key="")
+client = evidence.PacoMindClient(url="http://127.0.0.1:7777", api_key="")
 erasure_checks = []
 def erasure_feed(self, route, **kwargs):
     erasure_checks.append(kwargs["params"])
     return httpx.Response(200, json={"contact_id": "test-owner", "head": 0, "through": 0, "events": [], "complete": True}, request=httpx.Request("GET", "http://test" + route))
-evidence.ColonyClient.get = erasure_feed
+evidence.PacoMindClient.get = erasure_feed
 deliver = lambda payload, *, timeout_seconds: client.sync_turn(**payload, outbox=outbox, timeout_seconds=timeout_seconds)
 # An old sidecar can ignore additive fields and say accepted; that response
 # must not discard the only source copy during a rolling upgrade.
-evidence.ColonyClient.put = lambda *a, **k: httpx.Response(200, json={"accepted": True}, request=httpx.Request("PUT", "http://test"))
+evidence.PacoMindClient.put = lambda *a, **k: httpx.Response(200, json={"accepted": True}, request=httpx.Request("PUT", "http://test"))
 assert TurnOutbox(path).drain(deliver, timeout_seconds=1) == 0
 assert all(row["state"] == "pending" for row in TurnOutbox(path).snapshot())
-evidence.ColonyClient.put = accepted
+evidence.PacoMindClient.put = accepted
 # Delivery is bounded per pass, not guaranteed to empty the queue in one
 # second on a shared runner. Preserve the real retry/lease behavior and check
 # eventual delivery after restart instead of asserting host filesystem speed.
@@ -202,7 +202,7 @@ assert any(body.get("user_message", {}).get("content") == parts for _, body in w
 # A repeated erased question must not strand its new safe assistant answer.
 # Exercise real native plugin hooks and the actual source-survivor serializer;
 # only HTTP responses are controlled, with no model or external service.
-from apsimo_hermes.client import source_message_hash
+from pacomind_hermes.client import source_message_hash
 from urllib.parse import quote
 question = "Can you recover the workshop details I asked you to forget?"
 safe_reply = "Those details are unavailable. Please provide them again."
@@ -210,7 +210,7 @@ event = {"sequence": 1, "turn_id": "erased-answer", "session_id": "session-survi
          "message_hashes": [source_message_hash("session-survivor", {"role": "user", "content": question})]}
 page = {"contact_id": "test-owner", "head": 1, "through": 1, "events": [event], "complete": True}
 outbox.apply_erasure_page("test-owner", page)
-evidence.ColonyClient.get = lambda *a, **kw: httpx.Response(
+evidence.PacoMindClient.get = lambda *a, **kw: httpx.Response(
     200, json=page, request=httpx.Request("GET", "http://test"))
 wire_before = len(wire)
 plugins.invoke_hook("pre_llm_call", session_id="session-survivor", task_id="task-survivor",
@@ -264,10 +264,10 @@ def test_native_checkpoint_and_full_turn_capture(artifacts, tmp_path):
     env.update({
         "HERMES_HOME": str(tmp_path / "profile"),
         "HERMES_BUNDLED_PLUGINS": str(tmp_path / "bundled"),
-        "COLONY_GENERAL_PLUGIN_ACTIVE": "1",
-        "COLONY_MEMORY_WORKER_TOOLS": "0",
-        "COLONY_MEMORY_TURN_WRITER": "disabled",
-        "COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY": "owner_system",
+        "PACOMIND_GENERAL_PLUGIN_ACTIVE": "1",
+        "PACOMIND_MEMORY_WORKER_TOOLS": "0",
+        "PACOMIND_MEMORY_TURN_WRITER": "disabled",
+        "PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY": "owner_system",
     })
     result = subprocess.run(
         [sys.executable, "-I", "-c", PROBE, str(artifacts[3])],

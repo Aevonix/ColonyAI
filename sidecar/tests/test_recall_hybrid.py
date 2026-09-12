@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apsimo.memory.recall import (
+from pacomind.memory.recall import (
     calibration_fingerprint, render_memory_context,
 )
-from apsimo.intelligence.graph.queries import lexical_query
+from pacomind.intelligence.graph.queries import lexical_query
 from test_recall_ranking import RecallFixture, _Hit, _node
 from test_recall_rerank import _RecordingReranker
 
@@ -15,15 +15,15 @@ def calibrated(monkeypatch, fixture, reranker, threshold=.8):
     metadata = {"provider": "fixture", "model": "neutral-reranker", "format": "v1",
                 "weights_revision": "unverified"}
     fixture.graph.set_rerank_fn(reranker.rerank, calibration_metadata=lambda: metadata)
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_RERANK_MIN_SCORE", str(threshold))
-    monkeypatch.setenv("COLONY_RECALL_RERANK_CALIBRATION", calibration_fingerprint(metadata))
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK_MIN_SCORE", str(threshold))
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK_CALIBRATION", calibration_fingerprint(metadata))
     return metadata
 
 
 @pytest.mark.asyncio
 async def test_hybrid_finds_new_source_before_vector_index_catches_up(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_HYBRID", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_HYBRID", "on")
     fixture = RecallFixture([_Hit("old", .9)], [_node("old", state="superseded")])
     fresh = _node("fresh", confidence=.95, relevance=12.0, source_uri="synthetic:correction")
     fixture.graph._recall_lexical = AsyncMock(return_value=[fresh])
@@ -72,9 +72,9 @@ async def test_model_change_invalidates_old_abstention_calibration(monkeypatch, 
 async def test_threshold_without_calibration_is_not_assumed_portable(monkeypatch):
     fixture = RecallFixture([_Hit("a", .9)], [_node("a", confidence=.9)])
     fixture.graph.set_rerank_fn(_RecordingReranker(scores={0: .01}).rerank)
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_RERANK_MIN_SCORE", ".8")
-    monkeypatch.delenv("COLONY_RECALL_RERANK_CALIBRATION", raising=False)
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK_MIN_SCORE", ".8")
+    monkeypatch.delenv("PACOMIND_RECALL_RERANK_CALIBRATION", raising=False)
     rows = await fixture.recall("q", limit=5)
     assert rows[0]["rerank_calibration"] == "unverified"
 

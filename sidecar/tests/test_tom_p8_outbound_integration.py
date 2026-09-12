@@ -9,12 +9,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.autonomy.config import AutonomyConfig
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.api.routers import host
-from apsimo.server import _attach_p8_runtime
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.visibility import content_digest
+from pacomind.autonomy.config import AutonomyConfig
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.api.routers import host
+from pacomind.server import _attach_p8_runtime
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.visibility import content_digest
 
 
 def _now() -> datetime:
@@ -81,8 +81,8 @@ def _loop(runtime, *, delivery_shadow=True):
 def test_shadow_delivery_samples_before_evaluation_and_never_sends(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     viewer = runtime.internal_recipient_viewer("alice", surface="whatsapp")
@@ -116,7 +116,7 @@ def test_shadow_delivery_samples_before_evaluation_and_never_sends(
 def test_realtime_surface_is_not_observed_or_awaited(
     tmp_path, monkeypatch, surface,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     result = runtime.observe_outbound_payload(
@@ -136,7 +136,7 @@ def test_failed_evaluation_leaves_truthful_sample_and_incomplete_coverage(
         def simulate(self, *_args, **_kwargs):
             raise RuntimeError("simulation unavailable")
 
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     runtime._simulator = BrokenSimulator()
@@ -157,8 +157,8 @@ def test_failed_evaluation_leaves_truthful_sample_and_incomplete_coverage(
 def test_outbound_simulator_excludes_below_floor_fact_refs(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_P8_FACT_MIN_CONFIDENCE", "0.5")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_P8_FACT_MIN_CONFIDENCE", "0.5")
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     viewer = runtime.internal_recipient_viewer(
@@ -185,7 +185,7 @@ def test_shadow_observer_failure_never_changes_delivery_result(monkeypatch):
         def observe_outbound_payload(self, *_args, **_kwargs):
             raise RuntimeError("audit unavailable")
 
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     delivery = FakeDelivery()
     loop = _loop(BrokenObserver(), delivery_shadow=True)
     ok = asyncio.run(loop._route_reachout_delivery(_payload(), delivery))
@@ -209,8 +209,8 @@ def test_non_shadow_existing_send_does_not_take_authority_from_p8(monkeypatch):
                 },
             }
 
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "alice")
-    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "alice")
+    monkeypatch.delenv("PACOMIND_DELIVERY_TRANSPORT", raising=False)
     observer = HoldObserver()
     delivery = FakeDelivery()
     loop = _loop(observer, delivery_shadow=False)
@@ -241,8 +241,8 @@ def test_shadow_observer_cannot_mutate_live_content_or_recipient(monkeypatch):
                 (platform, chat_id, message, source, delivery_id, source_id))
             return True
 
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "alice")
-    monkeypatch.setenv("COLONY_DELIVERY_TRANSPORT", "gateway")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "alice")
+    monkeypatch.setenv("PACOMIND_DELIVERY_TRANSPORT", "gateway")
     observer = MutatingHoldObserver()
     delivery = GatewayDelivery()
     payload = _payload(fact_refs=("fact:original",))
@@ -266,9 +266,9 @@ def test_shadow_observer_cannot_mutate_live_content_or_recipient(monkeypatch):
 def test_oversize_draft_samples_exact_text_and_stays_incomplete(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "alice")
-    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "alice")
+    monkeypatch.delenv("PACOMIND_DELIVERY_TRANSPORT", raising=False)
     facts = SharedFactsStore(str(tmp_path / "facts.db"))
     runtime = _attach_p8_runtime(state_dir=tmp_path, facts_store=facts)
     delivery = FakeDelivery()

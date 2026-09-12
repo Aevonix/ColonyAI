@@ -7,11 +7,11 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.directives import DirectiveManager, DirectiveStore
-from apsimo.projects import (
+from pacomind.directives import DirectiveManager, DirectiveStore
+from pacomind.projects import (
     Project, ProjectEngine, ProjectStore, Step, plan_project, validate_steps,
 )
-from apsimo.proposals import ProposalStore
+from pacomind.proposals import ProposalStore
 
 
 class FakeRouter:
@@ -130,8 +130,8 @@ def test_due_for_review_filters():
 
 def _engine(monkeypatch, router=None, dm=None, deliver=None,
             proposals=None, mode="shadow"):
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", mode)
-    monkeypatch.setenv("COLONY_PROJECTS_REVIEW_SECS", "30")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", mode)
+    monkeypatch.setenv("PACOMIND_PROJECTS_REVIEW_SECS", "30")
     return ProjectEngine(
         ProjectStore(),
         directive_manager=dm,
@@ -161,7 +161,7 @@ async def test_shadow_plans_and_simulates_full_sequence(monkeypatch):
     assert steps[0].status == "skipped" and "SHADOW" in steps[0].result
 
     # advance the remaining steps (review timer respected via monkeypatched 0)
-    monkeypatch.setenv("COLONY_PROJECTS_REVIEW_SECS", "30")
+    monkeypatch.setenv("PACOMIND_PROJECTS_REVIEW_SECS", "30")
     p = engine.store.get_project(project.id)
     for _ in range(4):
         p.next_review_at = 0.0
@@ -212,7 +212,7 @@ async def test_skipped_work_order_never_records_competence_success(monkeypatch):
         def record(self, domain, outcome, **kwargs):
             self.outcomes.append((domain, outcome, kwargs))
 
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     store = ProjectStore()
     model = RecordingSelfModel()
     engine = ProjectEngine(store, work_order_adapter=SkipAdapter(), self_model=model)
@@ -259,8 +259,8 @@ async def test_boundary_blocked_step_blocks_project(monkeypatch):
 async def test_owner_goal_negated_boundary_constraint_does_not_self_block(
     monkeypatch,
 ):
-    from apsimo.directives import Directive, Polarity
-    from apsimo.directives.models import Level
+    from pacomind.directives import Directive, Polarity
+    from pacomind.directives.models import Level
 
     class RecordingAdapter:
         def __init__(self):
@@ -275,7 +275,7 @@ async def test_owner_goal_negated_boundary_constraint_does_not_self_block(
         subject="contact anyone or change external systems",
         polarity=Polarity.PROHIBIT,
         raw_text=(
-            "Goal: verify Colony cognition is live with a read-only internal "
+            "Goal: verify PacoMind cognition is live with a read-only internal "
             "plan; do not contact anyone or change external systems"
         ),
         # Reproduce the already-persisted live row.  New extraction is tested
@@ -284,11 +284,11 @@ async def test_owner_goal_negated_boundary_constraint_does_not_self_block(
     ))
     dm = DirectiveManager(directives)
     objective = (
-        "verify Colony cognition is live with a read-only internal plan; "
+        "verify PacoMind cognition is live with a read-only internal plan; "
         "do not contact anyone or change external systems"
     )
     adapter = RecordingAdapter()
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     store = ProjectStore()
     engine = ProjectEngine(
         store,
@@ -410,7 +410,7 @@ async def test_step_boundary_outage_blocks_without_dispatch(monkeypatch):
             return True, "should not execute"
 
     adapter = RecordingAdapter()
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     store = ProjectStore()
     engine = ProjectEngine(
         store,
@@ -448,7 +448,7 @@ def test_project_tool_boundary_outage_filters_every_call(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_replan_on_failure_bounded(monkeypatch):
-    monkeypatch.setenv("COLONY_PROJECTS_MAX_REPLANS", "1")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MAX_REPLANS", "1")
     # replanner returns nothing usable -> replan produces no steps
     engine = _engine(monkeypatch, router=FakeRouter("[]"))
     p = Project(title="t", objective="o", status="active")
@@ -464,7 +464,7 @@ async def test_replan_on_failure_bounded(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_planning_failure_eventually_abandons(monkeypatch):
-    monkeypatch.setenv("COLONY_PROJECTS_MAX_REPLANS", "0")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MAX_REPLANS", "0")
     engine = _engine(monkeypatch, router=FakeRouter("garbage"))
     project, _ = engine.create_project("do something useful")
     await engine.tick()
@@ -484,10 +484,10 @@ async def test_off_mode_does_nothing(monkeypatch):
 async def test_trust_graduation_lifts_shadow(monkeypatch):
     """Env shadow is a calibration stage: a graduated trust domain makes the
     engine pursue for real (Amendment 1.2)."""
-    from apsimo.self_model import (
+    from pacomind.self_model import (
         ActionJournal, CompetenceStore, SelfModel, TrustEngine,
     )
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "shadow")
     store = CompetenceStore()
     trust = TrustEngine(store, journal=ActionJournal())
     sm = SelfModel(store, trust=trust)
@@ -496,7 +496,7 @@ async def test_trust_graduation_lifts_shadow(monkeypatch):
     assert engine._effective_mode() == "shadow"
     trust.set_stage("project", "ask_first", notify=False)
     assert engine._effective_mode() == "live"
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "off")   # owner override wins
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "off")   # owner override wins
     assert engine._effective_mode() == "off"
 
 

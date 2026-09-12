@@ -4,12 +4,12 @@ from datetime import datetime, timedelta, timezone
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.commitments.store import CommitmentStore
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.media import SourceMedia
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.commitments.store import CommitmentStore
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.media import SourceMedia
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_claim_projection import Model, claim
 from test_source_media import message as image_message
@@ -42,8 +42,8 @@ def context(person, query, session="second-session"):
 async def test_guest_http_capture_claim_media_and_commitment_recall_without_p8(
     source_app, tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     principals = []
     for person in ("guest-a", "guest-b", "owner"):
         principal = _principal(principal=person, secret="fixture-" + person, viewer=person)
@@ -105,9 +105,9 @@ async def test_guest_http_capture_claim_media_and_commitment_recall_without_p8(
         response = await client.post("/v1/host/context/assemble", json=context("guest-a", "office"), headers=headers("guest-a"))
         assert response.status_code == 200, response.text
         sections = {row["id"]: row["body"] for row in response.json()["sections"]}
-        assert "source_assertion" in sections["colony-memory"] and "River" in sections["colony-memory"]
-        assert own["id"] in sections["colony-commitments"] and "Prepare the office handout" in sections["colony-commitments"]
-        assert set(sections) == {"temporal-context", "colony-memory", "colony-commitments"}
+        assert "source_assertion" in sections["pacomind-memory"] and "River" in sections["pacomind-memory"]
+        assert own["id"] in sections["pacomind-commitments"] and "Prepare the office handout" in sections["pacomind-commitments"]
+        assert set(sections) == {"temporal-context", "pacomind-memory", "pacomind-commitments"}
         assert not any(secret in response.text for secret in ("owner-secret", "other-guest-secret", "mixed-speaker-secret", "owner-private", "invented link"))
         assert "omitted" in response.json()["notices"][0]
 
@@ -121,14 +121,14 @@ async def test_guest_http_capture_claim_media_and_commitment_recall_without_p8(
         assert missing.status_code == 401
         assert private.calls == []
 
-        monkeypatch.setenv("COLONY_RECALL_CONTEXT_MAX_CHARS", "80")
+        monkeypatch.setenv("PACOMIND_RECALL_CONTEXT_MAX_CHARS", "80")
         small = await client.post("/v1/host/context/assemble", json=context("guest-a", "office"), headers=headers("guest-a"))
         assert small.status_code == 200
-        assert all(len(row["body"]) <= 80 for row in small.json()["sections"] if row["id"] == "colony-memory")
+        assert all(len(row["body"]) <= 80 for row in small.json()["sections"] if row["id"] == "pacomind-memory")
         assert private.calls == []
 
         ledger.erase_sources(contact_id="guest-a", turn_ids=["turn-guest-a"])
         erased = await client.post("/v1/host/context/assemble", json=context("guest-a", "office"), headers=headers("guest-a"))
         assert erased.status_code == 200
-        assert "colony-commitments" not in erased.text and "River" not in erased.text
+        assert "pacomind-commitments" not in erased.text and "River" not in erased.text
         assert private.calls == []

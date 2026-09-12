@@ -6,14 +6,14 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apsimo.tom.arcs import ArcEventV1, ArcStore
-from apsimo.tom.recipient_simulator import (
+from pacomind.tom.arcs import ArcEventV1, ArcStore
+from pacomind.tom.recipient_simulator import (
     FAIL_BEHAVIOR_BY_RISK,
     RecipientSimulationRequestV1,
     RecipientSimulator,
     recipient_simulator_mode,
 )
-from apsimo.tom.visibility import (
+from pacomind.tom.visibility import (
     FactCandidateV1,
     FactVisibilityV1,
     ViewerContextV1,
@@ -99,14 +99,14 @@ def _arc_store(tmp_path):
 
 
 def test_mode_defaults_off_and_invalid_is_off(monkeypatch):
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
     assert recipient_simulator_mode() == "off"
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "surprise")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "surprise")
     assert recipient_simulator_mode() == "off"
 
 
 def test_off_mode_does_not_touch_dependencies_or_create_effect(monkeypatch):
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
 
     class ExplodingArcs:
         def project_active(self, *args, **kwargs):
@@ -125,7 +125,7 @@ def test_off_mode_does_not_touch_dependencies_or_create_effect(monkeypatch):
 def test_shadow_uses_only_authorized_facts_and_flags_cross_person_ref(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     allowed = _fact("fact:alice", "Alice approved the launch update")
     denied = _fact("fact:bob", "Bob's private medical diagnosis", viewer="bob")
     simulator = RecipientSimulator(arc_store=_arc_store(tmp_path))
@@ -147,7 +147,7 @@ def test_shadow_uses_only_authorized_facts_and_flags_cross_person_ref(
 
 
 def test_stale_and_unknown_facts_fail_closed(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     stale = _fact("fact:stale", "stale update", fresh=False)
     result = RecipientSimulator(arc_store=ArcStore(
         str(tmp_path / "arcs.db"))).simulate(
@@ -162,7 +162,7 @@ def test_stale_and_unknown_facts_fail_closed(tmp_path, monkeypatch):
 
 
 def test_active_stress_arc_produces_structured_repair(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "live")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "live")
     result = RecipientSimulator(arc_store=_arc_store(tmp_path)).simulate(
         _request(
             draft="URGENT: you must finish the launch deadline now.",
@@ -185,7 +185,7 @@ def test_active_stress_arc_produces_structured_repair(tmp_path, monkeypatch):
 def test_dependency_failure_behavior_is_explicit_per_risk(
     risk_class, expected, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "live")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "live")
 
     class BrokenArcs:
         def project_active(self, *args, **kwargs):
@@ -206,7 +206,7 @@ def test_dependency_failure_behavior_is_explicit_per_risk(
 def test_unknown_recipient_never_receives_fact_or_arc_projection(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     unknown = _viewer("", attested=False)
     result = RecipientSimulator(arc_store=_arc_store(tmp_path)).simulate(
         _request(recipient=unknown),
@@ -230,7 +230,7 @@ def test_unknown_recipient_never_receives_fact_or_arc_projection(
 def test_realtime_voice_surfaces_are_async_observation_only(
     surface, tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "live")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "live")
     result = RecipientSimulator(arc_store=_arc_store(tmp_path)).simulate(
         _request(
             surface=surface, refs=("fact:bob",), risk_class="critical"),
@@ -247,7 +247,7 @@ def test_realtime_voice_surfaces_are_async_observation_only(
 def test_text_surfaces_are_not_misclassified_as_realtime_voice(
     surface, tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "live")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "live")
     result = RecipientSimulator(arc_store=ArcStore(
         str(tmp_path / f"{surface}.db"))).simulate(
             _request(surface=surface, high_salience=False),
@@ -263,7 +263,7 @@ def test_text_surfaces_are_not_misclassified_as_realtime_voice(
 def test_replay_is_deterministic_and_simulation_has_no_store_effect(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     store = _arc_store(tmp_path)
     before = store.event_count()
     simulator = RecipientSimulator(arc_store=store)
@@ -281,7 +281,7 @@ def test_replay_is_deterministic_and_simulation_has_no_store_effect(
 def test_high_salience_message_without_fact_refs_is_unknown_provenance(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", "shadow")
     result = RecipientSimulator(
         arc_store=ArcStore(str(tmp_path / "arcs.db"))).simulate(
             _request(refs=(), high_salience=True),

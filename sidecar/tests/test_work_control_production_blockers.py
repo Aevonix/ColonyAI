@@ -12,41 +12,41 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.authority import required_scope
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import task_queue as queue_router
-from apsimo.task_queue.action_receipts import (
+from pacomind.api.authority import required_scope
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import task_queue as queue_router
+from pacomind.task_queue.action_receipts import (
     ActionReceiptAttestationV1,
 )
-from apsimo.task_queue.contract import queue_contract_identity
-from apsimo.task_queue.handlers.registry import build_default_handlers
-from apsimo.task_queue.models import (
+from pacomind.task_queue.contract import queue_contract_identity
+from pacomind.task_queue.handlers.registry import build_default_handlers
+from pacomind.task_queue.models import (
     Job,
     JobResult,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import QueueManager
-from apsimo.task_queue.work_control import (
+from pacomind.task_queue.queue_manager import QueueManager
+from pacomind.task_queue.work_control import (
     WorkControlError,
     interrupt_capability,
     steer_capability,
 )
-from apsimo.task_queue.worker import JobHandler, WorkerNode
-from apsimo.work_orders import WorkOrderV1
+from pacomind.task_queue.worker import JobHandler, WorkerNode
+from pacomind.work_orders import WorkOrderV1
 
 
 @pytest.fixture(autouse=True)
 def _control_environment(monkeypatch):
-    monkeypatch.setenv("COLONY_WORK_CONTROL_MODE", "live")
-    monkeypatch.setenv("COLONY_WORK_CONTROL_ACK_TIMEOUT_SECS", "30")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "true")
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_RELEASE_COMMIT", "a" * 40)
+    monkeypatch.setenv("PACOMIND_WORK_CONTROL_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORK_CONTROL_ACK_TIMEOUT_SECS", "30")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_RELEASE_COMMIT", "a" * 40)
     monkeypatch.setenv(
-        "COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256", "b" * 64,
+        "PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256", "b" * 64,
     )
 
 
@@ -1040,7 +1040,7 @@ async def test_old_not_applied_job_survives_until_retry_is_consumed(
 async def test_old_applied_job_waits_for_semantic_attestation_before_prune(
     queue, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "worker-1")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "worker-1")
     monkeypatch.setattr(
         QueueManager,
         "_server_approval_provenance_valid",
@@ -1413,7 +1413,7 @@ async def test_verified_applied_closes_ambiguity_without_claiming_success(queue)
 async def test_verified_applied_remains_compatible_with_current_attesters(
     queue, monkeypatch, attester_kind,
 ):
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "worker-1")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "worker-1")
     monkeypatch.setattr(
         QueueManager,
         "_server_approval_provenance_valid",
@@ -1595,14 +1595,14 @@ def test_work_control_capabilities_are_rebuilt_from_final_handler_map(
         for value in safe._capabilities.capabilities
     )
 
-    # Colony's bundled production handlers opt in to neither control. A host
+    # PacoMind's bundled production handlers opt in to neither control. A host
     # adapter must supply the exact per-handler semantics; live mode alone is
     # never an active-controls claim.
     bundled = WorkerNode(
-        "colony-bundled",
+        "pacomind-bundled",
         object(),
         handlers=build_default_handlers(),
-        capabilities=WorkerCapabilities(node_id="colony-bundled"),
+        capabilities=WorkerCapabilities(node_id="pacomind-bundled"),
     )
     assert not any(
         value.startswith("work_control:")
@@ -1610,12 +1610,12 @@ def test_work_control_capabilities_are_rebuilt_from_final_handler_map(
     )
     contract = queue_contract_identity()["work_control"]
     assert contract["bundled_production_handler_opt_ins"] == []
-    assert contract["colony_supplies_host_control_adapter"] is False
+    assert contract["pacomind_supplies_host_control_adapter"] is False
     assert contract["active_control_posture"] == (
         "inactive_until_host_adapter_registers_exact_handler_semantics"
     )
 
-    monkeypatch.setenv("COLONY_WORK_CONTROL_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORK_CONTROL_MODE", "off")
     disabled = WorkerNode(
         "worker-3",
         object(),
@@ -1653,7 +1653,7 @@ async def test_live_pending_control_is_terminalized_on_off_restart(
     )[0]
     await live.stop()
 
-    monkeypatch.setenv("COLONY_WORK_CONTROL_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORK_CONTROL_MODE", "off")
     inactive = QueueManager(path)
     await inactive.start()
     handler = _IdempotentSteerHandler()
@@ -1698,7 +1698,7 @@ async def test_live_pending_control_is_terminalized_on_off_restart(
         assert response.status_code == 200
         assert response.json() == []
 
-        monkeypatch.setenv("COLONY_WORK_CONTROL_MODE", "live")
+        monkeypatch.setenv("PACOMIND_WORK_CONTROL_MODE", "live")
         assert await inactive.work_control.pending_for_worker("worker-1") == []
         replay = await inactive.work_control.receipt(
             claimed.job_id, "off-restart-steer",
@@ -2130,7 +2130,7 @@ async def test_trusted_status_update_cannot_bypass_active_or_ambiguity(queue):
 async def test_off_disables_controls_but_retains_lifecycle_safety(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORK_CONTROL_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORK_CONTROL_MODE", "off")
     manager = QueueManager(tmp_path / "off.db")
     await manager.start()
     try:

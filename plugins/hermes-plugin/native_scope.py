@@ -7,7 +7,7 @@ def attested_cli_contact(session_id):
         return None
     try:
         from agent.relay_runtime import active_turn
-        from apsimo_hermes import _TRANSPORT_SCOPES
+        from pacomind_hermes import _TRANSPORT_SCOPES
     except ImportError:
         return None
     turn = active_turn(session_id)

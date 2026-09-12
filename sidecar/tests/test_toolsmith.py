@@ -10,19 +10,19 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import apsimo.api.routers.host as host_mod
-from apsimo.api.authority import (
+import pacomind.api.routers.host as host_mod
+from pacomind.api.authority import (
     RequestAuthority,
     anonymous_authority,
     required_scope,
 )
-from apsimo.toolsmith.authority import (
+from pacomind.toolsmith.authority import (
     GraduationAuthorityError,
     GraduationAuthorityV1,
 )
-from apsimo.toolsmith.engine import Toolsmith
-from apsimo.toolsmith.miner import ToolsmithMiner, _normalize
-from apsimo.toolsmith.registry import ToolRegistry, ToolStatus
+from pacomind.toolsmith.engine import Toolsmith
+from pacomind.toolsmith.miner import ToolsmithMiner, _normalize
+from pacomind.toolsmith.registry import ToolRegistry, ToolStatus
 
 
 # --- fakes -----------------------------------------------------------------
@@ -325,7 +325,7 @@ def test_registry_migrates_legacy_digests_without_blessing_tamper(tmp_path):
 
 async def test_draft_and_verify_pass(tmp_path):
     ts, reg, sm = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     cand = ToolCandidate(signature="add two numbers", domain="math",
                          description="add", occurrences=6,
                          sample_descriptions=["add a and b"])
@@ -338,7 +338,7 @@ async def test_draft_and_verify_pass(tmp_path):
 
 async def test_verify_fail_rejects(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path, router_spec=BAD_SPEC)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     passed, _ = await ts.verify(tool)
     assert not passed
@@ -347,14 +347,14 @@ async def test_verify_fail_rejects(tmp_path):
 
 async def test_draft_static_policy_rejects_environment_access(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path, router_spec=UNSAFE_SPEC)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     assert tool is None and reg.list() == []
 
 
 async def test_shadow_accumulation_and_graduation(tmp_path):
     ts, reg, sm = make_toolsmith(tmp_path, stage="ask_first")
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)  # -> shadow
     # A generated self-test verifies code but earns no operational evidence.
@@ -374,7 +374,7 @@ async def test_shadow_accumulation_and_graduation(tmp_path):
 
 async def test_shadow_comparison_is_digest_bound_and_idempotent(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     kwargs = dict(
@@ -401,7 +401,7 @@ async def test_shadow_comparison_is_digest_bound_and_idempotent(tmp_path):
 
 async def test_shadow_mismatch_is_failure_not_graduation_evidence(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     passed, detail = await ts.verify_shadow_run(
@@ -418,7 +418,7 @@ async def test_shadow_mismatch_is_failure_not_graduation_evidence(tmp_path):
 
 async def test_legacy_shadow_counter_cannot_replace_comparison_receipts(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     reg._conn.execute(
@@ -435,7 +435,7 @@ async def test_legacy_shadow_counter_cannot_replace_comparison_receipts(tmp_path
 
 async def test_failing_shadow_blocks_graduation(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     # a failing shadow run (sandbox forced to a failing verdict)
@@ -454,7 +454,7 @@ async def test_failing_shadow_blocks_graduation(tmp_path):
 
 async def test_invoke_live_runs_in_sandbox(tmp_path):
     ts, reg, sm = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     await qualify_tool(ts, reg, tool)
@@ -467,7 +467,7 @@ async def test_invoke_live_runs_in_sandbox(tmp_path):
 
 async def test_dynamic_provider_exposes_live(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)          # shadow -> not exposed
     provider = ts.build_dynamic_provider()
@@ -484,7 +484,7 @@ async def test_dynamic_provider_exposes_live(tmp_path):
 
 
 def test_executor_merges_dynamic_defs(tmp_path):
-    from apsimo.reasoning.executor import ToolExecutor
+    from pacomind.reasoning.executor import ToolExecutor
     ts, reg, _ = make_toolsmith(tmp_path)
     te = ToolExecutor()
 
@@ -510,7 +510,7 @@ async def _client(ts, authority=None):
 
     @app.middleware("http")
     async def _bind_authority(request, call_next):
-        request.state.colony_authority = (
+        request.state.pacomind_authority = (
             authority if authority is not None else scoped_toolsmith_authority()
         )
         return await call_next(request)
@@ -526,7 +526,7 @@ async def _client(ts, authority=None):
 
 async def test_api_list_graduate_retire(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     await qualify_tool(ts, reg, tool)
@@ -549,7 +549,7 @@ async def test_api_list_graduate_retire(tmp_path):
 
 async def test_api_shadow_comparison_is_transport_attested(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     payload = {
@@ -582,7 +582,7 @@ async def test_api_unavailable():
 
 async def test_api_graduation_rejects_anonymous_and_digest_changes(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)
     await qualify_tool(ts, reg, tool)
@@ -635,7 +635,7 @@ def test_graduation_authority_rejects_expired_and_multi_use():
 
 async def test_graduation_authority_cannot_be_rebound_to_another_tool(tmp_path):
     ts, reg, _ = make_toolsmith(tmp_path)
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.toolsmith.miner import ToolCandidate
     first = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(first)
     await qualify_tool(ts, reg, first)
@@ -660,8 +660,8 @@ async def test_graduation_authority_cannot_be_rebound_to_another_tool(tmp_path):
 
 
 async def test_act_first_never_auto_graduates_tool(tmp_path):
-    from apsimo.autonomy.loop import AutonomyLoop
-    from apsimo.toolsmith.miner import ToolCandidate
+    from pacomind.autonomy.loop import AutonomyLoop
+    from pacomind.toolsmith.miner import ToolCandidate
     ts, reg, _ = make_toolsmith(tmp_path, stage="act_first")
     tool = await ts.draft(ToolCandidate("s", "d", "d", 6))
     await ts.verify(tool)

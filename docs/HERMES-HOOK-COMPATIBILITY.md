@@ -1,6 +1,6 @@
 # Hermes callback compatibility
 
-Apsimo's optional [concurrent background tasks](NATIVE-TASK-CHANNELS.md) require
+PacoMind's optional [concurrent background tasks](NATIVE-TASK-CHANNELS.md) require
 healthy overlapping plugin callbacks to retain each invocation's context and
 result. The pinned public CI target is the explicit Hermes build below. The
 installer does not patch an existing Hermes checkout or change its selection.
@@ -28,9 +28,9 @@ authorship is preserved. The fork retains two synchronized regression tests.
 | `hermes_cli/plugins_ledger.py` | Invalidate waiting dispatches during unload without treating a still-running worker as finished. |
 
 The unmodified base can skip a callback because another invocation is still
-running. For concurrent Apsimo turns, that can omit source binding or lifecycle
+running. For concurrent PacoMind turns, that can omit source binding or lifecycle
 observations. The correction operates within Hermes' existing callback
-dispatcher. It adds no Apsimo service, model route, deployment setting or new
+dispatcher. It adds no PacoMind service, model route, deployment setting or new
 plugin registration API.
 
 The selected build also retains named custom-provider timeout settings after
@@ -76,7 +76,7 @@ and background provider policies, cached-agent refresh, separate-process task
 resume and native truncation recovery. These controlled responses establish
 configuration propagation, not model quality or measured timeout expiration.
 
-Apsimo's [actual native task fixture](../tests/hermes_adapter/test_native_task_channels.py)
+PacoMind's [actual native task fixture](../tests/hermes_adapter/test_native_task_channels.py)
 uses the installed adapter, real gateway, canonical source/contact APIs and
 controlled SDK responses. It holds two task roots while ordinary conversation
 continues, steers and stops one from another owner channel, and verifies that
@@ -114,7 +114,7 @@ Replace the fork with an unmodified upstream release when all of these hold:
    unload behavior. A PR or temporary merge commit alone is not a release.
 2. Run the two core invariants and affected existing suites against that exact
    unmodified release, retaining the timeout and context checks.
-3. Pass Apsimo's actual concurrent task fixture, including separate roots,
+3. Pass PacoMind's actual concurrent task fixture, including separate roots,
    ordinary conversation, source receipts, steering and targeted interruption.
 4. Update the pinned CI commit and documentation, then select the runtime
    through the deployment's normal reversible upgrade path.

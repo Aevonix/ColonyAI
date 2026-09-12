@@ -9,21 +9,21 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.cognition.goal_spine import (
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtQueueAdapter,
 )
-from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
-from apsimo.self_model.event_concerns import (
+from pacomind.projects import Project, ProjectEngine, ProjectStore, Step
+from pacomind.self_model.event_concerns import (
     ConversationTurnConcernReducer,
     project_turn_concern_hold_reason,
     project_conversation_turn,
     turn_concern_mode,
 )
-from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
-from apsimo.task_queue.models import JobResult, JobStatus, JobType
+from pacomind.self_model.workspace import ConcernStore, WorkspaceEngine
+from pacomind.task_queue.models import JobResult, JobStatus, JobType
 
 
 NOW = "2026-08-07T12:00:00+00:00"
@@ -104,17 +104,17 @@ def turn_event(
 
 @pytest.fixture(autouse=True)
 def turn_env(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.delenv("COLONY_TURN_CONCERNS", raising=False)
-    monkeypatch.delenv("COLONY_TURN_CONCERNS_CHANNELS", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.delenv("PACOMIND_TURN_CONCERNS", raising=False)
+    monkeypatch.delenv("PACOMIND_TURN_CONCERNS_CHANNELS", raising=False)
     monkeypatch.delenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", raising=False,
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", raising=False,
     )
     monkeypatch.delenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_PLATFORMS", raising=False,
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_PLATFORMS", raising=False,
     )
-    monkeypatch.delenv("COLONY_TURN_CONCERNS_BOOTSTRAP", raising=False)
-    monkeypatch.delenv("COLONY_TURN_CONCERNS_GAP_POLICY", raising=False)
+    monkeypatch.delenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", raising=False)
+    monkeypatch.delenv("PACOMIND_TURN_CONCERNS_GAP_POLICY", raising=False)
 
 
 def reducer(tmp_path, journal):
@@ -137,7 +137,7 @@ def test_flag_defaults_and_invalid_values_off_with_exact_noop(
     assert store.event_cursor(bridge.consumer_id) is None
     assert store.active() == []
 
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "unexpected")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "unexpected")
     assert turn_concern_mode() == "off"
     assert bridge.run_once() == {"enabled": False, "processed": 0}
     assert store.event_cursor(bridge.consumer_id) is None
@@ -146,9 +146,9 @@ def test_flag_defaults_and_invalid_values_off_with_exact_noop(
 def test_explicitly_allowed_owner_and_subject_channels_preserve_scope(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice,intercom")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice,intercom")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
     journal = FakeJournal([
         turn_event(1),
         turn_event(
@@ -192,7 +192,7 @@ def test_explicitly_allowed_owner_and_subject_channels_preserve_scope(
     "internal:cognition", "cron:daily", "api:worker",
 ])
 def test_internal_lanes_are_structurally_excluded(monkeypatch, channel_id):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "internal,cron,api")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "internal,cron,api")
 
     projection, skip, _digest = project_conversation_turn(
         turn_event(1, channel_id=channel_id),
@@ -203,7 +203,7 @@ def test_internal_lanes_are_structurally_excluded(monkeypatch, channel_id):
 
 
 def test_generic_whatsapp_like_lane_is_allowed(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "whatsapp-like")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "whatsapp-like")
     projection, skip, _digest = project_conversation_turn(turn_event(
         1,
         channel_id="whatsapp-like:thread-7",
@@ -217,9 +217,9 @@ def test_generic_whatsapp_like_lane_is_allowed(monkeypatch):
 def test_configured_source_platform_exclusion_is_separate_from_lane(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     monkeypatch.setenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_PLATFORMS", "rcs,operator",
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_PLATFORMS", "rcs,operator",
     )
     for platform in ("rcs", "operator"):
         projection, skip, _digest = project_conversation_turn(turn_event(
@@ -230,7 +230,7 @@ def test_configured_source_platform_exclusion_is_separate_from_lane(
 
 
 def test_non_allowlisted_channel_is_not_projected(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "intercom")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "intercom")
 
     projection, skip, _digest = project_conversation_turn(turn_event(1))
 
@@ -240,7 +240,7 @@ def test_non_allowlisted_channel_is_not_projected(monkeypatch):
 
 @pytest.mark.parametrize("allowlist", ["", "voice,*", "voice,not a lane"])
 def test_empty_or_malformed_allowlist_fails_closed(monkeypatch, allowlist):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", allowlist)
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", allowlist)
 
     projection, skip, _digest = project_conversation_turn(turn_event(1))
 
@@ -252,15 +252,15 @@ def test_empty_or_malformed_allowlist_fails_closed(monkeypatch, allowlist):
     ("name", "value", "error"),
     [
         (
-            "COLONY_TURN_CONCERNS_CHANNELS", "",
+            "PACOMIND_TURN_CONCERNS_CHANNELS", "",
             "turn_concern_channels_config_invalid",
         ),
         (
-            "COLONY_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", "bad prefix",
+            "PACOMIND_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", "bad prefix",
             "turn_concern_session_prefix_config_invalid",
         ),
         (
-            "COLONY_TURN_CONCERNS_EXCLUDED_PLATFORMS", "rcs,*",
+            "PACOMIND_TURN_CONCERNS_EXCLUDED_PLATFORMS", "rcs,*",
             "turn_concern_excluded_platform_config_invalid",
         ),
     ],
@@ -268,9 +268,9 @@ def test_empty_or_malformed_allowlist_fails_closed(monkeypatch, allowlist):
 def test_invalid_config_does_not_create_cursor_and_corrected_config_replays(
     tmp_path, monkeypatch, name, value, error,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
     monkeypatch.setenv(name, value)
     journal = FakeJournal([turn_event(1)])
     store, bridge = reducer(tmp_path, journal)
@@ -284,12 +284,12 @@ def test_invalid_config_does_not_create_cursor_and_corrected_config_replays(
     assert status["config_error"] == error
     assert status["healthy"] is False
 
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     monkeypatch.delenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", raising=False,
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", raising=False,
     )
     monkeypatch.delenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_PLATFORMS", raising=False,
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_PLATFORMS", raising=False,
     )
     assert bridge.run_once()["dispositions"] == {"created": 1}
     assert store.event_cursor(bridge.consumer_id) == 1
@@ -298,11 +298,11 @@ def test_invalid_config_does_not_create_cursor_and_corrected_config_replays(
 def test_missing_owner_config_does_not_create_cursor_and_correction_replays(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.delenv("COLONY_OWNER_PERSON_ID", raising=False)
-    monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.delenv("PACOMIND_OWNER_PERSON_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
     journal = FakeJournal([turn_event(1)])
     store, bridge = reducer(tmp_path, journal)
 
@@ -317,7 +317,7 @@ def test_missing_owner_config_does_not_create_cursor_and_correction_replays(
     assert store.active() == []
     assert bridge.status()["owner_identity_configured"] is False
 
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     assert bridge.run_once()["dispositions"] == {"created": 1}
     assert store.event_cursor(bridge.consumer_id) == 1
 
@@ -325,15 +325,15 @@ def test_missing_owner_config_does_not_create_cursor_and_correction_replays(
 def test_existing_turn_cursor_does_not_advance_while_owner_config_invalid(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
     journal = FakeJournal([turn_event(1)])
     store, bridge = reducer(tmp_path, journal)
     assert bridge.run_once()["dispositions"] == {"created": 1}
     journal.events.append(turn_event(2, turn_id="turn-voice-0002"))
-    monkeypatch.delenv("COLONY_OWNER_PERSON_ID", raising=False)
-    monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_OWNER_PERSON_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
 
     stopped = bridge.run_once()
 
@@ -341,16 +341,16 @@ def test_existing_turn_cursor_does_not_advance_while_owner_config_invalid(
     assert store.event_cursor(bridge.consumer_id) == 1
     assert len(store.active()) == 1
 
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     assert bridge.run_once()["dispositions"] == {"created": 1}
     assert store.event_cursor(bridge.consumer_id) == 2
     assert len(store.active()) == 2
 
 
 def test_explicit_session_prefix_excludes_deck_duplicate(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     monkeypatch.setenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", "buildbox-",
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", "buildbox-",
     )
 
     projection, skip, _digest = project_conversation_turn(turn_event(
@@ -365,9 +365,9 @@ def test_explicit_session_prefix_excludes_deck_duplicate(monkeypatch):
 
 @pytest.mark.parametrize("prefixes", ["buildbox-,,call-", "bad prefix", "*"])
 def test_malformed_session_prefix_config_fails_closed(monkeypatch, prefixes):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     monkeypatch.setenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", prefixes,
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES", prefixes,
     )
 
     projection, skip, _digest = project_conversation_turn(turn_event(1))
@@ -377,7 +377,7 @@ def test_malformed_session_prefix_config_fails_closed(monkeypatch, prefixes):
 
 
 def test_missing_session_fails_closed(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
 
     projection, skip, _digest = project_conversation_turn(
         turn_event(1, session_id=""),
@@ -439,7 +439,7 @@ def test_missing_session_fails_closed(monkeypatch):
 def test_missing_identity_or_unsafe_scope_fails_closed(
     monkeypatch, mutate, reason,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     raw = turn_event(1)
     mutate(raw["data"])
 
@@ -450,9 +450,9 @@ def test_missing_identity_or_unsafe_scope_fails_closed(
 
 
 def test_duplicate_delivery_and_restart_are_idempotent(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
     first = turn_event(1)
     duplicate = turn_event(2)
     duplicate["occurredAt"] = "2026-08-07T12:00:01+00:00"
@@ -479,13 +479,13 @@ def test_duplicate_delivery_and_restart_are_idempotent(tmp_path, monkeypatch):
 
 
 def test_turn_reducer_has_an_independent_cursor(tmp_path, monkeypatch):
-    from apsimo.self_model.event_concerns import EventConcernReducer
+    from pacomind.self_model.event_concerns import EventConcernReducer
 
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
     journal = FakeJournal([turn_event(1)])
     store = ConcernStore(str(tmp_path / "workspace.db"))
     ordinary = EventConcernReducer(
@@ -532,11 +532,11 @@ class Boundaries:
 async def test_turn_reaches_goal_proposal_through_read_only_policy_path(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     journal = FakeJournal([turn_event(1)])
     concerns, bridge = reducer(tmp_path, journal)
     assert bridge.run_once()["dispositions"] == {"created": 1}
@@ -558,7 +558,7 @@ async def test_turn_reaches_goal_proposal_through_read_only_policy_path(
 
     # Turning the producer down immediately demotes even a concern created
     # while live; no already-queued conversational evidence bypasses rollback.
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
     held = await spine.process_concern(
         item.concern_id,
         now=datetime(2026, 8, 7, 12, 0, tzinfo=timezone.utc),
@@ -569,7 +569,7 @@ async def test_turn_reaches_goal_proposal_through_read_only_policy_path(
     assert held["effect_executed"] is False
     assert queue.jobs == {}
 
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
     queued = await spine.process_concern(
         item.concern_id,
         now=datetime(2026, 8, 7, 12, 1, tzinfo=timezone.utc),
@@ -631,11 +631,11 @@ async def test_turn_reaches_goal_proposal_through_read_only_policy_path(
 async def test_guest_turn_goal_requires_exact_owner_promotion(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "intercom")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "intercom")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     journal = FakeJournal([turn_event(
         1,
         subject="person-guest",
@@ -712,7 +712,7 @@ async def test_guest_turn_goal_requires_exact_owner_promotion(
 async def test_turn_origin_project_holds_on_rollback_and_resumes_exact_row(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     store = ProjectStore()
     turn_live = {"value": False}
     turn_concern_ids = {"turn-concern"}
@@ -775,7 +775,7 @@ async def test_turn_origin_project_holds_on_rollback_and_resumes_exact_row(
 
 
 def test_turn_project_hold_source_precision_and_capacity(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
     concern_store = SimpleNamespace(
         get=lambda concern_id: (
             SimpleNamespace(producer_name="turn_concerns")
@@ -857,7 +857,7 @@ def test_project_hold_callback_outage_is_visible_counts_and_recovers():
 async def test_boundary_mode_flip_holds_before_shadow_mutation_and_resumes(
     monkeypatch, mode,
 ):
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", mode)
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", mode)
     store = ProjectStore()
     turn_live = {"value": True}
 
@@ -937,8 +937,8 @@ class _OneInitiative:
 async def test_initiative_capacity_excludes_only_exact_turn_mode_hold(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_PROJECTS_MAX_CONCURRENT", "1")
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "off")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MAX_CONCURRENT", "1")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "off")
 
     held_store = ProjectStore()
     held_store.save_project(Project(
@@ -1015,11 +1015,11 @@ async def test_autonomy_runs_turn_reducer_without_disabling_legacy_polling():
 async def test_turn_concern_never_falls_back_to_legacy_direct_action(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "off")
-    monkeypatch.setenv("COLONY_WORKSPACE", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "off")
+    monkeypatch.setenv("PACOMIND_WORKSPACE", "live")
     journal = FakeJournal([turn_event(1)])
     store, bridge = reducer(tmp_path, journal)
     bridge.run_once()
@@ -1057,7 +1057,7 @@ async def test_turn_concern_never_falls_back_to_legacy_direct_action(
 
 
 def test_workspace_status_exposes_turn_reducer(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
     journal = FakeJournal()
     store, turns = reducer(tmp_path, journal)
     workspace = WorkspaceEngine(store, turn_event_reducer=turns)
@@ -1072,11 +1072,11 @@ def test_workspace_status_exposes_turn_reducer(tmp_path, monkeypatch):
 def test_shadow_turns_do_not_consume_live_workspace_capacity(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_WORKSPACE_CAPACITY", "2")
-    monkeypatch.setenv("COLONY_WORKSPACE_EVICT_FLOOR", "0")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_WORKSPACE_CAPACITY", "2")
+    monkeypatch.setenv("PACOMIND_WORKSPACE_EVICT_FLOOR", "0")
     journal = FakeJournal([
         turn_event(
             index,
@@ -1119,7 +1119,7 @@ def test_shadow_turns_do_not_consume_live_workspace_capacity(
 
 
 def test_turn_source_uses_stable_digest_not_private_raw_turn_id(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     raw_turn_id = "private-call-reference-123"
 
     projection, skip, _digest = project_conversation_turn(
@@ -1134,7 +1134,7 @@ def test_turn_source_uses_stable_digest_not_private_raw_turn_id(monkeypatch):
 
 
 def test_turn_payload_cannot_project_effect_or_capability_authority(monkeypatch):
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     raw = turn_event(1)
     raw["data"].update({
         "required_capabilities": ["messaging:send", "actions:execute"],

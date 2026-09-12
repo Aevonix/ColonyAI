@@ -4,11 +4,11 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.idempotency import source_message_hash
-from apsimo.turns.source_vectors import merge_source_hits
-from apsimo.turns.source_read import read
-from apsimo.memory.recall import source_candidates
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.idempotency import source_message_hash
+from pacomind.turns.source_vectors import merge_source_hits
+from pacomind.turns.source_read import read
+from pacomind.memory.recall import source_candidates
 from test_source_audio import message as audio_message
 from test_turn_source_evidence import source_app, recalled
 
@@ -18,7 +18,7 @@ from test_turn_source_evidence import source_app, recalled
 async def test_mixed_checkpoint_recall_keeps_typed_and_audio_lineage_separate(
     source_app, tmp_path, monkeypatch, audio_first,
 ):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     typed = {"role": "user", "content": "The orrery is in the wooden cabinet."}
     audio = audio_message()
     messages = [audio, typed] if audio_first else [typed, audio]
@@ -143,7 +143,7 @@ def test_duplicate_projection_rows_do_not_hide_other_canonical_messages(tmp_path
 
 
 def test_ownership_reconstruction_only_reads_scoped_matches_and_hashes_each_message_once(tmp_path, monkeypatch):
-    from apsimo.turns import idempotency
+    from pacomind.turns import idempotency
     ledger = TurnIdempotencyLedger(tmp_path / "sources.db")
     retained = {"role": "user", "content": "Violet marker. " * 400}
     ledger.record_source("kept", contact_id="person", session_id="work",

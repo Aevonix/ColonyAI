@@ -9,12 +9,12 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import apsimo.api.routers.host as host_mod
-from apsimo.api.authority import RequestAuthority, legacy_authority
-from apsimo.self_model.workspace import (
+import pacomind.api.routers.host as host_mod
+from pacomind.api.authority import RequestAuthority, legacy_authority
+from pacomind.self_model.workspace import (
     ConcernStore, WorkspaceEngine, in_sleep_window,
 )
-from apsimo.self_model.thinker import _parse
+from pacomind.self_model.thinker import _parse
 
 
 def make(tmp_path, thinker=None, journal=None):
@@ -43,8 +43,8 @@ def test_kind_falls_back(tmp_path):
 
 
 def test_decay_reduces_and_evicts(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKSPACE_HALFLIFE_HOURS", "12")
-    monkeypatch.setenv("COLONY_WORKSPACE_EVICT_FLOOR", "0.2")
+    monkeypatch.setenv("PACOMIND_WORKSPACE_HALFLIFE_HOURS", "12")
+    monkeypatch.setenv("PACOMIND_WORKSPACE_EVICT_FLOOR", "0.2")
     ws, store = make(tmp_path)
     c = ws.bump(kind="thread", summary="fading", dedup_key="k", salience=0.3)
     # backdate last_touched by 24h (two half-lives -> ~0.075)
@@ -60,8 +60,8 @@ def test_decay_reduces_and_evicts(tmp_path, monkeypatch):
 
 
 def test_capacity_evicts_lowest(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKSPACE_CAPACITY", "3")
-    monkeypatch.setenv("COLONY_WORKSPACE_EVICT_FLOOR", "0.0")
+    monkeypatch.setenv("PACOMIND_WORKSPACE_CAPACITY", "3")
+    monkeypatch.setenv("PACOMIND_WORKSPACE_EVICT_FLOOR", "0.0")
     ws, store = make(tmp_path)
     for i in range(5):
         ws.bump(kind="thread", summary=f"c{i}", dedup_key=f"k{i}",
@@ -142,20 +142,20 @@ async def test_think_none_without_thinker(tmp_path):
 # --- sleep window ----------------------------------------------------------
 
 def test_sleep_window(monkeypatch):
-    monkeypatch.setenv("COLONY_SLEEP_WINDOW", "02:00-06:00")
+    monkeypatch.setenv("PACOMIND_SLEEP_WINDOW", "02:00-06:00")
     assert in_sleep_window(datetime(2026, 7, 6, 3, 30))
     assert not in_sleep_window(datetime(2026, 7, 6, 9, 0))
 
 
 def test_sleep_window_wraps_midnight(monkeypatch):
-    monkeypatch.setenv("COLONY_SLEEP_WINDOW", "22:00-06:00")
+    monkeypatch.setenv("PACOMIND_SLEEP_WINDOW", "22:00-06:00")
     assert in_sleep_window(datetime(2026, 7, 6, 23, 30))
     assert in_sleep_window(datetime(2026, 7, 6, 1, 0))
     assert not in_sleep_window(datetime(2026, 7, 6, 12, 0))
 
 
 def test_sleep_window_disabled(monkeypatch):
-    monkeypatch.delenv("COLONY_SLEEP_WINDOW", raising=False)
+    monkeypatch.delenv("PACOMIND_SLEEP_WINDOW", raising=False)
     assert not in_sleep_window(datetime(2026, 7, 6, 3, 0))
 
 
@@ -194,7 +194,7 @@ class _FakeRegistry:
         self.benchmark = _FakeBench()
 
 def test_ingest_from_all_sources(tmp_path):
-    from apsimo.autonomy.loop import AutonomyLoop
+    from pacomind.autonomy.loop import AutonomyLoop
     ws, store = make(tmp_path)
     fake_self = type("S", (), {"_registry": _FakeRegistry()})()
     AutonomyLoop._workspace_ingest(fake_self, ws)
@@ -216,7 +216,7 @@ async def _client(ws, authority=None):
     app = FastAPI()
     @app.middleware("http")
     async def _legacy_authority(request, call_next):
-        request.state.colony_authority = authority or legacy_authority()
+        request.state.pacomind_authority = authority or legacy_authority()
         return await call_next(request)
     app.include_router(host_mod.router)
     try:
@@ -228,7 +228,7 @@ async def _client(ws, authority=None):
 
 
 async def test_api_snapshot(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKSPACE", "shadow")
     ws, _ = make(tmp_path)
     ws.bump(kind="question", summary="on my mind", dedup_key="k",
             salience=0.7)
@@ -272,7 +272,7 @@ def _scoped(viewer, *, audiences=("viewer",)):
 
 async def test_api_filters_private_concerns_and_resolve_is_owner_only(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     ws, store = make(tmp_path)
     owner = ws.bump(kind="question", summary="owner only", dedup_key="owner")
     subject = ws.bump(kind="thread", summary="subject visible", dedup_key="subject")

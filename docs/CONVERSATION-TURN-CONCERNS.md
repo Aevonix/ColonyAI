@@ -7,26 +7,26 @@ does not grant a capability, approval, receipt, WorkOrder, or effect authority.
 
 Configuration is deliberately fail-closed:
 
-- `COLONY_TURN_CONCERNS=off|shadow|live` defaults to `off`; invalid values are
+- `PACOMIND_TURN_CONCERNS=off|shadow|live` defaults to `off`; invalid values are
   `off`.
-- `COLONY_TURN_CONCERNS_CHANNELS=voice,intercom,...` is an explicit list of
+- `PACOMIND_TURN_CONCERNS_CHANNELS=voice,intercom,...` is an explicit list of
   channel lanes (the part before `:`). It is required in `shadow` and `live`.
   Empty or malformed configuration stops before cursor initialization, so a
   corrected configuration can replay the retained event.
-- `COLONY_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES=...` is a
+- `PACOMIND_TURN_CONCERNS_EXCLUDED_SESSION_PREFIXES=...` is a
   default-empty denylist checked before channel admission. Empty session IDs
   and malformed prefix lists fail closed.
-- `COLONY_TURN_CONCERNS_EXCLUDED_PLATFORMS=...` is a default-empty exact
+- `PACOMIND_TURN_CONCERNS_EXCLUDED_PLATFORMS=...` is a default-empty exact
   source-platform denylist. It is independent of the channel lane, so a
   multiplexed transport cannot become eligible by naming an allowed channel.
-- `COLONY_TURN_CONCERNS_BOOTSTRAP=tail|replay` defaults to `tail`.
-- `COLONY_TURN_CONCERNS_GAP_POLICY=stop|acknowledge` defaults to `stop`.
-- `COLONY_OWNER_PERSON_ID` (or the compatibility
-  `COLONY_OWNER_CONTACT_ID`) must be one canonical owner identity. Missing or
+- `PACOMIND_TURN_CONCERNS_BOOTSTRAP=tail|replay` defaults to `tail`.
+- `PACOMIND_TURN_CONCERNS_GAP_POLICY=stop|acknowledge` defaults to `stop`.
+- `PACOMIND_OWNER_PERSON_ID` (or the compatibility
+  `PACOMIND_OWNER_CONTACT_ID`) must be one canonical owner identity. Missing or
   malformed owner configuration stops before cursor initialization or
   advancement; correction replays the retained event.
 
-Internal/API/cron/system/worker lanes are structurally excluded. Colony does
+Internal/API/cron/system/worker lanes are structurally excluded. PacoMind does
 not hard-code deployment-specific transport names. A deployment prevents a
 duplicate producer by listing that transport in `EXCLUDED_PLATFORMS`, or by
 listing a stable overlapping session prefix when two surfaces share one
@@ -34,7 +34,7 @@ transport.
 
 Only a scoped authenticated turn principal can produce an eligible envelope:
 the resolved subject must be within its exact person grant, or come from a
-server-resolved structured sender on an attested platform. Colony derives the
+server-resolved structured sender on an attested platform. PacoMind derives the
 owner-private or subject-private scope server-side. Legacy/global bearer,
 anonymous, client-only contact claims, forged context metadata, and the system
 sentinel remain unattested.

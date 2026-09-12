@@ -10,34 +10,34 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.cognition.external_events import (
+from pacomind.api.authority import RequestAuthority
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.cognition.external_events import (
     ExternalCognitionEventV1,
     ExternalEventInboxStore,
     ExternalEventIntake,
 )
-from apsimo.cognition.goal_spine import (
+from pacomind.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtJobV1,
     ThoughtQueueAdapter,
 )
-from apsimo.cognition.runtime import CognitionRuntimeContractV1
-from apsimo.events.journal import replay_events
-from apsimo.governed_actions import GovernedActionLedger
-from apsimo.initiatives.approval_authority import ApprovalAuthorityStore
-from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
-from apsimo.self_model.event_concerns import (
+from pacomind.cognition.runtime import CognitionRuntimeContractV1
+from pacomind.events.journal import replay_events
+from pacomind.governed_actions import GovernedActionLedger
+from pacomind.initiatives.approval_authority import ApprovalAuthorityStore
+from pacomind.projects import Project, ProjectEngine, ProjectStore, Step
+from pacomind.self_model.event_concerns import (
     EventConcernReducer,
     ExternalEventConcernReducer,
     external_event_concern_mode,
     project_external_event,
 )
-from apsimo.self_model.store import CompetenceStore
-from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
-from apsimo.task_queue.models import JobResult, JobStatus, JobType
-from apsimo.work_orders import QueueWorkOrderAdapter
+from pacomind.self_model.store import CompetenceStore
+from pacomind.self_model.workspace import ConcernStore, WorkspaceEngine
+from pacomind.task_queue.models import JobResult, JobStatus, JobType
+from pacomind.work_orders import QueueWorkOrderAdapter
 
 
 NOW = datetime(2026, 7, 12, 20, 0, tzinfo=timezone.utc)
@@ -228,21 +228,21 @@ def _complete_goal(job):
 
 @pytest.fixture(autouse=True)
 def external_env(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.setenv("COLONY_WORKSPACE", "live")
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_EVENT_CONCERNS_BOOTSTRAP", "replay")
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
-    monkeypatch.delenv("COLONY_EXTERNAL_EVENT_CONCERNS", raising=False)
-    monkeypatch.delenv("COLONY_EXTERNAL_EVENT_CONCERNS_GAP_POLICY", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_WORKSPACE", "live")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EVENT_CONCERNS_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
+    monkeypatch.delenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", raising=False)
+    monkeypatch.delenv("PACOMIND_EXTERNAL_EVENT_CONCERNS_GAP_POLICY", raising=False)
 
 
 def test_external_concern_flag_defaults_and_invalid_values_off(monkeypatch):
     assert external_event_concern_mode() == "off"
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "unexpected")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "unexpected")
     assert external_event_concern_mode() == "off"
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "shadow")
     assert external_event_concern_mode() == "shadow"
 
 
@@ -266,7 +266,7 @@ def test_off_to_live_replays_retained_events_and_restart_is_exactly_once(
     assert reducer.run_once() == {"enabled": False, "processed": 0}
     assert store.event_cursor(reducer.consumer_id) is None
 
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     first = reducer.run_once()
     assert first["cursor"] == 2
     assert first["dispositions"] == {"skipped": 1, "created": 1}
@@ -281,7 +281,7 @@ def test_off_to_live_replays_retained_events_and_restart_is_exactly_once(
 def test_normal_and_external_reducers_have_independent_durable_cursors(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([_external(1)])
     store = ConcernStore(str(tmp_path / "workspace.db"))
     normal = EventConcernReducer(
@@ -410,7 +410,7 @@ def test_projection_binds_host_event_time_to_server_projection():
 
 def test_projection_rejects_noncanonical_configured_owner(monkeypatch):
     raw = _external(1)
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner ")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner ")
 
     with pytest.raises(ValueError, match="authority identifier boundary"):
         project_external_event(raw)
@@ -419,7 +419,7 @@ def test_projection_rejects_noncanonical_configured_owner(monkeypatch):
 def test_unbound_late_terminal_cannot_close_a_newer_external_episode(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     delayed_terminal = _external(
         3,
         attributes={"service": "gateway", "state": "healthy"},
@@ -491,7 +491,7 @@ def test_projection_requires_exact_audience_scope_string_elements():
 
 
 def test_forged_projection_becomes_fixed_skip_receipt(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     forged = _external(1)
     forged["data"]["scope_digest"] = "0" * 64
     journal = FakeJournal([forged])
@@ -538,7 +538,7 @@ def test_recomputed_guest_scope_cannot_forge_owner_private_lane():
 def test_unicode_external_summary_and_observation_are_preserved(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([
         _external(
             1,
@@ -577,7 +577,7 @@ def test_unicode_external_summary_and_observation_are_preserved(
 def test_maximum_length_external_ids_remain_exact_bounded_source_refs(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     external_id = "e" * 192
     entity = "s" * 192
     principal = "p" * 128
@@ -601,7 +601,7 @@ def test_maximum_length_external_ids_remain_exact_bounded_source_refs(
 def test_maximum_subject_scopes_remain_exact_and_collision_free(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     subject_a = "p" * 127 + "a"
     subject_b = "p" * 127 + "b"
     journal = FakeJournal([
@@ -660,7 +660,7 @@ def test_maximum_subject_scope_remains_exact_in_routed_output(tmp_path):
 def test_recovery_resolves_only_exact_subject_producer_kind_and_entity(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([
         _external(
             1, principal="observer-a", viewer="person-a", audiences=(),
@@ -739,7 +739,7 @@ def test_recovery_resolves_only_exact_subject_producer_kind_and_entity(
 def test_prompt_injection_is_framed_as_untrusted_evidence_and_cannot_widen_caps(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([_external(
         1,
         kind="text_turn_observation",
@@ -775,7 +775,7 @@ def test_prompt_injection_is_framed_as_untrusted_evidence_and_cannot_widen_caps(
 async def test_live_external_concern_is_held_and_resumable_after_mode_demotion(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([_external(1)])
     concerns = ConcernStore(str(tmp_path / "workspace.db"))
     _reducer(concerns, journal).run_once()
@@ -789,14 +789,14 @@ async def test_live_external_concern_is_held_and_resumable_after_mode_demotion(
     assert promoted.promotion_ref
     spine, _, _, manager = _spine(tmp_path, concerns)
 
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "shadow")
     shadow = await spine.process_concern(item.concern_id, now=NOW)
     assert shadow["status"] == "cognition_held"
     assert shadow["reason"] == "external_event_concerns_current_mode_not_live"
     assert shadow["resumable"] is True
     assert manager.queue.posts == 0
 
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "off")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "off")
     off = await spine.process_concern(
         item.concern_id, now=NOW + timedelta(seconds=10),
     )
@@ -805,7 +805,7 @@ async def test_live_external_concern_is_held_and_resumable_after_mode_demotion(
     assert off["resumable"] is True
     assert manager.queue.posts == 0
 
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     resumed = await spine.process_concern(
         item.concern_id, now=NOW + timedelta(seconds=20),
     )
@@ -816,7 +816,7 @@ async def test_live_external_concern_is_held_and_resumable_after_mode_demotion(
 def test_success_can_only_resolve_external_concern_not_other_authority_ledgers(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([
         _external(
             1,
@@ -875,7 +875,7 @@ def test_success_can_only_resolve_external_concern_not_other_authority_ledgers(
 def test_cancelled_action_is_terminal_for_only_its_external_concern(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([
         _external(
             1,
@@ -931,7 +931,7 @@ def test_cancelled_action_is_terminal_for_only_its_external_concern(
 def test_positive_terminal_reports_only_resolve_matching_external_concern(
     tmp_path, monkeypatch, kind, entity, open_attributes, terminal_attributes,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([
         _external(
             1, kind=kind, attributes=open_attributes,
@@ -955,7 +955,7 @@ def test_positive_terminal_reports_only_resolve_matching_external_concern(
 def test_newer_external_negative_reopens_immediately_after_terminal_state(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([_external(
         1,
         attributes={"service": "gateway", "state": "degraded"},
@@ -1034,7 +1034,7 @@ def test_external_event_time_watermark_prevents_stale_or_conflicting_mutation(
     tmp_path, monkeypatch, states, event_seconds, expected_dispositions, active,
     last_disposition, last_reason, watermark_seq, watermark_operation,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     journal = FakeJournal([
         _external(
             seq,
@@ -1083,7 +1083,7 @@ def test_external_event_time_watermark_prevents_stale_or_conflicting_mutation(
 def test_external_event_time_watermark_and_receipt_survive_exact_replay(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     path = tmp_path / "workspace.db"
     journal = FakeJournal([_external(
         1,
@@ -1246,9 +1246,9 @@ async def test_external_reducer_failure_does_not_disable_legacy_polling():
 async def test_real_intake_to_scoped_work_order_preserves_reference_only_lineage(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "journal"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     subject = "s" * 128
     viewer_scope = f"person:{subject}"
     event = ExternalCognitionEventV1.from_authority(
@@ -1336,7 +1336,7 @@ async def test_real_intake_to_scoped_work_order_preserves_reference_only_lineage
 
 
 def test_workspace_status_exposes_both_independent_reducers(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "shadow")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     journal = FakeJournal()
     normal = EventConcernReducer(
@@ -1360,8 +1360,8 @@ def test_workspace_status_exposes_both_independent_reducers(tmp_path, monkeypatc
 async def test_legacy_direct_thinker_skips_external_concern_for_ordinary_one(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "off")
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "off")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     _reducer(store, FakeJournal([_external(1)])).run_once()
     external = store.active()[0]
@@ -1398,7 +1398,7 @@ async def test_legacy_direct_thinker_skips_external_concern_for_ordinary_one(
 async def test_spine_scheduler_skips_currently_held_external_without_starvation(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     _reducer(store, FakeJournal([_external(1)])).run_once()
     external = store.active()[0]
@@ -1411,7 +1411,7 @@ async def test_spine_scheduler_skips_currently_held_external_without_starvation(
         producer_mode="live",
     )
     spine, _, _, manager = _spine(tmp_path, store)
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "shadow")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "shadow")
 
     held = await spine.process_concern(external.concern_id, now=NOW)
     scheduled = await spine.run_once()
@@ -1428,7 +1428,7 @@ async def test_spine_scheduler_skips_currently_held_external_without_starvation(
 async def test_spine_scheduler_scans_beyond_twenty_held_external_concerns(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     journal = FakeJournal([
         _external(
@@ -1449,7 +1449,7 @@ async def test_spine_scheduler_scans_beyond_twenty_held_external_concerns(
         producer_mode="live",
     )
     spine, _, _, manager = _spine(tmp_path, store)
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "off")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "off")
 
     scheduled = await spine.run_once()
 
@@ -1462,8 +1462,8 @@ async def test_spine_scheduler_scans_beyond_twenty_held_external_concerns(
 async def test_legacy_thinker_scans_beyond_twenty_external_concerns(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "off")
-    monkeypatch.setenv("COLONY_EXTERNAL_EVENT_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "off")
+    monkeypatch.setenv("PACOMIND_EXTERNAL_EVENT_CONCERNS", "live")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     journal = FakeJournal([
         _external(

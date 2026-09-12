@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.self_model import ActionJournal
-from apsimo.world_model.llm_extract import WorldLLMExtractor
+from pacomind.self_model import ActionJournal
+from pacomind.world_model.llm_extract import WorldLLMExtractor
 
 
 class FakeWorld:
@@ -64,7 +64,7 @@ class _Extractor(WorldLLMExtractor):
 
 @pytest.mark.asyncio
 async def test_live_writes_validated_entities_and_journals(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
     world = FakeWorld()
     journal = ActionJournal()
     x = _Extractor(world, journal=journal, payload=_payload())
@@ -82,7 +82,7 @@ async def test_live_writes_validated_entities_and_journals(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shadow_reports_without_writing(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "shadow")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "shadow")
     world = FakeWorld()
     x = _Extractor(world, payload=_payload())
     report = await x.run(texts=["some text"])
@@ -92,7 +92,7 @@ async def test_shadow_reports_without_writing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_off_mode_does_nothing(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "off")
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "off")
     world = FakeWorld()
     x = _Extractor(world, payload=_payload())
     report = await x.run(texts=["some text"])
@@ -101,8 +101,8 @@ async def test_off_mode_does_nothing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_boundary_suppresses_entity(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_LLM_EXTRACT", "live")
-    from apsimo.directives import DirectiveManager, DirectiveStore
+    monkeypatch.setenv("PACOMIND_WORLD_LLM_EXTRACT", "live")
+    from pacomind.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore())
     dm.add_explicit("Initech", polarity="prohibit",
                     raw_text="don't even look at Initech",)

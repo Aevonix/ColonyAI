@@ -10,7 +10,7 @@ import time
 import uuid
 
 logger = logging.getLogger(__name__)
-_OUTPUT_LIMIT_TRACE = 'colony.execution-output-limit.v1:'
+_OUTPUT_LIMIT_TRACE = 'pacomind.execution-output-limit.v1:'
 
 
 class ExecutionObserver:
@@ -130,7 +130,7 @@ class ExecutionObserver:
     def request_metadata(result, **kwargs):
         """Use Hermes' existing trace to carry three scalars past sanitization.
 
-        This observes Colony's returned request without changing provider
+        This observes PacoMind's returned request without changing provider
         fields or retaining the request. A later request rewrite invalidates
         the marker because only the final trace entry is consumed.
         """

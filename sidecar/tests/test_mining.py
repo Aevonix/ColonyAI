@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.mining import (
+from pacomind.mining import (
     EscalationMiner,
     EscalationRecord,
     MinedTurn,
@@ -19,12 +19,12 @@ from apsimo.mining import (
 
 @pytest.fixture
 def store(tmp_path: Path) -> MiningStore:
-    return MiningStore(db_path=str(tmp_path / "colony-mining.db"))
+    return MiningStore(db_path=str(tmp_path / "pacomind-mining.db"))
 
 
 @pytest.fixture
 def miner(store: MiningStore, monkeypatch) -> EscalationMiner:
-    monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
+    monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "shadow")
     return EscalationMiner(store)
 
 
@@ -123,7 +123,7 @@ def test_store_filters(store):
 # -- miner detection -------------------------------------------------------------
 
 def test_mode_off_banks_nothing(store, monkeypatch):
-    monkeypatch.setenv("COLONY_ESCALATION_MINING", "off")
+    monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "off")
     m = EscalationMiner(store)
     assert _observe(m, tools=["terminal"], assistant="ran claude -p fix") is None
     assert store.turn_count() == 0
@@ -146,13 +146,13 @@ def test_consultation_needs_terminal_tool(miner):
 
 
 def test_provider_escalation(store, monkeypatch):
-    monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
-    monkeypatch.setenv("COLONY_ESCALATION_HEAVY_RE", r"glm-5|opus")
+    monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "shadow")
+    monkeypatch.setenv("PACOMIND_ESCALATION_HEAVY_RE", r"glm-5|opus")
     m = EscalationMiner(store)
     rec = _observe(m, model="glm-5.2-cloud", assistant="heavy answer")
     assert rec is not None and rec.kind == "provider_escalation"
     assert rec.model == "glm-5.2-cloud"
-    monkeypatch.delenv("COLONY_ESCALATION_HEAVY_RE")
+    monkeypatch.delenv("PACOMIND_ESCALATION_HEAVY_RE")
 
 
 def test_provider_detector_off_by_default(miner):
@@ -173,9 +173,9 @@ def test_local_attempt_and_outcome_followup(miner, store):
 
 
 def test_live_mode_feeds_distiller(store, monkeypatch):
-    monkeypatch.setenv("COLONY_ESCALATION_MINING", "live")
-    monkeypatch.setenv("COLONY_SKILLS_DISTILL", "live")
-    from apsimo.skills_memory import SkillStore
+    monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "live")
+    monkeypatch.setenv("PACOMIND_SKILLS_DISTILL", "live")
+    from pacomind.skills_memory import SkillStore
     skills = SkillStore()
     router = FakeRouter(json.dumps({
         "title": "Escalate adapter fixes",
@@ -193,7 +193,7 @@ def test_live_mode_feeds_distiller(store, monkeypatch):
 
 
 def test_shadow_mode_does_not_distill(store, monkeypatch):
-    monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
+    monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "shadow")
     router = FakeRouter("{}")
     m = EscalationMiner(store, skill_store=object(), router_getter=lambda: router)
     _observe(m, assistant="claude -p x", tools=["terminal"])
@@ -214,7 +214,7 @@ def _seed_turns(store, n=25, contact="owner", channel="whatsapp:g1"):
 
 
 def test_export_turn_grouping_shape(store, tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     _seed_turns(store, 25)
     stats = export_corpus(store, state_dir=tmp_path)
     assert stats["rows"] == 25 and stats["sessions"] == 5
@@ -308,9 +308,9 @@ class TestMiningApi:
     def client(self, store, tmp_path, monkeypatch):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        import apsimo.api.routers.mining as mining_router
+        import pacomind.api.routers.mining as mining_router
 
-        monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
+        monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "shadow")
         app = FastAPI()
         app.include_router(mining_router.router)
         engine = EscalationMiner(store)
@@ -334,14 +334,14 @@ class TestMiningApi:
         assert r.json()["rows"] == 3
 
     def test_export_endpoint_gate(self, client, monkeypatch):
-        monkeypatch.setenv("COLONY_CORPUS_EXPORT_ENABLED", "false")
+        monkeypatch.setenv("PACOMIND_CORPUS_EXPORT_ENABLED", "false")
         r = client.post("/v1/host/mining/corpus/export", json={})
         assert r.status_code == 403
 
     def test_uninitialized_501(self, monkeypatch):
         from fastapi import FastAPI
         from fastapi.testclient import TestClient
-        import apsimo.api.routers.mining as mining_router
+        import pacomind.api.routers.mining as mining_router
         app = FastAPI()
         app.include_router(mining_router.router)
         mining_router.set_mining(None, None, None)
@@ -351,7 +351,7 @@ class TestMiningApi:
 
 def test_consultation_via_tool_activity_file(store, tmp_path, monkeypatch):
     """Commands often appear only in the host tool-activity stream."""
-    monkeypatch.setenv("COLONY_ESCALATION_MINING", "shadow")
+    monkeypatch.setenv("PACOMIND_ESCALATION_MINING", "shadow")
     activity = tmp_path / "tool_activity.jsonl"
     activity.write_text(
         json.dumps({"ts": 1, "session": "sA", "tool": "terminal",
@@ -359,7 +359,7 @@ def test_consultation_via_tool_activity_file(store, tmp_path, monkeypatch):
         + json.dumps({"ts": 2, "session": "sB", "tool": "terminal",
                       "summary": "ls -la"}) + "\n"
     )
-    monkeypatch.setenv("COLONY_TOOL_ACTIVITY_FILE", str(activity))
+    monkeypatch.setenv("PACOMIND_TOOL_ACTIVITY_FILE", str(activity))
     m = EscalationMiner(store)
     # tools NOT sent on sync: terminal-use must come from the activity stream
     rec = _observe(m, user="fix it", assistant="done, applied the fix",

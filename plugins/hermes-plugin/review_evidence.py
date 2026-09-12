@@ -9,7 +9,7 @@ from copy import deepcopy
 import hashlib
 import json
 
-_CURRENT = ContextVar('colony_native_review_evidence', default=None)
+_CURRENT = ContextVar('pacomind_native_review_evidence', default=None)
 
 
 def capture(scope, request):

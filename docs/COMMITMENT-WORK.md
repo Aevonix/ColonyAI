@@ -1,8 +1,8 @@
 # Explicit shared undertakings
 
 Deployments with a different backup producer can set
-`COLONY_INITIATIVE_BACKUP_RECEIPT` to its latest-attempt JSON file. This replaces
-only the legacy `~/.colony/backups/*.bak` check. With no setting, the legacy
+`PACOMIND_INITIATIVE_BACKUP_RECEIPT` to its latest-attempt JSON file. This replaces
+only the legacy `~/.pacomind/backups/*.bak` check. With no setting, the legacy
 check stays unchanged; other operational checks remain enabled either way.
 The small receipt contract is `schema_version: 1`, `status: "captured"` or
 `"failed"`, and an aware UTC `completed_at`. A captured attempt also contains
@@ -24,7 +24,7 @@ This reports only the selected producer's evidence, with no recovery-readiness
 claim, extra backup execution, retention policy or effect authorization.
 
 Generated internal reviews can also become shared native work through
-`colony_work_initiative(initiative_id=...)`. The tool accepts only an existing
+`pacomind_work_initiative(initiative_id=...)`. The tool accepts only an existing
 canonical proposal ID from an attested owner or system turn, including a
 configured system cron. Eligibility requires `autonomy_loop` provenance and an
 explicit `native_review` capability in the existing action registry whose risk
@@ -47,7 +47,7 @@ with its actual outcome/error; a needs-input block stays resumable. Owner reques
 and native state; guest views do not. This does not mark a broader commitment
 fulfilled or certify an external effect.
 
-New tasks use the managed `colony-reviews` native profile, ordinary completion,
+New tasks use the managed `pacomind-reviews` native profile, ordinary completion,
 a 480-second runtime bound and one native attempt. They have no notifier
 subscription. The configured planning role supplies their replaceable model.
 The profile exposes only bounded source reads and a textual report; it excludes
@@ -86,7 +86,7 @@ transaction, so racing creates return one ID under the existing matching rule.
 Introspection uses that path too. Deliberately non-deduplicating creation and
 previously stored duplicate IDs remain distinct obligations.
 
-`colony_commitment_work` exposes `claim`, `status` and `release`. The adapter
+`pacomind_commitment_work` exposes `claim`, `status` and `release`. The adapter
 supplies the participant and native session/task/turn binding. The model cannot
 supply those fields or the fencing token. The HTTP operation reuses the existing
 `turns:write` scope and exact person grants. Legacy anonymous/global identity is
@@ -116,7 +116,7 @@ the previous observation is stale, not that work completed.
 
 The owner current-work view also reads bounded claimed/running records directly
 from the existing task queue. It includes a short task description, worker ID,
-canonical claim attempt, status and heartbeat age. This covers Apsimo workers
+canonical claim attempt, status and heartbeat age. This covers PacoMind workers
 and the private action executor while they use that queue protocol. No duplicate
 worker observations or heartbeat writer are introduced. Guest views receive no
 global queue rows. Missing heartbeats mean unknown liveness, never completion.
@@ -149,7 +149,7 @@ the bounded seven-day result history remains available through the API.
 
 ## Sharing an accepted local draft
 
-`colony_accept_local_draft` associates ordinary session requests with one active
+`pacomind_accept_local_draft` associates ordinary session requests with one active
 local draft for the same explicit commitment. Concurrent callers receive the
 same initiative and native Kanban task. Paraphrasing the question or reordering
 the source paths joins the existing active request: its canonical question and

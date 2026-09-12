@@ -9,10 +9,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import RequestAuthority, required_scope
-from apsimo.api.routers import executions
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.executions import ExecutionRegistry, format_view
+from pacomind.api.authority import RequestAuthority, required_scope
+from pacomind.api.routers import executions
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.executions import ExecutionRegistry, format_view
 from test_hermes_general_governance import runtime
 
 
@@ -26,7 +26,7 @@ def observation(name="a", **changes):
 
 @pytest.fixture
 def store(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     return ExecutionRegistry(TurnIdempotencyLedger(tmp_path / "turn-idempotency.db"))
 
 
@@ -77,14 +77,14 @@ def test_parent_scope_and_writer_are_immutable(store):
 
 @pytest.mark.asyncio
 async def test_api_binds_owner_and_subject_to_existing_authority(store, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     store.observe(observation(), principal_id="host", contact_id="contact-a")
     store.observe(observation("other"), principal_id="host", contact_id="contact-b")
     principal = [RequestAuthority(principal_id="guest-host", credential_id="key", scopes=frozenset({"context:read", "turns:write"}), viewer_person_id="contact-a", person_ids=frozenset({"contact-a"}), audiences=frozenset({"viewer"}), authenticated=True)]
     app = FastAPI()
     @app.middleware("http")
     async def auth(request, call_next):
-        request.state.colony_authority = principal[0]
+        request.state.pacomind_authority = principal[0]
         return await call_next(request)
     app.include_router(executions.router)
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
@@ -100,7 +100,7 @@ async def test_api_binds_owner_and_subject_to_existing_authority(store, monkeypa
         current = await client.get('/v1/host/executions', params={
             'contact_id': 'owner', 'projection': 'request', 'limit': 100})
         assert current.status_code == 200
-        assert current.json()['schema'] == 'ColonyRequestWorkV1'
+        assert current.json()['schema'] == 'PacoMindRequestWorkV1'
         assert observation()['execution_id'] in current.json()['text']
         assert len(current.json()['text']) <= 4000
         assert (await client.post("/v1/host/executions/observe", json=observation("write", contact_id="owner"))).status_code == 403
@@ -115,8 +115,8 @@ async def test_anonymous_and_legacy_cannot_claim_owner(store):
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
         assert (await client.get("/v1/host/executions", params={"contact_id": "owner"})).status_code == 403
         assert (await client.post("/v1/host/executions/observe", json=observation())).status_code == 403
-    from apsimo.api.authority import legacy_authority
-    request = SimpleNamespace(state=SimpleNamespace(colony_authority=legacy_authority()))
+    from pacomind.api.authority import legacy_authority
+    request = SimpleNamespace(state=SimpleNamespace(pacomind_authority=legacy_authority()))
     with pytest.raises(Exception) as error:
         executions.authorized_viewer(request, "owner", scope="context:read")
     assert error.value.status_code == 403
@@ -159,7 +159,7 @@ def test_adapter_parent_binding_rotation_and_interruption_reach_durable_registry
 
 def test_scope_conflict_does_not_replace_child_binding(store):
     from test_hermes_general_governance import _load_plugin
-    module = _load_plugin("colony_execution_binding_test")
+    module = _load_plugin("pacomind_execution_binding_test")
     observer = module.ExecutionObserver(SimpleNamespace(post=lambda *a, **k: SimpleNamespace(raise_for_status=lambda: None)))
     scope = SimpleNamespace(valid_participant=True, contact_id="contact-a", platform="sms")
     observer.start(scope, session_id="a", turn_id="ta")
@@ -174,7 +174,7 @@ def test_scope_conflict_does_not_replace_child_binding(store):
     ('error', 'failed'), ('interrupted', 'interrupted'), ('unrecognized', 'ended')])
 def test_native_child_stop_closes_only_exact_bound_child_after_rotation(store, status, state):
     from test_hermes_general_governance import _load_plugin
-    module = _load_plugin("colony_execution_child_stop_test")
+    module = _load_plugin("pacomind_execution_child_stop_test")
     calls = []
     observer = module.ExecutionObserver(SimpleNamespace(post=lambda path, **kw:
         calls.append(kw['json']) or SimpleNamespace(raise_for_status=lambda: None)))
@@ -201,9 +201,9 @@ def test_native_child_stop_closes_only_exact_bound_child_after_rotation(store, s
 
 @pytest.mark.asyncio
 async def test_owner_context_observes_other_sessions_but_guest_context_omits_them(store, monkeypatch):
-    from apsimo.api.routers import host
-    from apsimo.api.schemas.host import ContextAssembleRequest
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    from pacomind.api.routers import host
+    from pacomind.api.schemas.host import ContextAssembleRequest
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     monkeypatch.setattr(host, "_p8_runtime", None)
     # Other producer behavior is outside this focused read-view test.
     monkeypatch.setattr(host, "_require_scoped_context_runtime_for_guest", lambda *a: None)
@@ -211,10 +211,10 @@ async def test_owner_context_observes_other_sessions_but_guest_context_omits_the
     store.observe(observation("cron", platform="cron"), principal_id="host", contact_id="owner")
     for person in ("owner", "contact-a"):
         authority = RequestAuthority(principal_id="host-" + person, credential_id="key", scopes=frozenset({"context:read"}), viewer_person_id=person, person_ids=frozenset({person}), audiences=frozenset({"viewer"}), authenticated=True)
-        request = SimpleNamespace(state=SimpleNamespace(colony_authority=authority))
+        request = SimpleNamespace(state=SimpleNamespace(pacomind_authority=authority))
         body = ContextAssembleRequest(identity={"host_id": "test"}, context={"contact_id": person, "session_id": "new-chat"}, incoming_message={"role": "user", "content": "What are you doing now?"})
         response = await host.context_assemble(body, request)
-        sections = [s for s in response.sections if s.id == "colony-executions"]
+        sections = [s for s in response.sections if s.id == "pacomind-executions"]
         if person == "owner":
             assert len(sections) == 1
             assert "session-voice" in sections[0].body and "session-cron" in sections[0].body
@@ -225,12 +225,12 @@ async def test_owner_context_observes_other_sessions_but_guest_context_omits_the
 def test_enabled_tool_observer_preserves_owner_guest_authority(runtime):
     from test_hermes_general_governance import _pre, _tool
     module, context, _client, _mediator = runtime
-    context.config["plugins"]["colony"]["execution_registry_enabled"] = True
+    context.config["plugins"]["pacomind"]["execution_registry_enabled"] = True
     module.register(context)
     _pre(context, session="owner-session", task="owner-task", turn="owner-turn", platform="sms", sender="+15550001")
     _pre(context, session="guest-session", task="guest-task", turn="guest-turn", platform="sms", sender="+15550002")
-    owner = _tool(context, "colony_autonomy_status", {}, session="owner-session", task="owner-task", turn="owner-turn", call="call-owner")
-    guest = _tool(context, "colony_autonomy_status", {}, session="guest-session", task="guest-task", turn="guest-turn", call="call-guest")
+    owner = _tool(context, "pacomind_autonomy_status", {}, session="owner-session", task="owner-task", turn="owner-turn", call="call-owner")
+    guest = _tool(context, "pacomind_autonomy_status", {}, session="guest-session", task="guest-task", turn="guest-turn", call="call-guest")
     import json
     assert json.loads(owner)["running"] is True
     assert json.loads(guest).get("running") is not True
@@ -240,7 +240,7 @@ def test_enabled_tool_observer_preserves_owner_guest_authority(runtime):
 @pytest.mark.asyncio
 async def test_request_endpoint_fetches_quiet_parent_before_eight_row_projection(store, monkeypatch):
     import json
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "owner")
     monkeypatch.setattr(executions, "registry", lambda: store)
     now = [1000.0]
     store.clock = lambda: now[0]
@@ -257,7 +257,7 @@ async def test_request_endpoint_fetches_quiet_parent_before_eight_row_projection
     app = FastAPI()
     @app.middleware("http")
     async def auth(request, call_next):
-        request.state.colony_authority = RequestAuthority(principal_id="owner-host", credential_id="key",
+        request.state.pacomind_authority = RequestAuthority(principal_id="owner-host", credential_id="key",
             scopes=frozenset({"context:read"}), viewer_person_id="owner", person_ids=frozenset({"owner"}),
             audiences=frozenset({"owner"}), authenticated=True)
         return await call_next(request)

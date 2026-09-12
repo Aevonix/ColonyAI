@@ -12,8 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from assessment import assess
 import pytest
 from run import SelectionCapture, prepare_sources, environment
-from apsimo.memory.recall import calibration_fingerprint
-from apsimo.memory.selection import RecallSelector
+from pacomind.memory.recall import calibration_fingerprint
+from pacomind.memory.selection import RecallSelector
 
 ROOT = Path(__file__).resolve().parent
 
@@ -48,11 +48,11 @@ def test_http_run_reuses_extraction_and_rejects_unmarked_state(tmp_path):
     source = tmp_path / 'fixture.json'; source.write_text(json.dumps(fixture))
     state = tmp_path / 'state'; output = tmp_path / 'result.json'
     endpoint = f'http://127.0.0.1:{server.server_port}'
-    env = {k:v for k,v in os.environ.items() if not k.startswith(('COLONY_', 'OPENAI_', 'ANTHROPIC_'))}
+    env = {k:v for k,v in os.environ.items() if not k.startswith(('PACOMIND_', 'OPENAI_', 'ANTHROPIC_'))}
     for role, model in [('CHAT', 'smoke-chat'), ('EMBED', 'smoke-embed'), ('RERANKER', 'smoke-rerank')]:
-        env.update({f'COLONY_BENCH_{role}_BASE_URL': endpoint + ('/v1' if role == 'CHAT' else ''),
-                    f'COLONY_BENCH_{role}_MODEL': model, f'COLONY_BENCH_{role}_API_KEY': 'smoke-key-never-in-artifact'})
-    env['COLONY_BENCH_EMBED_DIMS'] = '4'
+        env.update({f'PACOMIND_BENCH_{role}_BASE_URL': endpoint + ('/v1' if role == 'CHAT' else ''),
+                    f'PACOMIND_BENCH_{role}_MODEL': model, f'PACOMIND_BENCH_{role}_API_KEY': 'smoke-key-never-in-artifact'})
+    env['PACOMIND_BENCH_EMBED_DIMS'] = '4'
     command = [sys.executable, str(ROOT / 'run.py'), '--fixture', str(source), '--state-dir', str(state),
                '--output', str(output), '--threshold', '.95']
     try:
@@ -81,7 +81,7 @@ def test_http_run_reuses_extraction_and_rejects_unmarked_state(tmp_path):
         source_only_fixture = tmp_path / 'source-only.json'
         source_only_fixture.write_text(json.dumps(fixture))
         source_only_output = tmp_path / 'source-only-result.json'
-        source_only_env = {key:value for key,value in env.items() if not key.startswith('COLONY_BENCH_CHAT_')}
+        source_only_env = {key:value for key,value in env.items() if not key.startswith('PACOMIND_BENCH_CHAT_')}
         completed = subprocess.run([sys.executable, str(ROOT / 'run.py'), '--source-only', '--split','holdout',
             '--fixture', str(source_only_fixture), '--state-dir', str(tmp_path / 'source-only-state'),
             '--output', str(source_only_output), '--threshold','.95'], env=source_only_env,
@@ -115,10 +115,10 @@ def test_assessment_rejects_missing_conflict_and_erased_derived_evidence():
 
 
 def test_source_only_preparation_keeps_tool_role_and_owner_correction(tmp_path):
-    from apsimo.turns import TurnIdempotencyLedger
-    from apsimo.beliefs.source_projection import SourceClaimProjection
-    from apsimo.beliefs.source_time import MemoryTimeQuery
-    from apsimo.turns.source_annotations import expand
+    from pacomind.turns import TurnIdempotencyLedger
+    from pacomind.beliefs.source_projection import SourceClaimProjection
+    from pacomind.beliefs.source_time import MemoryTimeQuery
+    from pacomind.turns.source_annotations import expand
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     raw = json.dumps({'output': '1: Carton limit: 12\n2: Applies to the narrow rack.'})
     fixture = {'records': [{'id': 'original', 'role': 'tool', 'at': '2026-01-01', 'content': raw}],
@@ -165,12 +165,12 @@ def test_usefulness_labels_distinguish_eligible_junk_and_missing_condition():
 
 def test_source_only_environment_does_not_require_extraction(monkeypatch):
     for key in list(os.environ):
-        if key.startswith('COLONY_BENCH_'):
+        if key.startswith('PACOMIND_BENCH_'):
             monkeypatch.delenv(key)
     for key, value in {'EMBED_BASE_URL':'http://fixture', 'EMBED_MODEL':'embed', 'EMBED_DIMS':'4',
                        'RERANKER_BASE_URL':'http://fixture', 'RERANKER_MODEL':'rerank'}.items():
-        monkeypatch.setenv('COLONY_BENCH_' + key, value)
-    assert 'COLONY_CHAT_MODEL' not in environment(source_only=True)
+        monkeypatch.setenv('PACOMIND_BENCH_' + key, value)
+    assert 'PACOMIND_CHAT_MODEL' not in environment(source_only=True)
     with pytest.raises(ValueError, match='CHAT_BASE_URL'):
         environment()
 
@@ -207,9 +207,9 @@ async def replay_observation(capture, monkeypatch, *, limit=None):
             monkeypatch.setenv(key, value)
     # The endpoint was omitted. Reproduce its observed equality decision using
     # only the safe metadata, without pretending to recover that endpoint.
-    expected = capture['environment']['COLONY_RECALL_RERANK_CALIBRATION']
+    expected = capture['environment']['PACOMIND_RECALL_RERANK_CALIBRATION']
     if expected == capture['calibration_fingerprint']:
-        monkeypatch.setenv('COLONY_RECALL_RERANK_CALIBRATION', calibration_fingerprint(capture['calibration']))
+        monkeypatch.setenv('PACOMIND_RECALL_RERANK_CALIBRATION', calibration_fingerprint(capture['calibration']))
     requests = []
     async def replay(query, documents, top_k):
         index = len(requests)
@@ -234,10 +234,10 @@ async def replay_observation(capture, monkeypatch, *, limit=None):
 def test_selection_capture_roundtrip_and_unscored_input_rejection(monkeypatch):
     calibration = {'provider': 'synthetic', 'model': 'fixture', 'weights_revision': 'fixture-v1',
                    'endpoint': 'https://not-recorded.example/secret', 'api_key': 'not-recorded-key'}
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'on')
-    monkeypatch.setenv('COLONY_RECALL_RERANK_MIN_SCORE', '.95')
-    monkeypatch.setenv('COLONY_RECALL_RERANK_TIMEOUT_MS', '1200')
-    monkeypatch.setenv('COLONY_RECALL_RERANK_CALIBRATION', calibration_fingerprint(calibration))
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'on')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK_MIN_SCORE', '.95')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK_TIMEOUT_MS', '1200')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK_CALIBRATION', calibration_fingerprint(calibration))
     monkeypatch.setenv('UNRELATED_SECRET', 'not-recorded-environment')
     beliefs = [{'id': f'row-{i}', 'content': f'Observation {i}', 'source_uri': f'turn:source-{i}'}
                for i in range(25)]
@@ -266,10 +266,10 @@ def test_selection_capture_roundtrip_and_unscored_input_rejection(monkeypatch):
 
 @pytest.mark.parametrize('failure', ['error', 'cancelled'])
 def test_selection_capture_retains_unavailable_without_error_body(monkeypatch, failure):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'on')
-    monkeypatch.setenv('COLONY_RECALL_RERANK_MIN_SCORE', '')
-    monkeypatch.setenv('COLONY_RECALL_RERANK_TIMEOUT_MS', '1')
-    monkeypatch.delenv('COLONY_RECALL_RERANK_CALIBRATION', raising=False)
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'on')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK_MIN_SCORE', '')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK_TIMEOUT_MS', '1')
+    monkeypatch.delenv('PACOMIND_RECALL_RERANK_CALIBRATION', raising=False)
     async def unavailable(query, documents, top_k):
         if failure == 'error':
             raise RuntimeError('https://not-recorded.example/private?key=not-recorded')

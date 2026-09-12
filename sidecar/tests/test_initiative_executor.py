@@ -17,7 +17,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from apsimo.services.initiative_executor import (
+from pacomind.services.initiative_executor import (
     InitiativeExecutorService,
     create_from_env,
     _build_initiative_prompt,
@@ -95,7 +95,7 @@ class FakeReasoningLoop:
 # ---------------------------------------------------------------------------
 
 def test_factory_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("COLONY_EXECUTOR_ENABLED", raising=False)
+    monkeypatch.delenv("PACOMIND_EXECUTOR_ENABLED", raising=False)
     result = create_from_env(
         initiative_store=FakeStore(),
         reasoning_loop=FakeReasoningLoop(),
@@ -104,7 +104,7 @@ def test_factory_disabled_by_default(monkeypatch):
 
 
 def test_factory_enabled(monkeypatch):
-    monkeypatch.setenv("COLONY_EXECUTOR_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_ENABLED", "true")
     result = create_from_env(
         initiative_store=FakeStore(),
         reasoning_loop=FakeReasoningLoop(),
@@ -114,7 +114,7 @@ def test_factory_enabled(monkeypatch):
 
 
 def test_factory_needs_reasoning_loop(monkeypatch):
-    monkeypatch.setenv("COLONY_EXECUTOR_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_ENABLED", "true")
     result = create_from_env(
         initiative_store=FakeStore(),
         reasoning_loop=None,
@@ -123,7 +123,7 @@ def test_factory_needs_reasoning_loop(monkeypatch):
 
 
 def test_factory_needs_store(monkeypatch):
-    monkeypatch.setenv("COLONY_EXECUTOR_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_ENABLED", "true")
     result = create_from_env(
         initiative_store=None,
         reasoning_loop=FakeReasoningLoop(),
@@ -132,8 +132,8 @@ def test_factory_needs_store(monkeypatch):
 
 
 def test_factory_custom_types(monkeypatch):
-    monkeypatch.setenv("COLONY_EXECUTOR_ENABLED", "true")
-    monkeypatch.setenv("COLONY_EXECUTOR_TYPES", "follow_up,commitment")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_TYPES", "follow_up,commitment")
     svc = create_from_env(
         initiative_store=FakeStore(),
         reasoning_loop=FakeReasoningLoop(),
@@ -142,11 +142,11 @@ def test_factory_custom_types(monkeypatch):
 
 
 def test_factory_custom_config(monkeypatch):
-    monkeypatch.setenv("COLONY_EXECUTOR_ENABLED", "true")
-    monkeypatch.setenv("COLONY_EXECUTOR_CYCLE_SECS", "15")
-    monkeypatch.setenv("COLONY_EXECUTOR_MAX_PER_CYCLE", "3")
-    monkeypatch.setenv("COLONY_EXECUTOR_MODEL_TIER", "medium")
-    monkeypatch.setenv("COLONY_EXECUTOR_AGENT_ID", "my-executor")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_CYCLE_SECS", "15")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_MAX_PER_CYCLE", "3")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_MODEL_TIER", "medium")
+    monkeypatch.setenv("PACOMIND_EXECUTOR_AGENT_ID", "my-executor")
     svc = create_from_env(
         initiative_store=FakeStore(),
         reasoning_loop=FakeReasoningLoop(),
@@ -380,9 +380,9 @@ async def test_execute_one_retries_on_timeout(monkeypatch):
 @pytest.mark.asyncio
 async def test_execute_one_refuses_boundary_violation():
     """A boundary the owner set must stop the executor before it acts."""
-    from apsimo.directives import DirectiveManager, DirectiveStore
+    from pacomind.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("From now on, Don't touch the colony-web repo")
+    dm.capture_from_message("From now on, Don't touch the pacomind-web repo")
     store = FakeStore([FakeInitiative()])
     reasoning = FakeReasoningLoop()
     svc = InitiativeExecutorService(
@@ -392,8 +392,8 @@ async def test_execute_one_refuses_boundary_violation():
         directive_manager=dm,
     )
     init = FakeInitiative(
-        description="clone and refactor the colony-web repo",
-        entity_id="colony-web",
+        description="clone and refactor the pacomind-web repo",
+        entity_id="pacomind-web",
     )
     await svc._execute_one(init)
     # never reasoned or executed
@@ -406,8 +406,8 @@ async def test_execute_one_refuses_boundary_violation():
 @pytest.mark.asyncio
 async def test_execute_one_fails_closed_when_boundary_check_raises(monkeypatch):
     """An owner boundary the executor cannot evaluate must refuse, not allow."""
-    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
-    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+    monkeypatch.delenv("PACOMIND_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
 
     class ExplodingDirectives:
         def check(self, action):
@@ -432,9 +432,9 @@ async def test_execute_one_fails_closed_when_boundary_check_raises(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_execute_one_allows_when_no_boundary_matches():
-    from apsimo.directives import DirectiveManager, DirectiveStore
+    from pacomind.directives import DirectiveManager, DirectiveStore
     dm = DirectiveManager(DirectiveStore(db_path=None))
-    dm.capture_from_message("From now on, Don't touch the colony-web repo")
+    dm.capture_from_message("From now on, Don't touch the pacomind-web repo")
     store = FakeStore([FakeInitiative()])
     reasoning = FakeReasoningLoop()
     svc = InitiativeExecutorService(

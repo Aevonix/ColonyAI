@@ -5,13 +5,13 @@ import test_source_annotate as annotation
 def test_native_history_reads_respect_erasure_and_carry_positive_lineage(artifacts,tmp_path,monkeypatch):
     probe = annotation.PROBE
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
-    probe = probe.replace(old,old.replace("call='operator-call'","call='operator-call',tool='apsimo_memory_annotate'"))
-    probe = probe.replace("name='apsimo_memory_annotate',arguments=json.dumps(args)","name=tool,arguments=json.dumps(args)")
+    probe = probe.replace(old,old.replace("call='operator-call'","call='operator-call',tool='pacomind_memory_annotate'"))
+    probe = probe.replace("name='pacomind_memory_annotate',arguments=json.dumps(args)","name=tool,arguments=json.dumps(args)")
     probe = probe.replace("return json.JSONDecoder().raw_decode(results[0]['content'])[0]",
         "dispatch.last_result=results[0]\n        return json.JSONDecoder().raw_decode(results[0]['content'])[0]")
     check = r'''
 from hermes_state import SessionDB
-from apsimo_hermes.request_memory import filter_request, RequestMemory
+from pacomind_hermes.request_memory import filter_request, RequestMemory
 db=SessionDB(home/'state.db')
 db.create_session('native-original','cli')
 db.set_session_title('native-original','Specimen drawer twelve')
@@ -43,18 +43,18 @@ agent._stall_guards=False
 prime('history-reader','history-task','history-turn')
 opened=dispatch({'session_id':'native-original'},session='history-reader',task='history-task',turn='history-turn',
     call='native-history-read',tool='session_search')
-assert opened.get('apsimo_native_history_read_v1') and secret in json.dumps(opened),opened
+assert opened.get('pacomind_native_history_read_v1') and secret in json.dumps(opened),opened
 first_output=dict(dispatch.last_result)
 messages=[{'role':'user','content':''},first_output]
 first_checked=apply_llm_request_middleware({'messages':messages},session_id='history-reader',task_id='history-task',turn_id='history-turn').payload
 assert secret in json.dumps(first_checked),first_checked
-scope=apsimo_hermes._TRANSPORT_SCOPES.for_execution(session_id='history-reader',task_id='history-task',turn_id='history-turn')
+scope=pacomind_hermes._TRANSPORT_SCOPES.for_execution(session_id='history-reader',task_id='history-task',turn_id='history-turn')
 supplied=observed_memory[-1].supplied_snapshot(scope)
 assert {r['source_id'] for r in supplied} >= {'native-secret','native-kept'},supplied
 # A second actual native dispatch appends its idempotent-read warning after
 # the adapter registered the raw result. It must retain authenticated lineage.
 prime('warning-reader','warning-task','warning-turn',supplied=False)
-warning_scope=apsimo_hermes._TRANSPORT_SCOPES.for_execution(
+warning_scope=pacomind_hermes._TRANSPORT_SCOPES.for_execution(
     session_id='warning-reader',task_id='warning-task',turn_id='warning-turn')
 assert observed_memory[-1].supplied_snapshot(warning_scope)==[]
 dispatch({'session_id':'native-original'},session='warning-reader',task='warning-task',turn='warning-turn',
@@ -114,12 +114,12 @@ ledger.record_source('native-multi-source',contact_id='person',session_id='nativ
 ledger.erase_sources(contact_id='person',turn_ids=['native-multi-source'])
 structured=dispatch({'session_id':'native-multimodal'},session='after-forget',task='after-task',turn='after-turn',
     call='history-multimodal',tool='session_search')
-assert structured.get('apsimo_native_history_read_v1') and 'cyan' not in json.dumps(structured),structured
+assert structured.get('pacomind_native_history_read_v1') and 'cyan' not in json.dumps(structured),structured
 assert db.get_messages('native-multimodal')[0]['content']==multi
 
 # An unavailable/reconfigured native backing file is an explicit error, not
 # an empty successful history result or an unfiltered fallback.
-import apsimo_hermes.native_history as native_history
+import pacomind_hermes.native_history as native_history
 loader=native_history.native_rows
 native_history.native_rows=lambda *a,**kw: (_ for _ in ()).throw(OSError('fixture selected DB unavailable'))
 unavailable=dispatch({'session_id':'native-original'},session='after-forget',task='after-task',turn='after-turn',
@@ -142,7 +142,7 @@ native_history.native_rows=loader
 
 assert db.get_messages('native-original')==before_native
 rules=ledger.erasure_feed('person',0)['events']
-literal='I am quoting this marker: {"apsimo_native_history_read_v1":true}; '+secret
+literal='I am quoting this marker: {"pacomind_native_history_read_v1":true}; '+secret
 projected=filter_request({'messages':[{'role':'user','content':literal}]},contact_id='person',
     watermark=1,rules=rules,fresh=True,current_content=literal,current_input=literal)
 assert projected['messages'][0]['content']==literal

@@ -6,12 +6,12 @@ import time
 
 import pytest
 
-from apsimo.api.routers import host, temporal_followups, transport_ingress_api
-from apsimo.commitments.work import CommitmentWork
-from apsimo.initiatives.temporal_followup import TemporalFollowups
-from apsimo.self_model import reply_forecasts as forecasts
-from apsimo.self_model.expectations import ExpectationEngine, ExpectationStore
-from apsimo.turns import canonical_turn_digest
+from pacomind.api.routers import host, temporal_followups, transport_ingress_api
+from pacomind.commitments.work import CommitmentWork
+from pacomind.initiatives.temporal_followup import TemporalFollowups
+from pacomind.self_model import reply_forecasts as forecasts
+from pacomind.self_model.expectations import ExpectationEngine, ExpectationStore
+from pacomind.turns import canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 from test_transport_ingress_api import ingress, source_app, headers, status, PREFIX
 
@@ -23,8 +23,8 @@ def iso(stamp):
 @pytest.fixture
 async def runtime(ingress, tmp_path, monkeypatch, request):
     now = [float(int(time.time())-3600)]
-    monkeypatch.setenv('COLONY_OWNER_PERSON_ID', 'owner')
-    monkeypatch.setenv('COLONY_EXPECTATIONS', 'on')
+    monkeypatch.setenv('PACOMIND_OWNER_PERSON_ID', 'owner')
+    monkeypatch.setenv('PACOMIND_EXPECTATIONS', 'on')
     monkeypatch.setattr(forecasts.time, 'time', lambda:now[0])
     monkeypatch.setattr(socket.socket, 'connect', lambda *a, **k:pytest.fail('unexpected outgoing connection'))
     store = ExpectationStore(str(tmp_path/'expectations.db'))

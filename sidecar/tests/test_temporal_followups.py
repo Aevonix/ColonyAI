@@ -5,8 +5,8 @@ import hashlib
 
 import pytest
 
-from apsimo.commitments.store import CommitmentStore
-from apsimo.initiatives.temporal_followup import TemporalFollowups, encoded
+from pacomind.commitments.store import CommitmentStore
+from pacomind.initiatives.temporal_followup import TemporalFollowups, encoded
 
 
 def fixture(tmp_path, **options):

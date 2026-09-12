@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import asyncio
 
-from apsimo.directed import (
+from pacomind.directed import (
     ScopedTask, ScopedTaskStore, ScopeLimits, scope_from_directive,
     audit_via_report, audit_completion, DirectedActionService,
 )
-from apsimo.directives import DirectiveManager, DirectiveStore
+from pacomind.directives import DirectiveManager, DirectiveStore
 
 
 _KNOWN = [{"kind": "repo", "name": "widget-api", "aliases": "the widget repo"},
@@ -93,7 +93,7 @@ def test_gate_mutating_requires_approval_then_approve():
 # ---------------------------------------------------------------------------
 
 def test_dispatch_dry_run_sends_nothing(monkeypatch):
-    monkeypatch.setenv("COLONY_DIRECTED_MODE", "dry_run")
+    monkeypatch.setenv("PACOMIND_DIRECTED_MODE", "dry_run")
     svc = _service()
     async def run():
         t = await svc.intake("analyze the code")
@@ -107,7 +107,7 @@ def test_dispatch_dry_run_sends_nothing(monkeypatch):
 
 
 def test_dispatch_refuses_unapproved(monkeypatch):
-    monkeypatch.setenv("COLONY_DIRECTED_MODE", "dry_run")
+    monkeypatch.setenv("PACOMIND_DIRECTED_MODE", "dry_run")
     svc = _service()
     async def run():
         t = await svc.intake("refactor everything")   # mutating -> awaiting
@@ -125,7 +125,7 @@ def _mtask(**kw):
     return ScopedTask(
         directive_text="fix bug", objective="fix bug",
         allowed_ops=["analyze", "read", "modify_files", "commit", "push_branch"],
-        limits=ScopeLimits(branch_prefix="colony/", max_commits=3,
+        limits=ScopeLimits(branch_prefix="pacomind/", max_commits=3,
                            path_globs=["src/**"]),
         **kw)
 
@@ -134,7 +134,7 @@ def test_audit_clean_report():
     t = _mtask()
     a = audit_via_report(t, {
         "summary": "fixed", "operations": ["read", "modify_files", "commit"],
-        "files_touched": ["src/x.py"], "commits": 2, "branch": "colony/fix-bug"})
+        "files_touched": ["src/x.py"], "commits": 2, "branch": "pacomind/fix-bug"})
     assert a["ok"] is True and a["findings"] == []
 
 
@@ -155,7 +155,7 @@ def test_audit_flags_out_of_scope():
 def test_audit_mutation_on_readonly_scope():
     t = ScopedTask(directive_text="just look", allowed_ops=["analyze", "read"])
     a = audit_via_report(t, {"summary": "oops", "operations": ["commit"],
-                             "commits": 1, "branch": "colony/x",
+                             "commits": 1, "branch": "pacomind/x",
                              "files_touched": []})
     assert a["ok"] is False
     assert any("read-only scope" in f for f in a["findings"])

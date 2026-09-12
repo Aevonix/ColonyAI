@@ -6,10 +6,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.audio import source_text
-from apsimo.turns.idempotency import source_message_hash
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.audio import source_text
+from pacomind.turns.idempotency import source_message_hash
 from test_source_audio import message, retained
 from test_source_claim_projection import claim, Model, prepared
 
@@ -55,8 +55,8 @@ class AudioModel(Model):
 
 @pytest.mark.asyncio
 async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_lineage(tmp_path):
-    from apsimo.memory.recall import pack_memory_context
-    from apsimo.turns.source_read import read
+    from pacomind.memory.recall import pack_memory_context
+    from pacomind.turns.source_read import read
     from test_procedure_source_context import candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db')
     text = 'My office is in River.'
@@ -110,7 +110,7 @@ async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_l
 
 @pytest.mark.asyncio
 async def test_audio_procedure_keeps_unclaimed_condition_and_exact_segment_basis(tmp_path):
-    from apsimo.memory.recall import pack_memory_context
+    from pacomind.memory.recall import pack_memory_context
     from test_procedure_source_context import candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db')
     step = 'For the pump inspection, record the inlet reading.'
@@ -225,8 +225,8 @@ async def test_asr_corrected_by_text_keeps_spans_and_does_not_revive_erased_corr
 
 @pytest.mark.asyncio
 async def test_asr_annotation_matches_original_revision_and_fences_recalled_claim(tmp_path):
-    from apsimo.turns.source_annotations import expand, current_candidates
-    from apsimo.memory.recall import source_candidates
+    from pacomind.turns.source_annotations import expand, current_candidates
+    from pacomind.memory.recall import source_candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); projection = SourceClaimProjection(ledger)
     text = 'My office is in River.'; _, rendered = record(ledger, text)
     await projection.process_one(AudioModel({rendered: claim(text, 'River', memory_kind='preference')}))
@@ -245,9 +245,9 @@ async def test_asr_annotation_matches_original_revision_and_fences_recalled_clai
 
 @pytest.mark.asyncio
 async def test_only_transcript_preference_read_retains_provenance_without_affect_or_judgment(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
-    from apsimo.self_model.appraisals import AppraisalStore
-    from apsimo.self_model.judgments import SelfJudgments
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
+    from pacomind.self_model.appraisals import AppraisalStore
+    from pacomind.self_model.judgments import SelfJudgments
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); projection = SourceClaimProjection(ledger)
     text = 'I prefer jasmine tea without sugar.'; _, rendered = record(ledger, text)
     await projection.process_one(AudioModel({rendered: claim(text, 'jasmine tea without sugar',
@@ -268,8 +268,8 @@ async def test_only_transcript_preference_read_retains_provenance_without_affect
 
 @pytest.mark.asyncio
 async def test_commit_rebuilds_asr_view_instead_of_trusting_preserved_original_hash(tmp_path):
-    from apsimo.turns.audio import claim_message
-    from apsimo.beliefs.source_claims import extract_claims
+    from pacomind.turns.audio import claim_message
+    from pacomind.beliefs.source_claims import extract_claims
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); projection = SourceClaimProjection(ledger)
     text = 'My office is in River.'; record(ledger, text)
     job = projection.claim_job(); view = claim_message(retained(ledger))

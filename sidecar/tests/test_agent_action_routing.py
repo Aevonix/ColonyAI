@@ -10,38 +10,38 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.api.routers import task_queue as queue_router
-from apsimo.cognition.goal_spine import ThoughtJobV1
-from apsimo.task_queue.models import (
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.api.routers import task_queue as queue_router
+from pacomind.cognition.goal_spine import ThoughtJobV1
+from pacomind.task_queue.models import (
     Job,
     JobCapabilityRequirement,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.action_receipts import (
+from pacomind.task_queue.action_receipts import (
     ActionReceiptAttestationV1,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
-from apsimo.task_queue.routing import (
+from pacomind.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.routing import (
     ACTION_PLANE_ROUTE,
     AGENT_SYNC_ROUTE,
     HERMES_RUN_ROUTE,
     WORK_ORDER_ROUTE,
     THOUGHT_ROUTE,
 )
-from apsimo.work_orders import WorkOrderV1
+from pacomind.work_orders import WorkOrderV1
 
 
 @pytest.fixture(autouse=True)
 def _isolated_authority(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "strict")
-    monkeypatch.delenv("COLONY_AGENT_SYNC_WORKER_NODE_ID", raising=False)
-    monkeypatch.delenv("COLONY_HERMES_RUN_WORKER_NODE_ID", raising=False)
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "strict")
+    monkeypatch.delenv("PACOMIND_AGENT_SYNC_WORKER_NODE_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_HERMES_RUN_WORKER_NODE_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
 
 
 async def _manager(tmp_path, name="queue.db") -> TaskQueueManager:
@@ -137,13 +137,13 @@ def _work_order_job(
 @pytest.mark.parametrize(
     ("kind", "owner_env", "owner", "eligible"),
     [
-        ("sync", "COLONY_AGENT_SYNC_WORKER_NODE_ID", "sync-node",
+        ("sync", "PACOMIND_AGENT_SYNC_WORKER_NODE_ID", "sync-node",
          {AGENT_SYNC_ROUTE}),
-        ("effect", "COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node",
+        ("effect", "PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node",
          {ACTION_PLANE_ROUTE}),
-        ("work_order", "COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node",
+        ("work_order", "PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node",
          {WORK_ORDER_ROUTE, ACTION_PLANE_ROUTE}),
-        ("hermes", "COLONY_HERMES_RUN_WORKER_NODE_ID", "text-node",
+        ("hermes", "PACOMIND_HERMES_RUN_WORKER_NODE_ID", "text-node",
          {HERMES_RUN_ROUTE}),
     ],
 )
@@ -360,7 +360,7 @@ async def test_work_order_restart_normalizes_inactive_and_quarantines_malformed(
 async def test_work_order_active_restart_holds_without_rewrite(
     tmp_path, monkeypatch, variant,
 ):
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node")
     db_path = tmp_path / f"work-order-active-{variant}.db"
     manager = await _manager(tmp_path, db_path.name)
     try:
@@ -434,8 +434,8 @@ async def test_work_order_active_restart_holds_without_rewrite(
 async def test_central_claim_kill_switch_skips_generic_but_keeps_action_plane(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node")
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node")
     manager = await _manager(tmp_path)
     try:
         generic = Job(
@@ -587,7 +587,7 @@ async def test_inactive_restart_canonicalizes_or_quarantines_legacy_rows(
 async def test_inactive_graduated_effect_migration_restores_gate_and_receipt_contract(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     db_path = tmp_path / "graduated-effect-migration.db"
     manager = await _manager(tmp_path, db_path.name)
     try:
@@ -639,7 +639,7 @@ async def test_active_restart_never_rewrites_route_or_owner_drift(
     tmp_path, monkeypatch, variant, ready,
 ):
     db_path = tmp_path / f"active-{variant}.db"
-    monkeypatch.setenv("COLONY_AGENT_SYNC_WORKER_NODE_ID", "sync-node")
+    monkeypatch.setenv("PACOMIND_AGENT_SYNC_WORKER_NODE_ID", "sync-node")
     manager = await _manager(tmp_path, db_path.name)
     try:
         job = Job(
@@ -660,7 +660,7 @@ async def test_active_restart_never_rewrites_route_or_owner_drift(
             )
         elif variant == "changed_owner":
             monkeypatch.setenv(
-                "COLONY_AGENT_SYNC_WORKER_NODE_ID", "replacement-node"
+                "PACOMIND_AGENT_SYNC_WORKER_NODE_ID", "replacement-node"
             )
         elif variant == "missing_risk":
             payload = dict(claimed.payload)
@@ -699,7 +699,7 @@ async def test_active_restart_never_rewrites_route_or_owner_drift(
 @pytest.mark.asyncio
 async def test_active_unapproved_effect_holds_restart(tmp_path, monkeypatch):
     db_path = tmp_path / "active-effect.db"
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node")
     manager = await _manager(tmp_path, db_path.name)
     try:
         job = Job(
@@ -772,7 +772,7 @@ async def test_post_rejects_caller_active_state_and_spoofed_risk_or_approval(
 async def test_forged_outbound_policy_tags_never_authorize_direct_post_or_claim(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     manager = await _manager(tmp_path)
     try:
         outbound = Job(
@@ -822,7 +822,7 @@ async def test_forged_outbound_policy_tags_never_authorize_direct_post_or_claim(
 async def test_graduated_mutating_policy_cannot_replace_canonical_authority(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "graduated")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "graduated")
     manager = await _manager(tmp_path)
     try:
         mutation = Job(
@@ -844,7 +844,7 @@ async def test_graduated_mutating_policy_cannot_replace_canonical_authority(
 async def test_action_effect_attestation_releases_dependency_and_writeback(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node")
     manager = await _manager(tmp_path)
     try:
         effect = Job(
@@ -971,8 +971,8 @@ async def test_action_effect_attestation_releases_dependency_and_writeback(
 async def test_action_receipt_rejects_stale_or_future_chronology(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node")
-    monkeypatch.setenv("COLONY_ACTION_RECEIPT_CLOCK_SKEW_SECS", "1")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node")
+    monkeypatch.setenv("PACOMIND_ACTION_RECEIPT_CLOCK_SKEW_SECS", "1")
     manager = await _manager(tmp_path)
     try:
         effect = Job(
@@ -1034,7 +1034,7 @@ async def test_action_receipt_rejects_stale_or_future_chronology(
 async def test_skipped_action_dependency_propagates_without_attestation(
     tmp_path, monkeypatch, kind,
 ):
-    monkeypatch.setenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", "action-node")
+    monkeypatch.setenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", "action-node")
     manager = await _manager(tmp_path)
     try:
         if kind == "work_order":
@@ -1140,7 +1140,7 @@ async def test_approval_does_not_erase_dependency_gate(tmp_path):
 async def test_thought_route_race_requires_live_exact_cognition_owner(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_THOUGHT_WORKER_NODE_ID", "thought-node")
+    monkeypatch.setenv("PACOMIND_THOUGHT_WORKER_NODE_ID", "thought-node")
     manager = await _manager(tmp_path)
     try:
         job = _thought_job()
@@ -1200,7 +1200,7 @@ async def test_thought_route_race_requires_live_exact_cognition_owner(
 async def test_thought_readiness_compare_and_set_preserves_valid_owner(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_THOUGHT_WORKER_NODE_ID", "thought-node")
+    monkeypatch.setenv("PACOMIND_THOUGHT_WORKER_NODE_ID", "thought-node")
     manager = await _manager(tmp_path)
     try:
         queue = manager.queue
@@ -1241,7 +1241,7 @@ async def test_thought_readiness_compare_and_set_preserves_valid_owner(
 async def test_thought_restart_normalizes_inactive_and_holds_active_drift(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_THOUGHT_WORKER_NODE_ID", "thought-node")
+    monkeypatch.setenv("PACOMIND_THOUGHT_WORKER_NODE_ID", "thought-node")
     inactive_path = tmp_path / "thought-inactive.db"
     manager = await _manager(tmp_path, inactive_path.name)
     try:

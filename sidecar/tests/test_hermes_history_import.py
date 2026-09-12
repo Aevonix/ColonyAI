@@ -6,9 +6,9 @@ import sqlite3
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.hermes_history import import_history, mapping_document
-from apsimo.turns.idempotency import source_message_hash
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.hermes_history import import_history, mapping_document
+from pacomind.turns.idempotency import source_message_hash
 from test_turn_source_evidence import source_app, recalled
 
 
@@ -83,7 +83,7 @@ def test_dry_run_and_resumable_source_only_import(history,tmp_path):
 async def test_imported_quotation_reaches_existing_context_and_erasure(history,tmp_path,source_app,monkeypatch):
     database,mapping=history
     import_history(database,mapping,state_dir=tmp_path,apply=True)
-    monkeypatch.setenv('COLONY_RECALL_RERANK','off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK','off')
     async with AsyncClient(transport=ASGITransport(app=source_app),base_url='http://test') as client:
         text=await recalled(client,contact='contact-a',session='later',query='hydrofoil')
         assert 'neutral hydrofoil departs Friday at nine' in text and 'hermes-history:neutral-home:1' in text

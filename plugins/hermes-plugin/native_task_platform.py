@@ -16,11 +16,11 @@ from gateway.platforms.event import MessageEvent, MessageType
 from .task_handoffs import TaskHandoffError
 
 
-PLATFORM = 'colony_task'
-TASK_ROLE_METADATA = 'colony_task_model_role'
-ACTIVE = ContextVar('colony_native_task_handler', default=None)
-CONTROL = ContextVar('colony_native_task_control', default=None)
-CONTROL_UPDATE = ContextVar('colony_native_task_control_update', default=None)
+PLATFORM = 'pacomind_task'
+TASK_ROLE_METADATA = 'pacomind_task_model_role'
+ACTIVE = ContextVar('pacomind_native_task_handler', default=None)
+CONTROL = ContextVar('pacomind_native_task_control', default=None)
+CONTROL_UPDATE = ContextVar('pacomind_native_task_control_update', default=None)
 TASK_DELIVERY_CONTEXT = (
     'This is an accepted background task. Keep the original requested scope and '
     'return a concise result, retaining material uncertainty, failures and required '

@@ -8,8 +8,8 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import apsimo.api.routers.host as host_mod
-from apsimo.self_model.expectations import (
+import pacomind.api.routers.host as host_mod
+from pacomind.self_model.expectations import (
     ExpectationEngine, ExpectationStore, Prediction,
 )
 
@@ -252,7 +252,7 @@ async def test_api_unavailable():
 
 from types import SimpleNamespace
 
-from apsimo.world_model import expectation_resolvers as wr
+from pacomind.world_model import expectation_resolvers as wr
 
 
 class FakeWorldStore:

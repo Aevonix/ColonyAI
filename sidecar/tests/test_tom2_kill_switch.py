@@ -1,6 +1,6 @@
 """L4.4 — kill switch + end-to-end default-inertness.
 
-COLONY_TOM2_LEVEL=0 is the single-variable panic path (docs/TOM2-LEVELS.md):
+PACOMIND_TOM2_LEVEL=0 is the single-variable panic path (docs/TOM2-LEVELS.md):
 rendering stops next turn for every reader and conversation, while the
 egress net stays armed for taints already in the wild. And with EVERY flag
 at its shipped default, the whole leveled system is invisible end to end.
@@ -12,23 +12,23 @@ from types import SimpleNamespace
 
 import pytest
 
-import apsimo.api.routers.host as host
-from apsimo.api.schemas.host import (
+import pacomind.api.routers.host as host
+from pacomind.api.schemas.host import (
     ContextAssembleRequest, ContextSection, HostIdentity, HostMessage,
     HostTurnContext,
 )
-from apsimo.channels.presence import ConversationPresenceStore
-from apsimo.gate.layers.tom2_epistemic import Tom2EpistemicGuard
-from apsimo.gate.response_guard import GuardMode, ResponseGuard
-from apsimo.gate.taint import TaintRegistry
-from apsimo.proposals import ProposalStore
-from apsimo.tom.approvals import Tom2ApprovalRegistry
-from apsimo.tom.exposure import Tom2ExposureStore
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.levels import (
+from pacomind.channels.presence import ConversationPresenceStore
+from pacomind.gate.layers.tom2_epistemic import Tom2EpistemicGuard
+from pacomind.gate.response_guard import GuardMode, ResponseGuard
+from pacomind.gate.taint import TaintRegistry
+from pacomind.proposals import ProposalStore
+from pacomind.tom.approvals import Tom2ApprovalRegistry
+from pacomind.tom.exposure import Tom2ExposureStore
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.levels import (
     clear_level_cache, resolve_effective_level, set_evidence_probe)
-from apsimo.tom.tom2 import Tom2Store
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.tom.tom2 import Tom2Store
+from pacomind.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 READER = "cid-alice"
@@ -37,10 +37,10 @@ CONV = "dm:cid-alice"
 FACT_TEXT = "the launch moved to friday"
 
 _DEFAULT_VARS = (
-    "COLONY_TOM2_LEVEL", "COLONY_TOM2_MAX_LEVEL", "COLONY_TOM2_RISK_CAPS",
-    "COLONY_TOM2_CROSS_CONTEXT", "COLONY_TOM2_CONTEXT",
-    "COLONY_TOM2_L2_APPROVAL", "COLONY_GUARD_ENFORCE_CHECKS",
-    "COLONY_GUARD_DERIVE_CONTEXT", "COLONY_ENV_RISK_GATEWAY_CLASS",
+    "PACOMIND_TOM2_LEVEL", "PACOMIND_TOM2_MAX_LEVEL", "PACOMIND_TOM2_RISK_CAPS",
+    "PACOMIND_TOM2_CROSS_CONTEXT", "PACOMIND_TOM2_CONTEXT",
+    "PACOMIND_TOM2_L2_APPROVAL", "PACOMIND_GUARD_ENFORCE_CHECKS",
+    "PACOMIND_GUARD_DERIVE_CONTEXT", "PACOMIND_ENV_RISK_GATEWAY_CLASS",
 )
 
 
@@ -82,7 +82,7 @@ def _reset():
 
 @pytest.fixture()
 def world(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", OWNER)
     ledger = TurnIdempotencyLedger(tmp_path / "turns.db")
     ledger.record_source("fixture-source", contact_id=READER, session_id="s1",
         messages=[{"role": "user", "content": FACT_TEXT}], derive_claims=False)
@@ -122,15 +122,15 @@ def world(monkeypatch, tmp_path):
 
 
 def _leveled(resp):
-    return [s for s in resp.sections if s.id in ("colony-tom2-l1",
-                                                 "colony-tom2-l2")]
+    return [s for s in resp.sections if s.id in ("pacomind-tom2-l1",
+                                                 "pacomind-tom2-l2")]
 
 
 def _arm_level2(monkeypatch):
-    monkeypatch.setenv("COLONY_ENV_RISK_GATEWAY_CLASS", "dm:private")
-    monkeypatch.setenv("COLONY_TOM2_LEVEL", "2")
-    monkeypatch.setenv("COLONY_TOM2_MAX_LEVEL", "2")
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_ENV_RISK_GATEWAY_CLASS", "dm:private")
+    monkeypatch.setenv("PACOMIND_TOM2_LEVEL", "2")
+    monkeypatch.setenv("PACOMIND_TOM2_MAX_LEVEL", "2")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
     set_evidence_probe(lambda gw: True)
 
 
@@ -178,7 +178,7 @@ async def test_level_zero_kills_all_rendering_next_turn(world, monkeypatch):
     _arm_level2(monkeypatch)
     assert len(_leveled(await host.context_assemble(_req(READER)))) == 2
     # PANIC: one variable, nothing else touched
-    monkeypatch.setenv("COLONY_TOM2_LEVEL", "0")
+    monkeypatch.setenv("PACOMIND_TOM2_LEVEL", "0")
     clear_level_cache()
     resp = await host.context_assemble(_req(READER))
     assert _leveled(resp) == []
@@ -193,8 +193,8 @@ async def test_kill_switch_leaves_the_egress_net_armed(world, monkeypatch):
     until the taint's TTL runs out."""
     _arm_level2(monkeypatch)
     await host.context_assemble(_req(READER))          # registers the taint
-    monkeypatch.setenv("COLONY_TOM2_LEVEL", "0")       # kill
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.setenv("PACOMIND_TOM2_LEVEL", "0")       # kill
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     guard = ResponseGuard(
         default_mode=GuardMode.ENFORCE,
         tom2_epistemic=Tom2EpistemicGuard(world.taints,

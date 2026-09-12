@@ -3,8 +3,8 @@ daily total-evaluations counter, and summarizes per-check counts + would_block_r
 over 24h/7d/14d so a false-positive budget can be judged in shadow (H6.1)."""
 import pytest
 
-from apsimo.gate.guard_audit import GuardAuditStore
-from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+from pacomind.gate.guard_audit import GuardAuditStore
+from pacomind.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
 
 def test_records_and_summarizes():
@@ -61,7 +61,7 @@ def test_recent_check_filter():
 async def test_guard_records_any_finding_not_just_cross_context():
     """H6.1: a secret_leak finding produces an audit row; a clean evaluation
     produces none but still bumps the evaluation counter."""
-    from apsimo.gate.response_guard import GuardMode, ResponseGuard
+    from pacomind.gate.response_guard import GuardMode, ResponseGuard
 
     a = GuardAuditStore(":memory:")
     guard = ResponseGuard(default_mode=GuardMode.SHADOW, audit_store=a)
@@ -126,7 +126,7 @@ def test_gateway_column_migration_is_additive(tmp_path):
 
 
 def test_verdict_rows_never_prove_applied_enforcement(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_EVIDENCE_MIN", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_EVIDENCE_MIN", raising=False)
     a = GuardAuditStore(":memory:")
     assert a.enforce_evidence("rcs") is False
     _enforce_rows(a, 2)
@@ -183,18 +183,18 @@ def test_enforce_evidence_requires_an_applied_suppression_verdict():
 
 
 def test_enforce_evidence_min_env(monkeypatch):
-    from apsimo.gate.guard_audit import evidence_min
+    from pacomind.gate.guard_audit import evidence_min
 
-    monkeypatch.setenv("COLONY_GUARD_EVIDENCE_MIN", "5")
+    monkeypatch.setenv("PACOMIND_GUARD_EVIDENCE_MIN", "5")
     assert evidence_min() == 5
-    monkeypatch.setenv("COLONY_GUARD_EVIDENCE_MIN", "banana")
+    monkeypatch.setenv("PACOMIND_GUARD_EVIDENCE_MIN", "banana")
     assert evidence_min() == 3                       # malformed => default
-    monkeypatch.setenv("COLONY_GUARD_EVIDENCE_MIN", "0")
+    monkeypatch.setenv("PACOMIND_GUARD_EVIDENCE_MIN", "0")
     assert evidence_min() == 1                       # zero-proof is not a config
-    monkeypatch.delenv("COLONY_GUARD_EVIDENCE_MIN", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_EVIDENCE_MIN", raising=False)
     a = GuardAuditStore(":memory:")
     _enforce_rows(a, 1, gateway="sms")
-    monkeypatch.setenv("COLONY_GUARD_EVIDENCE_MIN", "1")
+    monkeypatch.setenv("PACOMIND_GUARD_EVIDENCE_MIN", "1")
     # The threshold remains parseable for compatibility, but candidate
     # verdict rows cannot prove that exact bytes were withheld or emitted.
     assert a.enforce_evidence("sms") is False
@@ -209,7 +209,7 @@ def test_enforce_evidence_fails_closed_on_store_error():
 
 @pytest.mark.asyncio
 async def test_response_guard_threads_gateway_into_audit():
-    from apsimo.gate.response_guard import GuardMode, ResponseGuard
+    from pacomind.gate.response_guard import GuardMode, ResponseGuard
 
     a = GuardAuditStore(":memory:")
     guard = ResponseGuard(default_mode=GuardMode.SHADOW, audit_store=a)

@@ -2,7 +2,7 @@
 
 Backup format 2 includes original source images referenced by the captured
 `turn-idempotency.db`. A caption, asset handle or vector cannot reconstruct the
-original pixels. The existing `apsimo backup --full` and `apsimo restore --full`
+original pixels. The existing `pacomind backup --full` and `pacomind restore --full`
 commands use this path; there is no separate memory backup service.
 
 Each database is captured consistently. If SQLite `VACUUM INTO` fails, ordinary
@@ -14,7 +14,7 @@ Originals are selected from the captured ledger, not from a later query of live
 state. Hash and byte length must match. Unowned files and regenerable thumbnails
 are omitted. If concurrent forgetting removes a required original before it is
 copied, backup fails visibly; retry against a new snapshot. This is a consistent
-source-image set, not an atomic snapshot across every Apsimo database.
+source-image set, not an atomic snapshot across every PacoMind database.
 
 Restore checks all referenced originals before replacing state. Database
 restoration uses SQLite's backup API, so an old destination WAL cannot overlay
@@ -39,13 +39,13 @@ When the current canonical source ledger survives but original-image storage is
 missing or damaged, use the existing restore CLI's bounded memory mode:
 
 ```sh
-apsimo restore --memory-only --input ./backup.tar.gz \
+pacomind restore --memory-only --input ./backup.tar.gz \
   --current-state ./surviving-current-state --output ./recovered-memory
 ```
 
 The output must be a new directory outside the surviving state. The command
-requires the surviving colony identity and `turn-idempotency.db`; the archive
-must belong to the same colony. The caller is responsible for selecting an
+requires the surviving pacomind identity and `turn-idempotency.db`; the archive
+must belong to the same pacomind. The caller is responsible for selecting an
 authoritative current source, rather than another stale copy. Capture a final
 bundle with its writers stopped before installing it. A consistent SQLite
 snapshot is not an assertion that no later change occurred.
@@ -81,7 +81,7 @@ hashes, the selected ledger's currentness and the existing scoped source/image
 and erasure-feed reads before resuming those writers. Regenerate the bundle if
 the surviving source or its authority changed after capture. Use the normal
 runtime setup and recovery procedures for the excluded stores; do not start
-the memory bundle as a complete Apsimo instance. This mode does not certify
+the memory bundle as a complete PacoMind instance. This mode does not certify
 runtime authority or recover current source state when no authoritative ledger
 survives. In that case full archive reconstruction remains isolated pending
 reconciliation; it is not a total-disaster recovery claim.

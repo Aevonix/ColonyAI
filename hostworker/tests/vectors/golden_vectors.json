@@ -1,15 +1,15 @@
 {
  "action_tool_names": [
-  "colony_autonomy_disable",
-  "colony_autonomy_enable",
-  "colony_create_commitment",
-  "colony_initiative_feedback",
-  "colony_record_insight",
-  "colony_research",
-  "colony_resolve_commitment",
-  "colony_task_complete",
-  "colony_task_dismiss",
-  "colony_task_snooze"
+  "pacomind_autonomy_disable",
+  "pacomind_autonomy_enable",
+  "pacomind_create_commitment",
+  "pacomind_initiative_feedback",
+  "pacomind_record_insight",
+  "pacomind_research",
+  "pacomind_resolve_commitment",
+  "pacomind_task_complete",
+  "pacomind_task_dismiss",
+  "pacomind_task_snooze"
  ],
  "digests": [
   {
@@ -164,7 +164,7 @@
     "decision_id": "dec-approval-1",
     "expires_at": 1754900600.0,
     "revision": 1,
-    "schema": "ColonyOwnerApprovalExecutionBindingV1",
+    "schema": "PacoMindOwnerApprovalExecutionBindingV1",
     "version": 1
    },
    "args": {
@@ -172,18 +172,18 @@
     "priority": 60
    },
    "args_sha256": "b45e69dc067f5274c9418d6d2ccd8c85fcb0c47c1da9ce40c4a9cd35d75c3373",
-   "execution_digest": "8cc8a300cd96bce47ddcd723d79cd8d5859ba8449fde4087611c816d302c9bcc",
-   "intent_digest": "8d6d6f1088518e59820e09a637967927ea45c8009f08215a44c0ffc6868c04a5",
-   "intent_id": "hti_30e31effd7669ebcd27e53f10a334337",
-   "schema": "ColonyGovernedActionExecutionV1",
-   "tool_name": "colony_create_commitment",
+   "execution_digest": "dd98baaa4ae8b0147a6ca18b205c24dfcc68ba9a31c68e9d488371ea89e0c47d",
+   "intent_digest": "79b1ceea8447451cf3f1126c73a4e394f501a89f155946be958a72a5376450b0",
+   "intent_id": "hti_5450b90c54ac914941cf8842fb4760d2",
+   "schema": "PacoMindGovernedActionExecutionV1",
+   "tool_name": "pacomind_create_commitment",
    "version": 1
   },
-  "execution_digest_utf8": "8cc8a300cd96bce47ddcd723d79cd8d5859ba8449fde4087611c816d302c9bcc",
-  "intent_digest_ascii": "8d6d6f1088518e59820e09a637967927ea45c8009f08215a44c0ffc6868c04a5",
+  "execution_digest_utf8": "dd98baaa4ae8b0147a6ca18b205c24dfcc68ba9a31c68e9d488371ea89e0c47d",
+  "intent_digest_ascii": "79b1ceea8447451cf3f1126c73a4e394f501a89f155946be958a72a5376450b0",
   "path_action_id": "6f1d0a9e-4b2c-4f6e-9a3d-2b1c0d9e8f7a",
   "payload_sha256_utf8": "73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9",
-  "raw_utf8": "{\"action_digest\":\"73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9\",\"action_id\":\"6f1d0a9e-4b2c-4f6e-9a3d-2b1c0d9e8f7a\",\"approval\":{\"approval_id\":\"APR-7K2M9QX4TR1B\",\"authorization_receipt_sha256\":\"01a0652472e5e0c0d176b8a72c3e49011bc764695f0570b1dfb4005f93eee328\",\"decided_at\":1754900000.0,\"decision_id\":\"dec-approval-1\",\"expires_at\":1754900600.0,\"revision\":1,\"schema\":\"ColonyOwnerApprovalExecutionBindingV1\",\"version\":1},\"args\":{\"description\":\"Review café ☕ notes\",\"priority\":60},\"args_sha256\":\"b45e69dc067f5274c9418d6d2ccd8c85fcb0c47c1da9ce40c4a9cd35d75c3373\",\"execution_digest\":\"8cc8a300cd96bce47ddcd723d79cd8d5859ba8449fde4087611c816d302c9bcc\",\"intent_digest\":\"8d6d6f1088518e59820e09a637967927ea45c8009f08215a44c0ffc6868c04a5\",\"intent_id\":\"hti_30e31effd7669ebcd27e53f10a334337\",\"schema\":\"ColonyGovernedActionExecutionV1\",\"tool_name\":\"colony_create_commitment\",\"version\":1}"
+  "raw_utf8": "{\"action_digest\":\"73f8249bdaafcb9a5ae069fc703d0707cc319f22e3da1d04210d27bece2ec3d9\",\"action_id\":\"6f1d0a9e-4b2c-4f6e-9a3d-2b1c0d9e8f7a\",\"approval\":{\"approval_id\":\"APR-7K2M9QX4TR1B\",\"authorization_receipt_sha256\":\"01a0652472e5e0c0d176b8a72c3e49011bc764695f0570b1dfb4005f93eee328\",\"decided_at\":1754900000.0,\"decision_id\":\"dec-approval-1\",\"expires_at\":1754900600.0,\"revision\":1,\"schema\":\"PacoMindOwnerApprovalExecutionBindingV1\",\"version\":1},\"args\":{\"description\":\"Review café ☕ notes\",\"priority\":60},\"args_sha256\":\"b45e69dc067f5274c9418d6d2ccd8c85fcb0c47c1da9ce40c4a9cd35d75c3373\",\"execution_digest\":\"dd98baaa4ae8b0147a6ca18b205c24dfcc68ba9a31c68e9d488371ea89e0c47d\",\"intent_digest\":\"79b1ceea8447451cf3f1126c73a4e394f501a89f155946be958a72a5376450b0\",\"intent_id\":\"hti_5450b90c54ac914941cf8842fb4760d2\",\"schema\":\"PacoMindGovernedActionExecutionV1\",\"tool_name\":\"pacomind_create_commitment\",\"version\":1}"
  },
  "gate_cases": [
   {
@@ -232,7 +232,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -280,7 +280,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "action": {
@@ -328,7 +328,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -373,7 +373,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "action": {
@@ -421,7 +421,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -469,7 +469,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_autonomy_enable"
+   "tool_name": "pacomind_autonomy_enable"
   },
   {
    "action": {
@@ -514,7 +514,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "action": {
@@ -562,7 +562,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -597,7 +597,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_autonomy_enable"
+   "tool_name": "pacomind_autonomy_enable"
   },
   {
    "action": {
@@ -632,7 +632,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_autonomy_disable"
+   "tool_name": "pacomind_autonomy_disable"
   },
   {
    "action": {
@@ -667,7 +667,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_send_message"
+   "tool_name": "pacomind_send_message"
   },
   {
    "action": {
@@ -706,7 +706,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -743,7 +743,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -781,7 +781,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -816,7 +816,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "action": {
@@ -854,7 +854,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -892,7 +892,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -930,7 +930,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -968,7 +968,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1006,7 +1006,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1044,7 +1044,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1082,7 +1082,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1120,7 +1120,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1158,7 +1158,7 @@
      "status": "failed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1196,7 +1196,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1234,7 +1234,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1272,7 +1272,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1310,7 +1310,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1348,7 +1348,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1386,7 +1386,7 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "action": {
@@ -1421,17 +1421,17 @@
      "status": "passed"
     }
    ],
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   }
  ],
- "generated_from": "colony_sidecar.governed_actions and the deployed host action worker at ColonyAI commit d301e8e (2026-08-11); regenerate only by running both current implementations side by side",
+ "generated_from": "PacoMind 1.5.0 canonical namespace; independent governed_actions endpoint and pacomind_hostworker digest/validation agreement",
  "invalid_args": [
   {
    "args": {
     "message": "y",
     "recipient": "x"
    },
-   "tool_name": "colony_send_message"
+   "tool_name": "pacomind_send_message"
   },
   {
    "args": {},
@@ -1441,74 +1441,74 @@
    "args": {
     "extra": 1
    },
-   "tool_name": "colony_autonomy_enable"
+   "tool_name": "pacomind_autonomy_enable"
   },
   {
    "args": [],
-   "tool_name": "colony_autonomy_disable"
+   "tool_name": "pacomind_autonomy_disable"
   },
   {
    "args": {},
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "description": ""
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "description": "   "
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "description": "x",
     "priority": 101
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "description": "x",
     "priority": true
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "description": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "description": "x",
     "unknown": 1
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
     "initiative_id": "init-1"
    },
-   "tool_name": "colony_initiative_feedback"
+   "tool_name": "pacomind_initiative_feedback"
   },
   {
    "args": {
     "action": "bogus",
     "initiative_id": "init-1"
    },
-   "tool_name": "colony_initiative_feedback"
+   "tool_name": "pacomind_initiative_feedback"
   },
   {
    "args": {
     "action": "actioned",
     "initiative_id": "bad id"
    },
-   "tool_name": "colony_initiative_feedback"
+   "tool_name": "pacomind_initiative_feedback"
   },
   {
    "args": {
@@ -1519,14 +1519,14 @@
     ],
     "initiative_id": "init-1"
    },
-   "tool_name": "colony_initiative_feedback"
+   "tool_name": "pacomind_initiative_feedback"
   },
   {
    "args": {
     "content": "x",
     "insight_type": "opinion"
    },
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "args": {
@@ -1534,7 +1534,7 @@
     "content": "x",
     "insight_type": "fact"
    },
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "args": {
@@ -1542,107 +1542,107 @@
     "content": "x",
     "insight_type": "fact"
    },
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "args": {
     "insight_type": "fact"
    },
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "args": {
     "topic": "ttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttttt"
    },
-   "tool_name": "colony_research"
+   "tool_name": "pacomind_research"
   },
   {
    "args": {
     "depth": "max",
     "topic": "x"
    },
-   "tool_name": "colony_research"
+   "tool_name": "pacomind_research"
   },
   {
    "args": {
     "extra": 1,
     "topic": "x"
    },
-   "tool_name": "colony_research"
+   "tool_name": "pacomind_research"
   },
   {
    "args": {
     "commitment_id": "c-1",
     "outcome": "later"
    },
-   "tool_name": "colony_resolve_commitment"
+   "tool_name": "pacomind_resolve_commitment"
   },
   {
    "args": {
     "commitment_id": ""
    },
-   "tool_name": "colony_resolve_commitment"
+   "tool_name": "pacomind_resolve_commitment"
   },
   {
    "args": {
     "task_id": "t",
     "x": 1
    },
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "args": {},
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "args": {
     "reason": "later",
     "task_id": "t"
    },
-   "tool_name": "colony_task_dismiss"
+   "tool_name": "pacomind_task_dismiss"
   },
   {
    "args": {
     "hours": 0,
     "task_id": "t"
    },
-   "tool_name": "colony_task_snooze"
+   "tool_name": "pacomind_task_snooze"
   },
   {
    "args": {
     "hours": 169,
     "task_id": "t"
    },
-   "tool_name": "colony_task_snooze"
+   "tool_name": "pacomind_task_snooze"
   },
   {
    "args": {
     "hours": true,
     "task_id": "t"
    },
-   "tool_name": "colony_task_snooze"
+   "tool_name": "pacomind_task_snooze"
   },
   {
    "args": {
     "reason": "bad\u0000nul",
     "task_id": "t"
    },
-   "tool_name": "colony_task_snooze"
+   "tool_name": "pacomind_task_snooze"
   }
  ],
- "schema": "ColonyHostWorkerGoldenVectorsV1",
+ "schema": "PacoMindHostWorkerGoldenVectorsV1",
  "valid_args": [
   {
    "args": {},
    "args_sha256_ascii": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
    "normalized": {},
-   "tool_name": "colony_autonomy_disable"
+   "tool_name": "pacomind_autonomy_disable"
   },
   {
    "args": {},
    "args_sha256_ascii": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
    "normalized": {},
-   "tool_name": "colony_autonomy_enable"
+   "tool_name": "pacomind_autonomy_enable"
   },
   {
    "args": {
@@ -1656,7 +1656,7 @@
     "due_at": "2026-08-12T10:00:00Z",
     "priority": 60
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
@@ -1666,7 +1666,7 @@
    "normalized": {
     "description": "x"
    },
-   "tool_name": "colony_create_commitment"
+   "tool_name": "pacomind_create_commitment"
   },
   {
    "args": {
@@ -1700,7 +1700,7 @@
     },
     "initiative_id": "init-1"
    },
-   "tool_name": "colony_initiative_feedback"
+   "tool_name": "pacomind_initiative_feedback"
   },
   {
    "args": {
@@ -1712,7 +1712,7 @@
     "action": "dismissed",
     "initiative_id": "init-2"
    },
-   "tool_name": "colony_initiative_feedback"
+   "tool_name": "pacomind_initiative_feedback"
   },
   {
    "args": {
@@ -1726,7 +1726,7 @@
     "content": "Prefers café ristretto ☕",
     "insight_type": "preference"
    },
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "args": {
@@ -1738,7 +1738,7 @@
     "content": "fact body",
     "insight_type": "fact"
    },
-   "tool_name": "colony_record_insight"
+   "tool_name": "pacomind_record_insight"
   },
   {
    "args": {
@@ -1750,7 +1750,7 @@
     "depth": "deep",
     "topic": "solar 🌞 panel economics"
    },
-   "tool_name": "colony_research"
+   "tool_name": "pacomind_research"
   },
   {
    "args": {
@@ -1760,7 +1760,7 @@
    "normalized": {
     "topic": "minimal"
    },
-   "tool_name": "colony_research"
+   "tool_name": "pacomind_research"
   },
   {
    "args": {
@@ -1774,7 +1774,7 @@
     "outcome": "done",
     "reason": ""
    },
-   "tool_name": "colony_resolve_commitment"
+   "tool_name": "pacomind_resolve_commitment"
   },
   {
    "args": {
@@ -1784,7 +1784,7 @@
    "normalized": {
     "commitment_id": "c-2"
    },
-   "tool_name": "colony_resolve_commitment"
+   "tool_name": "pacomind_resolve_commitment"
   },
   {
    "args": {
@@ -1794,7 +1794,7 @@
    "normalized": {
     "task_id": "task-1"
    },
-   "tool_name": "colony_task_complete"
+   "tool_name": "pacomind_task_complete"
   },
   {
    "args": {
@@ -1806,7 +1806,7 @@
     "reason": "stale",
     "task_id": "task-1"
    },
-   "tool_name": "colony_task_dismiss"
+   "tool_name": "pacomind_task_dismiss"
   },
   {
    "args": {
@@ -1816,7 +1816,7 @@
    "normalized": {
     "task_id": "task-2"
    },
-   "tool_name": "colony_task_dismiss"
+   "tool_name": "pacomind_task_dismiss"
   },
   {
    "args": {
@@ -1830,7 +1830,7 @@
     "reason": "later",
     "task_id": "task-1"
    },
-   "tool_name": "colony_task_snooze"
+   "tool_name": "pacomind_task_snooze"
   },
   {
    "args": {
@@ -1840,7 +1840,7 @@
    "normalized": {
     "task_id": "task-3"
    },
-   "tool_name": "colony_task_snooze"
+   "tool_name": "pacomind_task_snooze"
   }
  ],
  "version": 1

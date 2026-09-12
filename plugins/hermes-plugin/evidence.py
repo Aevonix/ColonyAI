@@ -8,7 +8,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from .client import ColonyClient, TurnOutbox
+from .client import PacoMindClient, TurnOutbox
 
 
 def native_work_capture_excluded() -> bool:
@@ -73,12 +73,12 @@ def checkpoint(
     ).encode()).hexdigest()
     turn_id = "checkpoint:" + digest
     payload["turn_id"] = turn_id
-    outbox = TurnOutbox(outbox_path or home / "state" / "colony-turn-outbox.sqlite3")
+    outbox = TurnOutbox(outbox_path or home / "state" / "pacomind-turn-outbox.sqlite3")
     # The local commit is the checkpoint guarantee. Oversize, full queue or
     # failed storage raises before Hermes compresses; no text is truncated.
     receipt = outbox.enqueue(turn_id, payload)
     if receipt["state"] == "pending" or receipt.get("survivor_state") == "pending":
-        client = ColonyClient(url=url, api_key=api_key)
+        client = PacoMindClient(url=url, api_key=api_key)
         try:
             outbox.drain(
                 lambda stored, *, timeout_seconds: client.sync_turn(

@@ -13,7 +13,7 @@ _EVENTS_PATH = (
 
 
 def _load_events_module():
-    name = "colony_hermes_events_replay_test"
+    name = "pacomind_hermes_events_replay_test"
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(name, _EVENTS_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -28,7 +28,7 @@ def test_event_catalog_is_explicitly_empty_and_immutable():
     assert module.GOVERNED_EVENT_TYPES == ()
     assert module.event_catalog() == ()
     assert not hasattr(module, "EventCache")
-    assert not hasattr(module, "ColonyEventSubscriber")
+    assert not hasattr(module, "PacoMindEventSubscriber")
 
 
 def test_event_module_has_no_network_or_replay_state_dependency():

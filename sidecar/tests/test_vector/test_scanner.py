@@ -1,7 +1,7 @@
-"""Tests for apsimo.vector.scanner — hardware detection."""
+"""Tests for pacomind.vector.scanner — hardware detection."""
 import pytest
 from unittest.mock import patch, MagicMock
-from apsimo.vector.scanner import scan, HardwareProfile, _ram_gb
+from pacomind.vector.scanner import scan, HardwareProfile, _ram_gb
 
 
 class TestHardwareProfile:
@@ -13,19 +13,19 @@ class TestHardwareProfile:
 
 
 class TestScan:
-    @patch("apsimo.vector.scanner._has_cuda", return_value=False)
-    @patch("apsimo.vector.scanner._has_mlx", return_value=False)
-    @patch("apsimo.vector.scanner._ram_gb", return_value=16)
+    @patch("pacomind.vector.scanner._has_cuda", return_value=False)
+    @patch("pacomind.vector.scanner._has_mlx", return_value=False)
+    @patch("pacomind.vector.scanner._ram_gb", return_value=16)
     def test_no_gpu(self, mock_ram, mock_mlx, mock_cuda):
         profile = scan()
         assert profile.gpu_type == "none"
         assert profile.vram_gb == 0
         assert profile.ram_gb == 16
 
-    @patch("apsimo.vector.scanner._has_cuda", return_value=True)
-    @patch("apsimo.vector.scanner._cuda_info", return_value=("NVIDIA RTX 4090", 24, "535.0"))
-    @patch("apsimo.vector.scanner._has_mlx", return_value=False)
-    @patch("apsimo.vector.scanner._ram_gb", return_value=64)
+    @patch("pacomind.vector.scanner._has_cuda", return_value=True)
+    @patch("pacomind.vector.scanner._cuda_info", return_value=("NVIDIA RTX 4090", 24, "535.0"))
+    @patch("pacomind.vector.scanner._has_mlx", return_value=False)
+    @patch("pacomind.vector.scanner._ram_gb", return_value=64)
     def test_cuda_gpu(self, mock_ram, mock_mlx, mock_cuda_info, mock_cuda):
         profile = scan()
         assert profile.gpu_type == "cuda"
@@ -33,10 +33,10 @@ class TestScan:
         assert profile.vram_gb == 24
         assert profile.cuda_version == "535.0"
 
-    @patch("apsimo.vector.scanner._has_cuda", return_value=True)
-    @patch("apsimo.vector.scanner._cuda_info", return_value=("NVIDIA GB10", 0, "580.142"))
-    @patch("apsimo.vector.scanner._has_mlx", return_value=False)
-    @patch("apsimo.vector.scanner._ram_gb", return_value=130)
+    @patch("pacomind.vector.scanner._has_cuda", return_value=True)
+    @patch("pacomind.vector.scanner._cuda_info", return_value=("NVIDIA GB10", 0, "580.142"))
+    @patch("pacomind.vector.scanner._has_mlx", return_value=False)
+    @patch("pacomind.vector.scanner._ram_gb", return_value=130)
     def test_unified_memory_gpu(self, mock_ram, mock_mlx, mock_cuda_info, mock_cuda):
         """Grace Blackwell GB10 reports [N/A] for VRAM — should fall back to system RAM."""
         profile = scan()
@@ -45,10 +45,10 @@ class TestScan:
         # The _cuda_info mock returns 0 (simulating the [N/A] fallback in real code)
         # In production, the real _cuda_info would return ram_gb for unified memory
 
-    @patch("apsimo.vector.scanner._has_cuda", return_value=False)
-    @patch("apsimo.vector.scanner._has_mlx", return_value=True)
-    @patch("apsimo.vector.scanner._mlx_info", return_value=("Apple M2 Pro", 32))
-    @patch("apsimo.vector.scanner._ram_gb", return_value=32)
+    @patch("pacomind.vector.scanner._has_cuda", return_value=False)
+    @patch("pacomind.vector.scanner._has_mlx", return_value=True)
+    @patch("pacomind.vector.scanner._mlx_info", return_value=("Apple M2 Pro", 32))
+    @patch("pacomind.vector.scanner._ram_gb", return_value=32)
     def test_mlx_apple_silicon(self, mock_ram, mock_mlx_info, mock_mlx, mock_cuda):
         profile = scan()
         assert profile.gpu_type == "mlx"
@@ -59,7 +59,7 @@ class TestScan:
 class TestCudaInfo:
     def test_na_vram_fallback(self):
         """Test that [N/A] VRAM in nvidia-smi output triggers RAM fallback."""
-        from apsimo.vector.scanner import _cuda_info
+        from pacomind.vector.scanner import _cuda_info
         import subprocess
 
         mock_result = MagicMock()
@@ -67,7 +67,7 @@ class TestCudaInfo:
         mock_result.stdout = "NVIDIA GB10, [N/A]"
 
         with patch("subprocess.run", return_value=mock_result):
-            with patch("apsimo.vector.scanner._ram_gb", return_value=130):
+            with patch("pacomind.vector.scanner._ram_gb", return_value=130):
                 name, vram, ver = _cuda_info()
                 assert name == "NVIDIA GB10"
                 assert vram == 130  # Falls back to system RAM

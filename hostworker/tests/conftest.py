@@ -15,6 +15,6 @@ VECTORS_PATH = Path(__file__).resolve().parent / "vectors" / "golden_vectors.jso
 def golden_vectors() -> dict:
     with open(VECTORS_PATH, encoding="utf-8") as handle:
         vectors = json.load(handle)
-    assert vectors["schema"] == "ColonyHostWorkerGoldenVectorsV1"
+    assert vectors["schema"] == "PacoMindHostWorkerGoldenVectorsV1"
     assert vectors["version"] == 1
     return vectors

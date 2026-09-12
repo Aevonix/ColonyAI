@@ -6,11 +6,11 @@ import os
 
 import pytest
 
-from apsimo.initiatives.backup_evidence import backup_review_task
-from apsimo.initiatives.native_work import NativeInitiativeWork
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.autonomy.config import AutonomyConfig
-from apsimo.intelligence.components.initiative_engine import InitiativeConfig, InitiativeEngine, InitiativeType
+from pacomind.initiatives.backup_evidence import backup_review_task
+from pacomind.initiatives.native_work import NativeInitiativeWork
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.autonomy.config import AutonomyConfig
+from pacomind.intelligence.components.initiative_engine import InitiativeConfig, InitiativeEngine, InitiativeType
 
 
 def publish(path, captured):
@@ -29,7 +29,7 @@ def publish(path, captured):
 @pytest.mark.asyncio
 async def test_actual_loader_replaces_legacy_check_and_keeps_other_operational_checks(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
-    old = tmp_path/'.colony/backups/old.bak'
+    old = tmp_path/'.pacomind/backups/old.bak'
     old.parent.mkdir(parents=True)
     old.write_text('unverified old legacy file')
     stamp = (datetime.now(timezone.utc)-timedelta(days=27)).timestamp()
@@ -39,9 +39,9 @@ async def test_actual_loader_replaces_legacy_check_and_keeps_other_operational_c
     assert engine._context['operational_tasks'][0]['evidence_scope'] == 'legacy_bak_directory_only'
     pointer = tmp_path/'latest-attempt.json'
     publish(pointer, datetime.now(timezone.utc)-timedelta(hours=1))
-    monkeypatch.setenv('COLONY_INITIATIVE_BACKUP_RECEIPT', str(pointer))
-    log = tmp_path/'.colony/logs/large.log'
-    monkeypatch.setenv('APSIMO_LOG_PATH', str(log))
+    monkeypatch.setenv('PACOMIND_INITIATIVE_BACKUP_RECEIPT', str(pointer))
+    log = tmp_path/'.pacomind/logs/large.log'
+    monkeypatch.setenv('PACOMIND_LOG_PATH', str(log))
     log.parent.mkdir(parents=True)
     with log.open('wb') as stream:
         stream.truncate(101*1024*1024)

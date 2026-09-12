@@ -16,36 +16,36 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import required_scope
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.cognition.drive_governance import (
+from pacomind.api.authority import required_scope
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.cognition.drive_governance import (
     DriveGovernance,
     DriveGovernanceStore,
     DriveRanker,
     DriveV1,
     ScopeV1,
 )
-from apsimo.initiatives.approval_authority import (
+from pacomind.initiatives.approval_authority import (
     ApprovalAuthorityStore,
     ApprovalSubjectBinding,
     legacy_action_binding,
 )
-from apsimo.projects.models import Project
-from apsimo.projects.store import ProjectStore
-from apsimo.self_model.situation import (
+from pacomind.projects.models import Project
+from pacomind.projects.store import ProjectStore
+from pacomind.self_model.situation import (
     SituationObservationV1,
     SituationReducer,
     SituationStore,
 )
-from apsimo.self_model.workspace import ConcernStore
-from apsimo.server import (
+from pacomind.self_model.workspace import ConcernStore
+from pacomind.server import (
     _attach_drive_governance,
     _attach_situation_spine,
     _capacity_plus_attachment_failure,
     _compose_p7_charter_admission,
 )
-from apsimo.cognition.drive_governance import (
+from pacomind.cognition.drive_governance import (
     CharterAdmissionConstraintsV1,
     ScopeV1,
 )
@@ -118,8 +118,8 @@ def _p3(*, capacity=None, projects=()):
 
 
 def test_default_off_creates_neither_p6_nor_p7_state(tmp_path, monkeypatch):
-    monkeypatch.delenv("COLONY_SITUATION_SPINE", raising=False)
-    monkeypatch.delenv("COLONY_DRIVE_GOVERNANCE_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_SITUATION_SPINE", raising=False)
+    monkeypatch.delenv("PACOMIND_DRIVE_GOVERNANCE_MODE", raising=False)
 
     assert _attach_situation_spine(
         state_dir=tmp_path,
@@ -134,7 +134,7 @@ def test_default_off_creates_neither_p6_nor_p7_state(tmp_path, monkeypatch):
         directive_manager=None,
         approval_authority=None,
     ) is None
-    assert not (tmp_path / "colony-situation.db").exists()
+    assert not (tmp_path / "pacomind-situation.db").exists()
     assert not (tmp_path / "cognition-drive-governance.db").exists()
     assert not (tmp_path / "approval_authority.db").exists()
 
@@ -142,7 +142,7 @@ def test_default_off_creates_neither_p6_nor_p7_state(tmp_path, monkeypatch):
 def test_p6_shadow_is_periodic_observer_and_never_replaces_p3_validator(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "shadow")
     monkeypatch.setattr(
         SituationReducer,
         "run_once",
@@ -177,8 +177,8 @@ def test_p6_shadow_is_periodic_observer_and_never_replaces_p3_validator(
 async def test_p6_periodic_reducer_ingests_real_queue_resource_observation(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     monkeypatch.setattr(
         SituationReducer,
         "run_once",
@@ -233,7 +233,7 @@ async def test_p6_periodic_reducer_ingests_real_queue_resource_observation(
 
 
 def test_p6_scheduler_registration_failure_is_atomic(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "live")
     monkeypatch.setattr(
         SituationReducer,
         "run_once",
@@ -263,7 +263,7 @@ def test_p6_scheduler_registration_failure_is_atomic(tmp_path, monkeypatch):
 def test_p6_live_composes_capacity_and_fails_closed_on_reducer_or_gate_error(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "live")
     monkeypatch.setattr(
         SituationReducer,
         "run_once",
@@ -352,7 +352,7 @@ def test_p6_and_p7_stores_have_explicit_idempotent_close(tmp_path):
 def test_p7_attachment_requires_p3_and_reuses_canonical_approval_store(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_DRIVE_GOVERNANCE_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_DRIVE_GOVERNANCE_MODE", "shadow")
     shared = ApprovalAuthorityStore(tmp_path / "approval_authority.db")
     cognition = _p3(projects=())
     project_store = cognition.project_engine.store
@@ -392,7 +392,7 @@ def test_p7_attachment_requires_p3_and_reuses_canonical_approval_store(
 def test_p7_bootstrap_attaches_authority_without_replacing_shadow_p3_validator(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_DRIVE_GOVERNANCE_MODE", "bootstrap")
+    monkeypatch.setenv("PACOMIND_DRIVE_GOVERNANCE_MODE", "bootstrap")
     cognition = _p3(projects=())
     original = cognition._charter = lambda _proposal, _concern: (
         True, "shadow_typed_goal"
@@ -634,7 +634,7 @@ def _app(tmp_path, principals):
 def _headers(secret, principal):
     return {
         "Authorization": f"Bearer {secret}",
-        "X-Colony-Principal": principal,
+        "X-PacoMind-Principal": principal,
     }
 
 
@@ -696,7 +696,7 @@ async def test_restricted_cognition_reader_can_probe_only_exact_autonomy_reads(
 async def test_cognition_health_uses_credential_viewer_and_promotion_is_owner_only(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     concerns = ConcernStore(str(tmp_path / "workspace.db"))
     concerns.initialize_event_cursor("host-test", 0, bootstrap_mode="replay")
     applied = concerns.apply_event(
@@ -817,7 +817,7 @@ async def test_cognition_health_reports_failed_attachment_and_empty_catalog(
 async def test_shadow_goal_promotion_derives_exact_owner_operation(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     calls = []
 
     class Spine:
@@ -865,7 +865,7 @@ async def test_shadow_goal_promotion_derives_exact_owner_operation(
 
 @pytest.mark.asyncio
 async def test_situation_read_is_credential_viewer_scoped(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = SituationStore(str(tmp_path / "situation.db"))
     store.ingest(SituationObservationV1.create(
         observation_id="obs-owner-service",
@@ -927,7 +927,7 @@ class RecordingRanker:
 async def test_rankings_are_built_only_from_durable_p3_projects(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     p3 = Project(
         id="project-p3",
         title="Verified P3 goal",
@@ -991,7 +991,7 @@ async def test_rankings_are_built_only_from_durable_p3_projects(
 async def test_drive_proposal_scope_and_actor_are_server_derived(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     governance = DriveGovernance(
         DriveGovernanceStore(tmp_path / "drives.db"),
         ApprovalAuthorityStore(tmp_path / "approval_authority.db"),
@@ -1069,7 +1069,7 @@ class RecordingGovernance:
 async def test_ratify_requires_both_route_scope_and_owner_decision_authority(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     governance = RecordingGovernance()
     host.set_drive_governance(governance, RecordingRanker(), FakeProjectStore())
     app = _app(tmp_path, [
@@ -1123,7 +1123,7 @@ class AllowingDirectives:
 async def test_live_p7_http_flow_is_proposal_approval_and_ranking_only(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     project_store = ProjectStore(str(tmp_path / "projects.db"))
     approval_store = ApprovalAuthorityStore(tmp_path / "approval_authority.db")
     drive_store = DriveGovernanceStore(tmp_path / "drives.db")
@@ -1329,8 +1329,8 @@ async def test_live_p7_http_flow_is_proposal_approval_and_ranking_only(
 async def test_owner_typed_charter_approval_http_contract_is_discoverable_and_atomic(
     tmp_path, monkeypatch, governance_mode,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforce")
     approval_store = ApprovalAuthorityStore(tmp_path / "approval_authority.db")
     drive_store = DriveGovernanceStore(tmp_path / "drives.db")
     governance = DriveGovernance(
@@ -1471,7 +1471,7 @@ async def test_owner_typed_charter_approval_http_contract_is_discoverable_and_at
     assert denied_generic.status_code == 403
     assert denied_audience.status_code == 403
     assert readiness.status_code == 200
-    assert readiness.json()["schema"] == "ColonyCharterApprovalReadinessV1"
+    assert readiness.json()["schema"] == "PacoMindCharterApprovalReadinessV1"
     assert readiness.json()["version"] == 1
     assert readiness.json()["status"] == "blocked"
     assert readiness.json()["mode"] == governance_mode

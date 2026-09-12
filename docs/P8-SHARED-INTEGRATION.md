@@ -1,18 +1,18 @@
 # P8 shared integration
 
-Status: integrated into the Colony sidecar behind an explicit, default-off
+Status: integrated into the PacoMind sidecar behind an explicit, default-off
 shadow switch. It is an evidence collector and scoped context adapter, not an
 action, approval, delivery, or identity authority.
 
 ## What is wired
 
-When and only when `COLONY_RECIPIENT_SIMULATOR_MODE=shadow`, sidecar startup
+When and only when `PACOMIND_RECIPIENT_SIMULATOR_MODE=shadow`, sidecar startup
 attaches one process-owned runtime around the canonical `SharedFactsStore` and
-three additive ledgers under `COLONY_STATE_DIR`:
+three additive ledgers under `PACOMIND_STATE_DIR`:
 
-- `colony-p8-visibility.db` — immutable, content-digest-bound fact envelopes;
-- `colony-p8-arcs.db` — the existing append-only conversational arc store; and
-- `colony-p8-recipient-audit.db` — reference/digest-only sample and evaluation
+- `pacomind-p8-visibility.db` — immutable, content-digest-bound fact envelopes;
+- `pacomind-p8-arcs.db` — the existing append-only conversational arc store; and
+- `pacomind-p8-recipient-audit.db` — reference/digest-only sample and evaluation
   receipts.
 
 Unset, `off`, `live`, and unknown values all leave this integration off and do
@@ -21,7 +21,7 @@ open or write failure cannot make the canonical SharedFacts write or existing
 delivery result fail.
 
 The host constructs `ViewerContextV1` only from middleware-produced scoped
-request authority plus the person returned by Colony's server-side resolver.
+request authority plus the person returned by PacoMind's server-side resolver.
 Legacy global bearer, anonymous development authority, body channel/session,
 prompt text, and model-provided scope fields cannot attest a P8 viewer. A
 sender-resolving transport principal may bind a final participant only after
@@ -40,7 +40,7 @@ row to its exact envelope, constructs a typed candidate, and projects it
 before relevance ordering or rendering. Legacy rows and changed rows without a
 matching envelope remain absent; no migration invents authority for them.
 Every context, relationship, Deck, Tom2-adapter, and simulation projection
-applies the strictly positive `COLONY_P8_FACT_MIN_CONFIDENCE` floor (default
+applies the strictly positive `PACOMIND_P8_FACT_MIN_CONFIDENCE` floor (default
 `0.5`; invalid or non-positive values fail safe to `0.5`). An internal caller
 may only tighten this floor, never lower it. Relationship profiling stores a
 contentless cache and derives rapport topics only at a request render boundary
@@ -89,7 +89,7 @@ The reasoning surface uses the same containment principle. Model-advertised
 tool definitions are never treated as an execution gate: `ToolExecutor`
 enforces the exact allowed-name set again, classifies unknown/dynamic tools as
 mutations, and consults standing owner directives at dispatch. With P8 attached,
-only a scoped exact owner can read private Colony/tool state, and mutations also
+only a scoped exact owner can read private PacoMind/tool state, and mutations also
 require `tools:mutate`; guests retain general calculation and web search. Body
 contact claims and tool argument selectors cannot grant tool authority.
 

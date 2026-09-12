@@ -1,10 +1,10 @@
 # Native background tasks from ordinary conversations
 
-The optional `colony_task` tool lets an authenticated owner start a task and
+The optional `pacomind_task` tool lets an authenticated owner start a task and
 continue the foreground conversation. Another channel currently mapped to that
 same owner can inspect, steer or stop the retained task ID. The gateway runs
 the work through its normal adapter, agent loop, session store, interruption
-and recovery path. Apsimo supplies source provenance and durable associations.
+and recovery path. PacoMind supplies source provenance and durable associations.
 
 This feature does not create another executor or network endpoint. Hardware
 adapters can subclass the public native adapter and supply their existing
@@ -13,20 +13,20 @@ results for inspection; it does not send unsolicited completion messages.
 
 ## Enable
 
-Configure the ordinary Apsimo plugin, owner identity, source ledger and memory
+Configure the ordinary PacoMind plugin, owner identity, source ledger and memory
 provider first. Then enable both the tool and its native execution platform:
 
 ```yaml
 plugins:
-  enabled: [colony]
-  colony:
+  enabled: [pacomind]
+  pacomind:
     native_tasks:
       enabled: true
       # Optional; defaults beside the configured turn outbox.
       # state_path: /private/agent-state/native-tasks.sqlite3
 
 platforms:
-  colony_task:
+  pacomind_task:
     enabled: true
 ```
 
@@ -44,7 +44,7 @@ transport must authenticate its own callback before dispatching a retained ID.
 Standalone transport subclasses keep the base adapter's ordinary authorization
 policy; the configured controller applies trusted upstream delegation only
 after the shared source and owner checks.
-It does not create a `colony_task` contact handle. Its public transport scope
+It does not create a `pacomind_task` contact handle. Its public transport scope
 comes from the retained original channel and current owner binding, and keeps
 that original handle for ordinary per-tool authority checks. Explicitly
 attested local platforms keep their existing local owner policy.
@@ -103,7 +103,7 @@ An existing transport can configure exactly one controller factory:
 
 ```yaml
 plugins:
-  colony:
+  pacomind:
     native_tasks:
       enabled: true
       factory: private_agent.task_sources:build

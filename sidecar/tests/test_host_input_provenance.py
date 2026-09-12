@@ -11,7 +11,7 @@ from types import SimpleNamespace
 from fastapi.testclient import TestClient
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.turns import TurnIdempotencyLedger
 from test_hermes_turn_outbox import _load_plugin
 from test_hermes_general_governance import _Context
 from test_hermes_native_tool_authority import call
@@ -20,7 +20,7 @@ from test_turn_source_evidence import source_app
 
 @pytest.fixture
 def handoff(source_app, tmp_path, monkeypatch):
-    module = _load_plugin('colony_supplied_input_test')
+    module = _load_plugin('pacomind_supplied_input_test')
     # These tests exercise source ownership and typed transport failures, not
     # the ASGI fixture's wall-clock latency. Keep one logical deadline clock
     # across request validation and its SQLite outbox; dedicated socket tests
@@ -32,7 +32,7 @@ def handoff(source_app, tmp_path, monkeypatch):
                             time=time.time, sleep=time.sleep)
     monkeypatch.setattr(importlib.import_module(module.__name__+'.request_memory'), 'time', clock)
     monkeypatch.setattr(importlib.import_module(module.__name__+'.client'), 'time', clock)
-    from apsimo.api.middleware import ApiKeyMiddleware
+    from pacomind.api.middleware import ApiKeyMiddleware
     keyring = tmp_path/'principals.json'
     keyring.write_text(json.dumps({'version':1, 'principals':[{
         'principal':'native-fixture', 'status':'active', 'scopes':['turns:write','context:read','memory:read'],
@@ -44,7 +44,7 @@ def handoff(source_app, tmp_path, monkeypatch):
     # Keep one ASGI portal for this fixture and close it at teardown.
     # Creating a portal per request adds loop setup to the freshness deadline.
     with TestClient(source_app, headers={'Authorization':'Bearer fixture-key'}) as api:
-        original_client = module.ColonyClient
+        original_client = module.PacoMindClient
         class Client(original_client):
             def get(self, path, **kwargs):
                 kwargs.pop('_deadline_monotonic', None)
@@ -58,9 +58,9 @@ def handoff(source_app, tmp_path, monkeypatch):
                 kwargs.pop('_deadline_monotonic', None)
                 kwargs.pop('timeout', None)
                 return api.put(path, **kwargs)
-        monkeypatch.setattr(module, 'ColonyClient', Client)
-        for key, value in {'COLONY_GENERAL_PLUGIN_ACTIVE':'1', 'COLONY_MEMORY_WORKER_TOOLS':'0',
-            'COLONY_MEMORY_TURN_WRITER':'disabled', 'COLONY_GUARD_CHAT_MODE':'off'}.items():
+        monkeypatch.setattr(module, 'PacoMindClient', Client)
+        for key, value in {'PACOMIND_GENERAL_PLUGIN_ACTIVE':'1', 'PACOMIND_MEMORY_WORKER_TOOLS':'0',
+            'PACOMIND_MEMORY_TURN_WRITER':'disabled', 'PACOMIND_GUARD_CHAT_MODE':'off'}.items():
             monkeypatch.setenv(key, value)
         original = {'role':'user', 'content':'Use the lamp maintenance record I supplied.'}
         body = {'identity':{'host_id':'fixture'}, 'context':{'contact_id':'owner', 'session_id':'voice-source'},
@@ -161,7 +161,7 @@ def test_ordinary_cli_turn_remains_excluded_without_supplied_input(handoff):
 def test_only_typed_initial_transport_failure_can_request_a_fresh_task(handoff, monkeypatch, failure):
     import httpx
     h = handoff
-    get = h.module.ColonyClient.get
+    get = h.module.PacoMindClient.get
     attempts = []
     def fail_once(client, path, **kwargs):
         if path == '/v1/host/memory/sources/erasures' and not attempts:
@@ -177,7 +177,7 @@ def test_only_typed_initial_transport_failure_can_request_a_fresh_task(handoff, 
                 return httpx.Response(int(failure[5:]), request=httpx.Request('GET', 'http://fixture'+path))
             h.ledger.erase_sources(contact_id='owner', turn_ids=['earlier'])
         return get(client, path, **kwargs)
-    monkeypatch.setattr(h.module.ColonyClient, 'get', fail_once)
+    monkeypatch.setattr(h.module.PacoMindClient, 'get', fail_once)
     with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
             input_refs=h.parents, source_refs=h.refs) as supplied:
         blocked = h.start()
@@ -210,7 +210,7 @@ def test_failure_after_any_admission_never_permits_replay(handoff, monkeypatch, 
             if failure == 'http_503':
                 return httpx.Response(503, request=httpx.Request('POST', 'http://fixture/v1/host/memory/sources/erasures'))
             raise getattr(httpx, failure)('Controlled later transport failure')
-        monkeypatch.setattr(h.module.ColonyClient, 'post', fail_later)
+        monkeypatch.setattr(h.module.PacoMindClient, 'post', fail_later)
         result = h.ctx.middleware['llm_request']({'messages': [], 'tools': [{}]},
             session_id='native', task_id='task', turn_id='turn')
         assert result['request']['tools'] == []
@@ -309,11 +309,11 @@ def test_erasure_after_native_rotation_still_withholds_request_tools_and_complet
 
 
 def _memory_provider(handoff, monkeypatch):
-    from test_colony_memory_provider import _load_provider_module
-    monkeypatch.delenv('COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY', raising=False)
-    monkeypatch.setitem(sys.modules, 'apsimo_hermes', handoff.module)
-    monkeypatch.setitem(sys.modules, 'apsimo_hermes.input_provenance', handoff.module.input_provenance)
-    provider = _load_provider_module().ColonyMemoryProvider(config={
+    from test_pacomind_memory_provider import _load_provider_module
+    monkeypatch.delenv('PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY', raising=False)
+    monkeypatch.setitem(sys.modules, 'pacomind_hermes', handoff.module)
+    monkeypatch.setitem(sys.modules, 'pacomind_hermes.input_provenance', handoff.module.input_provenance)
+    provider = _load_provider_module().PacoMindMemoryProvider(config={
         'url':'http://testserver', 'contact_id':'owner', 'api_key':'fixture-key'})
     monkeypatch.setattr(provider, '_turn_sender_context', lambda: ('', '', ''))
     return provider
@@ -455,7 +455,7 @@ def test_freshness_requires_actual_input_membership(handoff, annotated):
 @pytest.mark.parametrize('media', [False, True])
 def test_exact_input_receipt_pins_current_canonical_revision_without_relaxing_freshness(handoff, media):
     h = handoff
-    from apsimo.turns.idempotency import canonical_turn_digest, source_message_hash
+    from pacomind.turns.idempotency import canonical_turn_digest, source_message_hash
     from test_source_media import message
     original = message() if media else {'role': 'user', 'content': 'Use the violet reading.'}
     captured = h.api.put('/v2/host/turns/receipt-input', json={
@@ -489,7 +489,7 @@ def test_exact_input_receipt_pins_current_canonical_revision_without_relaxing_fr
 
 def test_input_revision_receipt_requires_scoped_exact_membership(handoff):
     h = handoff
-    from apsimo.turns.idempotency import source_message_hash
+    from pacomind.turns.idempotency import source_message_hash
     original = {'role': 'user', 'content': 'Session-local calibration note.'}
     h.ledger.record_source('session-input', contact_id='owner', session_id='private-session',
                            scope='session', messages=[original], derive_claims=False)

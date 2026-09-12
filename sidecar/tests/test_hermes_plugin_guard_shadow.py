@@ -16,7 +16,7 @@ _GUARD_PATH = "/v1/host/response-guard/check"
 
 
 def _load_plugin():
-    name = "colony_hermes_plugin_guard_test"
+    name = "pacomind_hermes_plugin_guard_test"
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(
         name,
@@ -72,8 +72,8 @@ class _Client:
 
 class _Context:
     def __init__(self):
-        self.config = {"plugins": {"colony": {
-            "url": "http://colony.test",
+        self.config = {"plugins": {"pacomind": {
+            "url": "http://pacomind.test",
             "owner_contact_id": "cid-owner",
         }}}
         self.hooks = {}
@@ -96,11 +96,11 @@ class _Context:
 def plugin(monkeypatch):
     module = _load_plugin()
     _Client.instances.clear()
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "off")
-    module.ColonyClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "off")
+    module.PacoMindClient = _Client
     context = _Context()
     module.register(context)
     context.hooks["pre_llm_call"](
@@ -133,7 +133,7 @@ def _transform(context, text="hi there", platform="sms"):
 
 
 def test_plugin_policy_identity_matches_sidecar_contract():
-    from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+    from pacomind.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
     module = _load_plugin()
     assert module._GUARD_POLICY_ID == POLICY_ID
@@ -148,7 +148,7 @@ def test_guard_off_does_not_post(plugin):
 
 def test_guard_shadow_posts_without_mutating_reply(plugin, monkeypatch):
     _module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "shadow")
     assert _transform(context) is None
     assert client.guard_seen.wait(timeout=3)
     payload = client.posts[-1]["json"]
@@ -161,7 +161,7 @@ def test_guard_shadow_posts_without_mutating_reply(plugin, monkeypatch):
 
 def test_guard_shadow_swallows_base_exception(plugin, monkeypatch):
     _module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "shadow")
     client.guard_error = KeyboardInterrupt("interrupted")
     assert _transform(context) is None
     assert client.guard_seen.wait(timeout=3)
@@ -169,7 +169,7 @@ def test_guard_shadow_swallows_base_exception(plugin, monkeypatch):
 
 def test_transform_enforce_allows_exact_bound_verdict(plugin, monkeypatch):
     module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     text = "é" * 8000
     client.guard_verdict = _valid_verdict(module, text)
     assert _transform(context, text) is None
@@ -178,7 +178,7 @@ def test_transform_enforce_allows_exact_bound_verdict(plugin, monkeypatch):
 
 def test_transform_enforce_withholds_oversize_without_partial_check(plugin, monkeypatch):
     module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     assert _transform(context, "x" * 8001) == module._GUARD_WITHHELD_TEXT
     assert client.posts == []
 
@@ -197,7 +197,7 @@ def test_transform_enforce_withholds_invalid_allow_verdict(
     plugin, monkeypatch, mutation,
 ):
     module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     text = "safe candidate"
     client.guard_verdict = _valid_verdict(module, text)
     client.guard_verdict.update(mutation)
@@ -207,7 +207,7 @@ def test_transform_enforce_withholds_invalid_allow_verdict(
 @pytest.mark.parametrize("decision", ["block", "revise"])
 def test_transform_enforce_withholds_blocking_verdict(plugin, monkeypatch, decision):
     module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     text = "candidate"
     client.guard_verdict = _valid_verdict(module, text, decision=decision)
     assert _transform(context, text) == module._GUARD_WITHHELD_TEXT
@@ -215,7 +215,7 @@ def test_transform_enforce_withholds_blocking_verdict(plugin, monkeypatch, decis
 
 def test_transform_enforce_fails_closed_on_base_exception(plugin, monkeypatch):
     module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     client.guard_error = KeyboardInterrupt("interrupted")
     assert _transform(context) == module._GUARD_WITHHELD_TEXT
 
@@ -223,6 +223,6 @@ def test_transform_enforce_fails_closed_on_base_exception(plugin, monkeypatch):
 @pytest.mark.parametrize("platform", ["realtime_voice", "phone_call", "intercom", "google_meet"])
 def test_voice_surfaces_are_excluded(plugin, monkeypatch, platform):
     _module, context, client = plugin
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     assert _transform(context, platform=platform) is None
     assert client.posts == []

@@ -6,13 +6,13 @@ work. Individual deployments still need to verify their active loops. Current
 defaults and remaining limitations are documented in the README and the linked
 capability guides.
 
-Phase 1 establishes the first supported Apsimo baseline. Support targets the
+Phase 1 establishes the first supported PacoMind baseline. Support targets the
 current installation and its declared Hermes qualification build. Older
-ColonyAI releases, aliases and database layouts carry no public compatibility
+PacoMind releases, aliases and database layouts carry no public compatibility
 promise. Retained implementation paths still need their current consumers and
 data accounted for before removal; this document does not claim they are gone.
 
-Apsimo supplies persistent cognition to a host runtime. A private deployment
+PacoMind supplies persistent cognition to a host runtime. A private deployment
 supplies one agent's identity, integrations and operating environment. Build on
 the existing implementation by giving each kind of state and work one owner.
 Move working callers onto that boundary before retiring their predecessors.
@@ -22,19 +22,19 @@ Move working callers onto that boundary before retiring their predecessors.
 | Owner | Responsibility |
 | --- | --- |
 | Host runtime | Channels, interactive tool loop, working transcripts, native delegation, user-facing schedules and runtime-specific lifecycle. |
-| Apsimo | Durable experience, knowledge, identity-state representation, relationships, commitments, work coordination, authority, consent and evaluated learning. |
+| PacoMind | Durable experience, knowledge, identity-state representation, relationships, commitments, work coordination, authority, consent and evaluated learning. |
 | Private agent | Its constitution, preferences, opinions, contacts, credentials, retained data, model policy, deployment bindings and custom integrations. |
 | Model endpoints | Interchangeable inference for named functions. A model's hidden state or embedding space is not authoritative agent memory. |
 | Integration adapters | Translate a particular transport, application or device into scoped turns, observations, operations and outcomes. |
 
-Identity mechanisms belong in Apsimo; a particular identity belongs to its
+Identity mechanisms belong in PacoMind; a particular identity belongs to its
 private instance. Multiple interfaces may explicitly share that instance.
 Different deployments must not be merged by discovering their configuration
 directories on the same host.
 
 Hardware-specific software remains in the deployment even when its code could
 theoretically be reused. Phone bridges, camera ownership, room audio, firmware,
-device provisioning and fleet inventories are not prerequisites for Apsimo.
+device provisioning and fleet inventories are not prerequisites for PacoMind.
 Extract an optional public integration only when another deployment establishes
 a real need for it.
 
@@ -82,7 +82,7 @@ represent. A device credential proves the device, not its speaker.
 
 Use existing tool descriptions, including MCP where appropriate, for operation
 names, schemas and targets. Capability declarations describe what an adapter can
-do; grants determine what it may do. Apsimo can remember a resource and its
+do; grants determine what it may do. PacoMind can remember a resource and its
 observations without owning the resource's firmware, room registry or media
 transport. Namespaced metadata and stable resource references are sufficient.
 
@@ -226,5 +226,7 @@ package does not establish that a deployment has enabled or qualified them.
 ## Memory operations
 
 Automatic context, explicit `/v1/host/memory/search` and `/v1/host/memory/read` use scoped canonical sources. Search returns a selected evidence packet, its item count and source revisions. It does not return graph strength, global memory counts or an unscoped list of private conflicts. Source annotations carry corrections; they do not mark a claim as true merely because an operator clicked verify.
+
+A complete recalled assistant quotation can travel with its exact user input, either from the same attributed turn or a recorded input reference. Each speaker retains separate text, message identity, source revision and reported/recorded times. This is conversational context: a question remains a question, and an acknowledgment does not independently verify the input. The pair uses the same relevance pass and total context budget as other evidence; an oversized pair offers source references without half of the conversation. Structured assertions, media and tool results keep their own representations. A supplied memory or tool-result dependency alone does not nominate its original content for injection. This representation is covered by scoped correction, erasure and selection tests; improved processor answers still require behavioral measurement.
 
 Hermes owns conversation compression and its durable memory-provider checkpoint. The sidecar has no parallel adaptive-compression package. Graph-only memory statistics, manual verification, conflict lists, distillation previews and the manual vector-vacuum route are removed. The remaining autonomy graph-pruning sweep and its orphan-vector cleanup still run according to their existing configuration; graph-backed research, synthesis and maintenance need separate migration.

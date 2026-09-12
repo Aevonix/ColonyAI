@@ -1,7 +1,7 @@
 # Revisable working judgments
 
 Automatic working judgments are experimental and **off by default**. Only the
-exact setting `COLONY_SELF_JUDGMENTS_ENABLED=1` enables them. Qualify the configured
+exact setting `PACOMIND_SELF_JUDGMENTS_ENABLED=1` enables them. Qualify the configured
 reasoning model before opting in; the system does not infer that a new model is
 qualified. A bounded evaluation of the default single-model installation still
 produced an unsupported cost comparison after source-premise admission checks.
@@ -47,7 +47,7 @@ reference. A later reflection receives bounded quotations rehydrated from prior
 canonical evidence as well as the prior model's explicitly fallible view.
 
 Each normalized topic can change once per day by default. Operators can set
-`COLONY_SELF_JUDGMENT_INTERVAL_SECONDS` to another nonnegative interval. Contrary
+`PACOMIND_SELF_JUDGMENT_INTERVAL_SECONDS` to another nonnegative interval. Contrary
 evidence received during that interval stays eligible for reconsideration when
 it ends. Replaying the same source does not create another vote. Unavailable
 inference receives at most three attempts; source bytes, the captured topic head
@@ -80,7 +80,7 @@ dependent correction text too while preserving value-free withdrawal records.
 The latest ten processing records are exposed under `judgment_processing`,
 including fixed local validation codes without raw provider responses.
 
-The native `colony_judgments` tool exposes inspection and these controls during
+The native `pacomind_judgments` tool exposes inspection and these controls during
 an ordinary owner conversation. It returns the latest ten views/control records
 with truncation flags; its model arguments contain only the operation, exact
 judgment ID and (for reconsideration) retained source ID. Identity and the

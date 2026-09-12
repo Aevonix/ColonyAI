@@ -6,7 +6,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
+from pacomind.autonomy.loop import AutonomyLoop
 
 
 def _payload():
@@ -36,7 +36,7 @@ def _loop_with_router(router):
 
 @pytest.mark.asyncio
 async def test_phase_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("COLONY_ENABLE_INTERNAL_THINKING", raising=False)
+    monkeypatch.delenv("PACOMIND_ENABLE_INTERNAL_THINKING", raising=False)
     loop = _loop_with_router(FakeRouter(_payload()))
     await loop._phase_thinking()
     assert loop._pending_initiatives == []
@@ -45,7 +45,7 @@ async def test_phase_disabled_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_phase_appends_to_pending_batch(monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_INTERNAL_THINKING", "true")
+    monkeypatch.setenv("PACOMIND_ENABLE_INTERNAL_THINKING", "true")
     loop = _loop_with_router(FakeRouter(_payload()))
     existing = SimpleNamespace(description="existing", priority=0.6)
     loop._pending_initiatives = [existing]
@@ -59,8 +59,8 @@ async def test_phase_appends_to_pending_batch(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_phase_respects_cadence(monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_INTERNAL_THINKING", "true")
-    monkeypatch.setenv("COLONY_THINKING_INTERVAL_SECS", "3600")
+    monkeypatch.setenv("PACOMIND_ENABLE_INTERNAL_THINKING", "true")
+    monkeypatch.setenv("PACOMIND_THINKING_INTERVAL_SECS", "3600")
     loop = _loop_with_router(FakeRouter(_payload()))
     await loop._phase_thinking()
     first_count = len(loop._pending_initiatives)
@@ -70,7 +70,7 @@ async def test_phase_respects_cadence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_phase_safe_without_router(monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_INTERNAL_THINKING", "true")
+    monkeypatch.setenv("PACOMIND_ENABLE_INTERNAL_THINKING", "true")
     loop = _loop_with_router(None)
     await loop._phase_thinking()
     assert loop._pending_initiatives == []

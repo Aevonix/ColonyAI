@@ -1,7 +1,7 @@
 # Accepted local source drafts
 
 An owner can request a specific local comparison or summary with
-`colony_accept_local_draft` or `POST /v1/host/commitments/local-draft`.
+`pacomind_accept_local_draft` or `POST /v1/host/commitments/local-draft`.
 Acceptance names the question and one to eight absolute UTF-8 source paths.
 The native tool derives the owner, session, turn and notification origin from
 the actual transport. These are not model-selected arguments. An optional
@@ -18,15 +18,15 @@ for replay, changed scope and accepting-session lease behavior.
 
 ## Native execution
 
-`apsimo init --local-work` verifies function calling and creates a native
-`colony-drafts` board and worker profile. The selected Hermes gateway owns
+`pacomind init --local-work` verifies function calling and creates a native
+`pacomind-drafts` board and worker profile. The selected Hermes gateway owns
 dispatch, claims, attempts, process recovery, terminal state and delivery.
-Apsimo retains the explicit acceptance, commitment scope and report validation.
+PacoMind retains the explicit acceptance, commitment scope and report validation.
 There is no new scheduler, service or Hermes core patch.
 
-The host selects `COLONY_LOCAL_WORK_ENABLED=true`,
-`COLONY_LOCAL_WORK_EXECUTOR=kanban`, `COLONY_LOCAL_WORK_BOARD` and
-`COLONY_LOCAL_WORK_PROFILE`. Plugin `native_local_work` configuration names the
+The host selects `PACOMIND_LOCAL_WORK_ENABLED=true`,
+`PACOMIND_LOCAL_WORK_EXECUTOR=kanban`, `PACOMIND_LOCAL_WORK_BOARD` and
+`PACOMIND_LOCAL_WORK_PROFILE`. Plugin `native_local_work` configuration names the
 same board/profile, private report destination and instance directory. Setup
 writes these bindings. The worker alone opts into the supported native
 `kanban_complete` override, which validates the report before native completion.
@@ -47,7 +47,7 @@ not enter owner turn-memory capture. Retained history is still native history.
 
 ## Routing, results and recovery
 
-The gateway resolves the local `planning` role in the Apsimo interpreter and
+The gateway resolves the local `planning` role in the PacoMind interpreter and
 refreshes the dedicated native profile before promoting new work. Nonempty
 native dispatch ticks refresh that profile for subsequent attempts. The upstream
 tick hook runs after dispatch, so a worker already launched keeps its earlier

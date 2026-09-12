@@ -6,12 +6,12 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.memory.recall import pack_memory_context
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.source_read import read
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.memory.recall import pack_memory_context
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.source_read import read
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_claim_projection import Model, claim
 from test_turn_source_evidence import source_app
@@ -91,7 +91,7 @@ def test_checkpoint_opening_stays_in_its_session_and_correction_changes_continua
 
 
 def test_corrected_old_document_keeps_record_times_distinct_from_its_contents_and_correction(tmp_path, monkeypatch):
-    from apsimo.turns import source_annotations
+    from pacomind.turns import source_annotations
     ledger = TurnIdempotencyLedger(tmp_path/'source.db')
     observed_at = '2026-09-12T08:00:00+00:00'
     text = 'Service handbook, 2021 edition: cancellation requires a telephone call.'
@@ -177,7 +177,7 @@ async def test_memory_read_canonical_mode_enforces_principal_without_graph(sourc
 
 def retain_call(ledger, origin, number, content, *, sources=(), reason='Useful inspection evidence.'):
     import hashlib
-    from apsimo.turns.tool_observations import ToolObservation, identity_id, record
+    from pacomind.turns.tool_observations import ToolObservation, identity_id, record
     native = dict(profile_id='a'*64, session_id='original', task_id='task', turn_id='turn',
         tool_call_id=f'call-{number}', api_request_id='request', tool_name='terminal',
         message_id=number, timestamp=1234567890.0 + number,
@@ -196,7 +196,7 @@ def observation_origin(tmp_path):
 
 
 def test_observation_directory_uses_index_and_exact_first_origin_not_nomination(tmp_path):
-    from apsimo.turns.tool_observations import ORIGIN_QUERY
+    from pacomind.turns.tool_observations import ORIGIN_QUERY
     ledger, origin = observation_origin(tmp_path)
     empty = opened(ledger, view='observations')
     assert json.loads(empty['content'])['observations'] == [] and empty['complete']
@@ -255,7 +255,7 @@ def test_observation_pagination_pins_membership_and_nonpage_corrections_and_boun
 
 
 def test_observation_open_carries_parent_and_result_corrections_and_rejects_attribution_or_erase(tmp_path):
-    from apsimo.turns.source_attribution import correct
+    from pacomind.turns.source_attribution import correct
     ledger, origin = observation_origin(tmp_path)
     observation = retain_call(ledger, origin, 1, 'Checksum mismatch; files modified 0.')
     notes = []
@@ -283,7 +283,7 @@ def test_observation_open_carries_parent_and_result_corrections_and_rejects_attr
 
 
 def test_observation_directory_rechecks_correction_race_and_original_digest(tmp_path, monkeypatch):
-    import apsimo.turns.source_read as reader
+    import pacomind.turns.source_read as reader
     ledger, origin = observation_origin(tmp_path)
     observation = retain_call(ledger, origin, 1, 'Checksum mismatch.')
     original_expand = reader.expand

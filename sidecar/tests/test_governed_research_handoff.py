@@ -12,10 +12,10 @@ from types import SimpleNamespace
 from fastapi import Request
 import pytest
 
-from apsimo.api.authority import RequestAuthority, legacy_authority
-from apsimo.api.routers import host
-from apsimo.governed_actions import (
-    ColonySubsystemActionExecutor,
+from pacomind.api.authority import RequestAuthority, legacy_authority
+from pacomind.api.routers import host
+from pacomind.governed_actions import (
+    PacoMindSubsystemActionExecutor,
     GovernedActionLedger,
     GovernedActionService,
     GovernedActionValidationError,
@@ -23,8 +23,8 @@ from apsimo.governed_actions import (
     parse_execution_request,
     sha256_json,
 )
-from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
-from apsimo.work_orders import (
+from pacomind.projects import Project, ProjectEngine, ProjectStore, Step
+from pacomind.work_orders import (
     QueueWorkOrderAdapter,
     WorkOrderV1,
     action_authority,
@@ -62,7 +62,7 @@ def _http_request(authority: RequestAuthority) -> Request:
         "client": ("test", 1),
         "root_path": "",
     })
-    request.state.colony_authority = authority
+    request.state.pacomind_authority = authority
     return request
 
 
@@ -99,11 +99,11 @@ def _request(
     action_id: str = "123e4567-e89b-42d3-a456-426614174000",
     topic: str = "bounded agent execution",
     depth: str = "quick",
-    tool_name: str = "colony_research",
+    tool_name: str = "pacomind_research",
 ) -> dict:
-    args = {"topic": topic, "depth": depth} if tool_name == "colony_research" else {}
+    args = {"topic": topic, "depth": depth} if tool_name == "pacomind_research" else {}
     approval = {
-        "schema": "ColonyOwnerApprovalExecutionBindingV1",
+        "schema": "PacoMindOwnerApprovalExecutionBindingV1",
         "version": 1,
         "approval_id": "APR-OWNER0000001",
         "decision_id": "DEC-OWNER-0001",
@@ -113,7 +113,7 @@ def _request(
         "expires_at": NOW + 120,
     }
     unsigned = {
-        "schema": "ColonyGovernedActionExecutionV1",
+        "schema": "PacoMindGovernedActionExecutionV1",
         "version": 1,
         "action_id": action_id,
         "action_digest": "b" * 64,
@@ -145,7 +145,7 @@ def _adapter(store: ProjectStore) -> QueueWorkOrderAdapter:
 
 
 def _engine(path: Path, monkeypatch, *, mode: str = "live") -> ProjectEngine:
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", mode)
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", mode)
     store = ProjectStore(str(path))
     return ProjectEngine(store, work_order_adapter=_adapter(store))
 
@@ -156,7 +156,7 @@ def _expected_project_id(request: dict) -> str:
 
 def _identity_digest(request: dict) -> str:
     return sha256_json({
-        "schema": "ColonyGovernedResearchProjectIdentityV1",
+        "schema": "PacoMindGovernedResearchProjectIdentityV1",
         "version": 1,
         "owner_person_id": OWNER,
         "action_id": request["action_id"],
@@ -201,7 +201,7 @@ async def test_service_passes_one_full_immutable_request_to_executor(tmp_path):
         async def perform(self, request, owner_person_id):
             observed.append(("perform", request, owner_person_id))
             return {
-                "schema": "ColonyGovernedActionEffectV1",
+                "schema": "PacoMindGovernedActionEffectV1",
                 "version": 1,
                 "effect_id": "project-queued",
                 "outcome": "queued",
@@ -248,7 +248,7 @@ async def test_research_topic_bound_is_lossless_at_1400_and_rejects_1401(
         GovernedActionLedger(
             tmp_path / "topic-ledger" / "ledger.db", clock=lambda: NOW
         ),
-        ColonySubsystemActionExecutor(projects=engine),
+        PacoMindSubsystemActionExecutor(projects=engine),
         clock=lambda: NOW,
     )
     accepted = _request(topic="x" * 1400)
@@ -281,7 +281,7 @@ async def test_effect_digest_matches_host_utf8_result_contract(tmp_path):
 
         async def perform(self, request, owner_person_id):
             return {
-                "schema": "ColonyGovernedActionEffectV1",
+                "schema": "PacoMindGovernedActionEffectV1",
                 "version": 1,
                 "effect_id": "unicode-effect",
                 "outcome": "completed",
@@ -309,7 +309,7 @@ async def test_effect_digest_matches_host_utf8_result_contract(tmp_path):
 @pytest.mark.asyncio
 async def test_governed_research_is_a_fast_durable_project_enqueue(tmp_path, monkeypatch):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     request = _request(topic="token=TOP-SECRET research topic", depth="deep")
 
     started = time.monotonic()
@@ -320,7 +320,7 @@ async def test_governed_research_is_a_fast_durable_project_enqueue(tmp_path, mon
     project = engine.store.get_project(effect["effect_id"])
     assert elapsed < 0.5
     assert effect == {
-        "schema": "ColonyGovernedActionEffectV1",
+        "schema": "PacoMindGovernedActionEffectV1",
         "version": 1,
         "effect_id": _expected_project_id(request),
         "outcome": "queued",
@@ -355,7 +355,7 @@ async def test_ephemeral_research_pipeline_is_never_called(tmp_path, monkeypatch
             await asyncio.sleep(60)
             raise AssertionError("ephemeral ResearchPipeline.run was called")
 
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     executor.research = PoisonPipeline()
     request = _request()
     effect = await asyncio.wait_for(executor.perform(request, OWNER), timeout=0.5)
@@ -371,7 +371,7 @@ async def test_governed_project_replay_restart_mismatch_and_new_action(
 ):
     path = tmp_path / "projects.db"
     engine = _engine(path, monkeypatch)
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     request = _request()
 
     first_effect = await executor.perform(request, OWNER)
@@ -390,7 +390,7 @@ async def test_governed_project_replay_restart_mismatch_and_new_action(
     engine.store.close()
 
     restarted = _engine(path, monkeypatch)
-    restarted_executor = ColonySubsystemActionExecutor(projects=restarted)
+    restarted_executor = PacoMindSubsystemActionExecutor(projects=restarted)
     after_restart_effect = await restarted_executor.perform(request, OWNER)
     after_restart = restarted.store.get_project(after_restart_effect["effect_id"])
     assert after_restart.id == first.id
@@ -432,7 +432,7 @@ async def test_exact_insert_refuses_every_same_row_authority_mismatch(
     tmp_path, monkeypatch, field, mutate
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     project = engine.store.get_project(effect["effect_id"])
@@ -462,7 +462,7 @@ async def test_exact_insert_refuses_noninitial_absent_lifecycle(
     tmp_path, monkeypatch, changes
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     candidate = engine.store.get_project(effect["effect_id"])
@@ -479,7 +479,7 @@ async def test_exact_insert_refuses_noninitial_absent_lifecycle(
 @pytest.mark.asyncio
 async def test_governed_project_authority_is_immutable(tmp_path, monkeypatch):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     project = engine.store.get_project(effect["effect_id"])
@@ -502,7 +502,7 @@ async def test_nonlive_projects_mode_does_not_consume_approved_action(
     tmp_path, monkeypatch, mode
 ):
     engine = _engine(tmp_path / (mode + ".db"), monkeypatch, mode=mode)
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     ledger = GovernedActionLedger(
         tmp_path / ("ledger-" + mode) / "ledger.db", clock=lambda: NOW
     )
@@ -528,10 +528,10 @@ async def test_nonlive_projects_mode_does_not_consume_approved_action(
 async def test_missing_canonical_work_order_adapter_does_not_consume_action(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     store = ProjectStore(str(tmp_path / "projects.db"))
     engine = ProjectEngine(store, work_order_adapter=object())
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     ledger = GovernedActionLedger(tmp_path / "ledger" / "ledger.db", clock=lambda: NOW)
     service = GovernedActionService(ledger, executor, clock=lambda: NOW)
     request = _request()
@@ -557,7 +557,7 @@ async def test_governed_capabilities_narrow_initial_plan_replan_and_dispatch(
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
     request = _request()
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         request, OWNER
     )
     project = engine.store.get_project(effect["effect_id"])
@@ -570,7 +570,7 @@ async def test_governed_capabilities_narrow_initial_plan_replan_and_dispatch(
         )]
 
     monkeypatch.setattr(
-        "apsimo.projects.planner.plan_project", directed_plan
+        "pacomind.projects.planner.plan_project", directed_plan
     )
     assert await engine._plan_pending("live") == 0
     planned = engine.store.get_project(project.id)
@@ -632,7 +632,7 @@ async def test_governed_capabilities_narrow_initial_plan_replan_and_dispatch(
 @pytest.mark.asyncio
 async def test_governed_research_work_order_is_owner_read_only(tmp_path, monkeypatch):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     project = engine.store.get_project(effect["effect_id"])
@@ -663,12 +663,12 @@ async def test_autonomy_results_are_prompt_and_match_observed_state():
     async def prompt_stop_signal():
         stop_requested.set()
 
-    executor = ColonySubsystemActionExecutor(
+    executor = PacoMindSubsystemActionExecutor(
         autonomy_enable=lambda: None,
         autonomy_disable=prompt_stop_signal,
         autonomy_running=lambda: running["value"],
     )
-    disable_request = _request(tool_name="colony_autonomy_disable")
+    disable_request = _request(tool_name="pacomind_autonomy_disable")
     started = time.monotonic()
     disable = await asyncio.wait_for(
         executor.perform(disable_request, OWNER), timeout=0.5
@@ -683,7 +683,7 @@ async def test_autonomy_results_are_prompt_and_match_observed_state():
     assert disabled["outcome"] == "disabled"
     assert disabled["verification"] == {"running": False}
 
-    enable_request = _request(tool_name="colony_autonomy_enable")
+    enable_request = _request(tool_name="pacomind_autonomy_enable")
     start_requested = await executor.perform(enable_request, OWNER)
     assert start_requested["outcome"] == "start_requested"
     assert start_requested["verification"] == {"running": False}
@@ -691,7 +691,7 @@ async def test_autonomy_results_are_prompt_and_match_observed_state():
 
 @pytest.mark.asyncio
 async def test_governed_stop_wrapper_uses_prompt_loop_signal_not_host_join():
-    import apsimo.server as server
+    import pacomind.server as server
 
     class Loop:
         def __init__(self):
@@ -730,7 +730,7 @@ async def test_insert_then_executor_crash_is_ambiguous_and_never_duplicates(
         raise RuntimeError("crash after exact project insert")
 
     engine.enqueue_governed_research = insert_then_crash
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     ledger_path = tmp_path / "ledger" / "ledger.db"
     ledger = GovernedActionLedger(ledger_path, clock=lambda: NOW)
     service = GovernedActionService(ledger, executor, clock=lambda: NOW)
@@ -745,7 +745,7 @@ async def test_insert_then_executor_crash_is_ambiguous_and_never_duplicates(
 
     restarted = GovernedActionService(
         GovernedActionLedger(ledger_path, clock=lambda: NOW),
-        ColonySubsystemActionExecutor(projects=engine),
+        PacoMindSubsystemActionExecutor(projects=engine),
         clock=lambda: NOW,
     )
     replay = await restarted.execute(
@@ -762,7 +762,7 @@ async def test_mode_demotion_holds_governed_project_without_shadow_skip(
     tmp_path, monkeypatch
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     project = engine.store.get_project(effect["effect_id"])
@@ -773,7 +773,7 @@ async def test_mode_demotion_holds_governed_project_without_shadow_skip(
         action_kind="research",
     )
     engine.store.save_step(step)
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "shadow")
 
     report = await engine.tick()
     persisted = engine.store.get_project(project.id)
@@ -792,7 +792,7 @@ async def test_mode_demotion_holds_governed_project_without_shadow_skip(
         return None, "work_order:queued"
 
     engine._work_orders.execute = execute
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     assert await engine._advance_project(persisted, "live") is True
     assert resumed is True
     assert engine.store.get_project(project.id).reason == ""
@@ -805,7 +805,7 @@ async def test_adapter_disappearance_cannot_fall_back_to_local_reasoning(
     tmp_path, monkeypatch
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     project = engine.store.get_project(effect["effect_id"])
@@ -854,9 +854,9 @@ async def test_adapter_disappearance_cannot_fall_back_to_local_reasoning(
 async def test_owner_private_project_routes_filter_guest_without_existence_leak(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", OWNER)
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(topic="TOP-SECRET private research"), OWNER
     )
     governed = engine.store.get_project(effect["effect_id"])
@@ -901,9 +901,9 @@ async def test_owner_private_project_routes_filter_guest_without_existence_leak(
 async def test_project_abandon_route_is_owner_only_and_hides_existence(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", OWNER)
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(topic="PRIVATE owner research"), OWNER
     )
     governed = engine.store.get_project(effect["effect_id"])
@@ -963,7 +963,7 @@ async def test_project_abandon_route_is_owner_only_and_hides_existence(
 async def test_project_create_route_requires_owner_and_derives_provenance(
     tmp_path, monkeypatch
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", OWNER)
     engine = _engine(tmp_path / "projects.db", monkeypatch)
     monkeypatch.setattr(host, "_project_engine", engine)
 
@@ -1037,7 +1037,7 @@ async def test_project_engine_rejects_malformed_governed_provenance(
     tmp_path, monkeypatch, mutate
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    executor = ColonySubsystemActionExecutor(projects=engine)
+    executor = PacoMindSubsystemActionExecutor(projects=engine)
     project = executor._governed_research_project(_request(), OWNER)
     mutate(project)
 
@@ -1052,7 +1052,7 @@ async def test_adapter_loss_after_precheck_does_not_consume_step_attempt(
     tmp_path, monkeypatch
 ):
     engine = _engine(tmp_path / "projects.db", monkeypatch)
-    effect = await ColonySubsystemActionExecutor(projects=engine).perform(
+    effect = await PacoMindSubsystemActionExecutor(projects=engine).perform(
         _request(), OWNER
     )
     project = engine.store.get_project(effect["effect_id"])

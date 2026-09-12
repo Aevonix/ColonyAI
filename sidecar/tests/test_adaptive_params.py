@@ -8,8 +8,8 @@ behavioral effect. These tests pin the read-back path end to end.
 
 import pytest
 
-from apsimo.self_model.journal import ActionJournal
-from apsimo.self_model.params import (
+from pacomind.self_model.journal import ActionJournal
+from pacomind.self_model.params import (
     PARAM_CONSOLIDATION_THRESHOLD,
     PARAM_RECALL_MIN_RELEVANCE,
     AdaptiveParamStore,
@@ -77,7 +77,7 @@ class TestStore:
 
 class TestConsolidatorReadsBack:
     async def test_consolidator_resolves_threshold_per_run(self, store):
-        from apsimo.intelligence.graph.consolidator import (
+        from pacomind.intelligence.graph.consolidator import (
             MemoryConsolidator,
         )
 
@@ -93,7 +93,7 @@ class TestConsolidatorReadsBack:
         assert c.similarity_threshold == pytest.approx(0.96)
 
     async def test_consolidator_without_params_keeps_default(self):
-        from apsimo.intelligence.graph.consolidator import (
+        from pacomind.intelligence.graph.consolidator import (
             MemoryConsolidator,
         )
 

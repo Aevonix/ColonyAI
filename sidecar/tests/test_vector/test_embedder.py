@@ -1,14 +1,14 @@
-"""Tests for apsimo.vector.embedder — embedding providers and factory."""
+"""Tests for pacomind.vector.embedder — embedding providers and factory."""
 import pytest
-from apsimo.vector.embedder import (
+from pacomind.vector.embedder import (
     CUDAEmbeddingProvider,
     CPUEmbeddingProvider,
     MLXEmbeddingProvider,
     NativeMLXEmbeddingProvider,
     make_provider,
 )
-from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
-from apsimo.vector.config import EmbeddingConfig
+from pacomind.vector.openai_provider import OpenAIAPIEmbeddingProvider
+from pacomind.vector.config import EmbeddingConfig
 
 
 class TestMakeProvider:

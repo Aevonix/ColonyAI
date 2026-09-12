@@ -35,7 +35,7 @@ delivery path or the held directed-action dry_run.
   EntityResolver + relationships (WM_* types).
 - `intelligence/components/initiative_engine.py` ~20 generators + `generate()`
   with dedup/cooldown/cap; `self_directed_thinker.py` (mode off/shadow/live).
-- `intelligence/graph/` ColonyGraph (recall, store_memory, decay, distiller),
+- `intelligence/graph/` PacoMindGraph (recall, store_memory, decay, distiller),
   epistemic_state on memories; `intelligence/graph/distiller.py` MemoryDistiller.
 - `services/initiative_executor.py` InitiativeExecutorService (needs_tool loop,
   boundary gate, repeat-work suppression, resilient run_turn).
@@ -44,8 +44,8 @@ delivery path or the held directed-action dry_run.
 - `autonomy/registry.py` SubsystemRegistry accessors; `autonomy/loop.py` phased
   tick (proactive), `_phase_execute`, `_route_reachout_delivery`, `_phase_thinking`.
 - `api/routers/host.py` global set_*/get_* + REST; `server.py` boot wiring.
-- Config precedent: each subsystem gets `COLONY_<X>_MODE` off|shadow|live and
-  a state-dir SQLite db (`colony-<x>.db`).
+- Config precedent: each subsystem gets `PACOMIND_<X>_MODE` off|shadow|live and
+  a state-dir SQLite db (`pacomind-<x>.db`).
 
 ## Dependency-ordered phases
 
@@ -78,15 +78,15 @@ uncertainty (which becomes ask-first, never silent inaction).
    approval request carries the reasoning and the confidence ("I want to do
    X, confidence 0.62, because Y"). The approval machinery is something the
    agent INVOKES when unsure, not a static wall.
-2. Auto-graduation. COLONY_<X>_MODE shadow phases are CALIBRATION phases,
+2. Auto-graduation. PACOMIND_<X>_MODE shadow phases are CALIBRATION phases,
    not waiting rooms. A capability class auto-graduates shadow -> ask_first
    -> act_first as its track record crosses thresholds
-   (COLONY_TRUST_* envs, sensible defaults), with an owner NOTIFICATION on
+   (PACOMIND_TRUST_* envs, sensible defaults), with an owner NOTIFICATION on
    each graduation ("I am now doing X autonomously; say stop if not"), not a
    permission request. The env mode remains an owner override: off stays
    off; an env set to live is live; shadow means "start in calibration".
-3. Circuit breakers. N failures (COLONY_TRUST_BREAKER_FAILURES, default 3)
-   within a window (COLONY_TRUST_BREAKER_WINDOW_HOURS, default 24) or ANY
+3. Circuit breakers. N failures (PACOMIND_TRUST_BREAKER_FAILURES, default 3)
+   within a window (PACOMIND_TRUST_BREAKER_WINDOW_HOURS, default 24) or ANY
    audit violation auto-demotes that class to ask_first and journals why.
    Course correction is automatic, not post-mortem.
 4. Unified action journal. Every autonomous action is logged with reasoning,
@@ -126,7 +126,7 @@ Design:
   - `models.Step`: id, project_id, ordinal, description, depends_on[step_ids],
     status (pending|active|done|failed|skipped), attempts, result, action_kind
     (analyze|research|directed|deliver|internal), boundary_subject (for gating).
-  - `store.ProjectStore` (SQLite `colony-projects.db`): CRUD, list by status,
+  - `store.ProjectStore` (SQLite `pacomind-projects.db`): CRUD, list by status,
     steps CRUD, due-for-review query. Survives restarts.
 - `planner.py`: `plan_project(objective, context) -> [Step]` via the reasoning
   loop (one LLM planning pass) returning a STRICT JSON step list
@@ -153,11 +153,11 @@ Design:
 - API: GET /projects, GET /projects/{id}, POST /projects (owner), POST
   /projects/{id}/abandon.
 
-Config flags: `COLONY_PROJECTS_MODE` off|shadow|live (default shadow: plan +
+Config flags: `PACOMIND_PROJECTS_MODE` off|shadow|live (default shadow: plan +
 log intended step actions, take no outward/mutating action); step dispatch
 still routes through each sub-path's own gate (directed dry_run, delivery
-shadow/live). `COLONY_PROJECTS_MAX_STEPS` (default 12), `COLONY_PROJECTS_
-REVIEW_SECS`, `COLONY_PROJECTS_MAX_REPLANS` (default 3).
+shadow/live). `PACOMIND_PROJECTS_MAX_STEPS` (default 12), `PACOMIND_PROJECTS_
+REVIEW_SECS`, `PACOMIND_PROJECTS_MAX_REPLANS` (default 3).
 
 Rollout gate (amended): shadow is the CALIBRATION stage; a sample project
 must plan + log a clean step sequence with boundary checks and a
@@ -182,13 +182,13 @@ Design:
   - `models.Skill`: id, title, situation_signature (normalized terms +
     embedding optional), steps[], gotchas[], domain (initiative_type/
     project/directed), source_ref, uses, wins, losses, confidence, created/
-    last_used, decayed. `store.SkillStore` (SQLite `colony-skills.db`).
+    last_used, decayed. `store.SkillStore` (SQLite `pacomind-skills.db`).
   - `distill.py`: `distill_from_completion(context, transcript) -> Skill|None`.
     Trigger conditions: success AFTER >=1 retry, or a novel diagnosis (executor
     result contains a resolution not seen in recent skills). One reasoning-loop
     pass -> STRICT JSON {title, situation, steps, gotchas}; validate; dedup by
     situation-signature similarity (drop if >0.8 overlap with an existing skill,
-    bump its uses instead). Cap total skills (`COLONY_SKILLS_MAX`, default 200);
+    bump its uses instead). Cap total skills (`PACOMIND_SKILLS_MAX`, default 200);
     evict lowest score = f(confidence, recency, wins-losses).
   - `retrieve.py`: `relevant_skills(situation, k=3)` by signature/keyword (and
     embedding if available) -> compact bullet block for prompts.
@@ -202,8 +202,8 @@ Design:
   `registry.skill_store`.
 - API: GET /skills (observability).
 
-Config: `COLONY_SKILLS_ENABLED` (default true - read/inform only),
-`COLONY_SKILLS_DISTILL` (default shadow: log the distilled skill without
+Config: `PACOMIND_SKILLS_ENABLED` (default true - read/inform only),
+`PACOMIND_SKILLS_DISTILL` (default shadow: log the distilled skill without
 storing, then live). Distillation costs one LLM call per qualifying completion;
 gate cadence so M3 load stays modest (only on retry-success/novel).
 
@@ -221,7 +221,7 @@ autonomy per action class.
 
 Design:
 - `self_model/` package.
-  - `store.CompetenceStore` (SQLite `colony-self-model.db`) keyed by domain
+  - `store.CompetenceStore` (SQLite `pacomind-self-model.db`) keyed by domain
     (initiative_type | project | directed[:scope-class] | research |
     delivery | worker-job-type): counts success/failure/timeout, ewma
     latency, last_outcome_at, PLUS a per-event log (domain, outcome, ts) for
@@ -230,7 +230,7 @@ Design:
   - `brief.py`: `self_brief()` -> compact text: "You reliably do X (n, p=..),
     you often time out on Y, current load L." Injected into thinker +
     executor + project-planner prompts so she routes/declines/escalates.
-  - `journal.py`: unified ActionJournal (SQLite `colony-action-journal.db`):
+  - `journal.py`: unified ActionJournal (SQLite `pacomind-action-journal.db`):
     record(domain, description, reasoning, confidence, reversibility,
     decision acted|asked|held|blocked, outcome, ref). Read APIs: today(),
     recent(). Every autonomous action chokepoint writes here.
@@ -241,10 +241,10 @@ Design:
     - Stage per domain (shadow -> ask_first -> act_first) persisted in the
       store; `gate(domain, description, reasoning, reversibility,
       floor_class)` -> decision act|ask|hold, journaled automatically.
-    - Auto-graduation on threshold crossings (COLONY_TRUST_ASK_THRESHOLD
-      default 0.45/n>=3, COLONY_TRUST_ACT_THRESHOLD default 0.8/n>=5), owner
+    - Auto-graduation on threshold crossings (PACOMIND_TRUST_ASK_THRESHOLD
+      default 0.45/n>=3, PACOMIND_TRUST_ACT_THRESHOLD default 0.8/n>=5), owner
       notification (not a request) through guarded delivery on each
-      graduation; COLONY_TRUST_AUTOGRADUATE=false disables.
+      graduation; PACOMIND_TRUST_AUTOGRADUATE=false disables.
     - Circuit breaker: failures in window / any audit violation ->
       auto-demote to ask_first + journal + owner note.
     - Immutable floor: `is_floor(...)`: money movement, non-recoverable
@@ -254,13 +254,13 @@ Design:
   verdict, delivery pushes, and worker job results (item 5) all feed
   CompetenceStore.record + the journal.
 - Adaptive delivery cap: the per-recipient daily cap scales with the
-  "delivery" domain's earned confidence (base COLONY_MAX_DAILY, earned
-  upward, bounded by COLONY_TRUST_DELIVERY_CAP_MAX).
+  "delivery" domain's earned confidence (base PACOMIND_MAX_DAILY, earned
+  upward, bounded by PACOMIND_TRUST_DELIVERY_CAP_MAX).
 - Tools: `self_status()` (read) -> domains, rates, load, stages;
   `action_journal(day?)` (read). Registry: `registry.self_model`.
 - API: GET /self, GET /self/journal.
 
-Config: `COLONY_SELF_MODEL_ENABLED` (default true), COLONY_TRUST_* thresholds
+Config: `PACOMIND_SELF_MODEL_ENABLED` (default true), PACOMIND_TRUST_* thresholds
 (above). Measurement/journal live directly; gating decisions apply wherever a
 capability consults `gate()`.
 
@@ -275,7 +275,7 @@ Private deployment layer: none.
 Drive the graph's epistemic scaffolding.
 
 Design:
-- `beliefs/` package operating over ColonyGraph + world-model.
+- `beliefs/` package operating over PacoMindGraph + world-model.
   - `contradictions.py`: detect same subject+predicate conflicting value across
     facts/world-model properties. For world-model: `update_entity_property`
     already keeps higher confidence; extend to record superseded values with an
@@ -295,7 +295,7 @@ Design:
   property (inline, cheap detection; heavy resolve deferred to the phase).
 - Tools: `belief_conflicts()` (read). Registry: `registry.belief_engine`.
 
-Config: `COLONY_BELIEFS_MODE` off|shadow|live (shadow: detect + log + surface
+Config: `PACOMIND_BELIEFS_MODE` off|shadow|live (shadow: detect + log + surface
 review initiatives, do NOT mutate epistemic_state; live: resolve/decay).
 Default shadow.
 
@@ -305,17 +305,17 @@ review initiative, decay lowers confidence past TTL.
 
 Private deployment layer: source-trust ranking may reference deployment
 sources (owner vs connector vs inference); ranking table is generic + env
-override `COLONY_SOURCE_TRUST`.
+override `PACOMIND_SOURCE_TRUST`.
 
 ---
 
-## Item 5 - COLONY WORKERS [Phase B, riskiest]
+## Item 5 - PACOMIND WORKERS [Phase B, riskiest]
 
 Make the multi-agent scaffolding real: a generic worker daemon that claims and
 executes typed jobs, with SERVER-SIDE enforcement (never trust the worker).
 
 Design:
-- Server side (public, ColonyAI):
+- Server side (public, PacoMind):
   - Local `agent_action` handling is currently forward-only. Add a
     server-authoritative job lifecycle already present in `task_queue/`
     (claim/complete/fail, BLOCKED for approval). Ensure every job carries its
@@ -330,17 +330,17 @@ Design:
     filtered by capability. Heartbeat + lease so a dead worker's job requeues.
   - Post-completion audit (reuse `directed/audit.py` pattern) + feedback + self
     model + skill distill.
-- Worker daemon (public, ColonyAI, installable): `workers/colony_worker.py`
-  (extend existing `workers/`): authenticates to the sidecar (COLONY_API_KEY),
+- Worker daemon (public, PacoMind, installable): `workers/pacomind_worker.py`
+  (extend existing `workers/`): authenticates to the sidecar (PACOMIND_API_KEY),
   registers capabilities, polls claim endpoint, executes with an LLM
   (OpenAI-compatible endpoint from env) + the SAME tool registry subset
   (read/internal tools + repo_* + web_search; NEVER mutation tools client-side),
   posts a structured report to the job complete endpoint. Ships with an install
   script + a launchd/systemd unit template (generic placeholders).
 
-Config flags: `COLONY_WORKERS_MODE`, `COLONY_WORKER_NODE_ID`, `COLONY_WORKER_MAX_JOBS`, `COLONY_WORKER_CAPABILITIES`,
-`COLONY_WORKER_LLM_BASE_URL`/`_MODEL`/`_API_KEY`, `COLONY_WORKER_POLL_SECS`,
-server-side `COLONY_WORKERS_MODE` off|shadow|live (shadow: accept registration
+Config flags: `PACOMIND_WORKERS_MODE`, `PACOMIND_WORKER_NODE_ID`, `PACOMIND_WORKER_MAX_JOBS`, `PACOMIND_WORKER_CAPABILITIES`,
+`PACOMIND_WORKER_LLM_BASE_URL`/`_MODEL`/`_API_KEY`, `PACOMIND_WORKER_POLL_SECS`,
+server-side `PACOMIND_WORKERS_MODE` off|shadow|live (shadow: accept registration
 + claims but execute in dry-run reporting only). Default shadow.
 
 Rollout gate (amended): shadow is calibration; after one worker registers,
@@ -354,7 +354,7 @@ requeue on missed heartbeat, audit of worker report, never-trust (worker
 reporting a mutation on a read-only job -> violation).
 
 Private deployment layer (private repo + live host): which hosts run workers,
-their LLM endpoints, capabilities per host, launchd plists, COLONY_API_KEY
+their LLM endpoints, capabilities per host, launchd plists, PACOMIND_API_KEY
 provisioning. Document in the handoff list.
 
 ## Item 6 - EXPLORATION SANDBOX [Phase B, riskiest]
@@ -376,10 +376,10 @@ Design:
 - Server-side enforcement: limits + no-egress enforced by the backend, not the
   caller; the tool cannot widen limits.
 
-Config: `COLONY_SANDBOX_MODE` off|dry_run|live (dry_run: validate + log the
-would-run command, execute nothing), `COLONY_SANDBOX_IMAGE`,
-`COLONY_SANDBOX_CPUS`/`_MEMORY`/`_TIMEOUT`/`_EGRESS` (none|allowlist),
-`COLONY_SANDBOX_MAX_ARTIFACT_BYTES`. Default off (Docker may be absent on the
+Config: `PACOMIND_SANDBOX_MODE` off|dry_run|live (dry_run: validate + log the
+would-run command, execute nothing), `PACOMIND_SANDBOX_IMAGE`,
+`PACOMIND_SANDBOX_CPUS`/`_MEMORY`/`_TIMEOUT`/`_EGRESS` (none|allowlist),
+`PACOMIND_SANDBOX_MAX_ARTIFACT_BYTES`. Default off (Docker may be absent on the
 deployment host; enable per deployment).
 
 Rollout gate: dry_run until a sample script validates + logs; live only where
@@ -427,8 +427,8 @@ Design:
 - Boundary: every connector poll and every entity upsert is boundary-gated
   (an OBSERVE boundary on a subject suppresses ingest of it).
 
-Config: `COLONY_CONNECTORS_ENABLED`, per-connector `COLONY_CONNECTOR_<NAME>_*`
-(enabled, endpoint, token, poll_secs), `COLONY_CONNECTORS_MODE` off|shadow|live
+Config: `PACOMIND_CONNECTORS_ENABLED`, per-connector `PACOMIND_CONNECTOR_<NAME>_*`
+(enabled, endpoint, token, poll_secs), `PACOMIND_CONNECTORS_MODE` off|shadow|live
 (shadow: poll + log normalized output + shadow-populate, no world-model writes).
 Default off.
 
@@ -573,7 +573,7 @@ unchanged at 0.18.
 
 ### What the integration uses today
 
-register_tool (colony toolset), register_command with register_slash_command
+register_tool (pacomind toolset), register_command with register_slash_command
 fallback, hooks pre_llm_call / post_llm_call / on_session_end / pre_tool_call,
 the memory provider plugin, a WebSocket subscription to the sidecar for
 proactive events, sidecar-webhook delivery plus a deployment deliver-shim, and
@@ -620,7 +620,7 @@ the ops layer (doctor, patch runner, restart runner, activity monitor).
   the pull-style connectors (IMAP, CalDAV, fs, metrics-pull) and normalize
   into observations. Do not build a push webhook receiver.
 - Item 3 (Skills): Hermes 0.18 has a full agent-facing skills system plus
-  /learn and /journey. Colony's skills_memory remains sidecar-internal
+  /learn and /journey. PacoMind's skills_memory remains sidecar-internal
   procedure memory for its own loops; where a distilled skill is useful to
   the AGENT, export it to a directory listed in skills.external_dirs (or
   ctx.register_skill) instead of inventing an import path. Never rebuild
@@ -630,7 +630,7 @@ the ops layer (doctor, patch runner, restart runner, activity monitor).
   no polling needed.
 - Item 5 (Workers): Hermes kanban's dispatcher/worker model and the delegation
   subsystem (subagent_start/stop, delegation.* config) already provide typed
-  work execution with process isolation. Colony's value-add is SERVER-SIDE
+  work execution with process isolation. PacoMind's value-add is SERVER-SIDE
   enforcement (boundary/approval re-check on claim and completion), the
   capability registry, and the audit trail; implement those in the sidecar
   queue as planned, but strongly consider the worker daemon CLAIMING work as
@@ -661,27 +661,27 @@ scaffolding work, drowzeys Keys-Setup: cloud/escalation corrections become
 local supervision, serving logs become training data. Concepts only; no code
 adopted, upstream is unlicensed and immature):
 
-- ESCALATION MINER (`sidecar/colony_sidecar/mining/`): detects escalation
+- ESCALATION MINER (`sidecar/pacomind/mining/`): detects escalation
   events in the live turn stream: build-agent consultations (terminal-class
-  tool ran AND text matches COLONY_ESCALATION_CONSULT_REGEX) and heavy-model /
+  tool ran AND text matches PACOMIND_ESCALATION_CONSULT_REGEX) and heavy-model /
   cloud-failover turns (new optional per-turn `model` field on turns/sync,
-  matched against COLONY_ESCALATION_HEAVY_RE). Records bank task context, the
+  matched against PACOMIND_ESCALATION_HEAVY_RE). Records bank task context, the
   prior local attempt in-session, the escalated answer, channel, model, ts,
-  and a lightweight next-turn outcome into `colony-mining.db`. Consumers:
+  and a lightweight next-turn outcome into `pacomind-mining.db`. Consumers:
   (i) skills-memory distillation (live mode feeds records into
   distill_from_completion, domain "escalation": the situation was hard enough
   to escalate, exactly what deserves a skill); (ii) golden eval cases via
   GET /v1/host/mining/escalations; (iii) the corpus exporter below.
-  COLONY_ESCALATION_MINING=off|shadow|live, default shadow.
+  PACOMIND_ESCALATION_MINING=off|shadow|live, default shadow.
 - TRAINING-CORPUS EXPORTER (`mining/corpus.py` + POST
   /v1/host/mining/corpus/export): verbatim turn capture (the graph/journal/
   comms sinks are salience-gated or rolling; none is a verbatim corpus) is
   exported as fine-tune-ready JSONL ({"conversations":[{role,content}...]},
   the DeepSpec/GeneralParser contract: first non-system message is user,
   alternating). Filters: channels, date range, contact (owner-only default
-  via COLONY_OWNER_CONTACT_ID), quality gate (reachout_policy sanitize +
+  via PACOMIND_OWNER_CONTACT_ID), quality gate (reachout_policy sanitize +
   is_system_origin, machine-marker stripping, cron/self exclusion), dedup,
-  optional redact. PII stance: everything stays under COLONY_STATE_DIR;
+  optional redact. PII stance: everything stays under PACOMIND_STATE_DIR;
   exports write only to state_dir/exports/; nothing uploads. Runs are
   journaled (mining.corpus_export). This is the mining half of the
   continuous-draft-improvement loop; the training pipeline consumes the
@@ -699,58 +699,58 @@ adopted, upstream is unlicensed and immature):
 - Pre-req landed earlier this session (already pushed at tip 2726698):
   directives (tiered), proposals, feedback, directed-action (dry_run),
   read-only repo mirrors, world-model populator (shadow), thinker (shadow),
-  delivery go-LIVE flip (Colony side).
+  delivery go-LIVE flip (PacoMind side).
 - RESOLVED (was: KNOWN DEPLOYMENT BLOCKER): proactive delivery now runs
-  LIVE via COLONY_DELIVERY_TRANSPORT=gateway to the deployment's message
+  LIVE via PACOMIND_DELIVERY_TRANSPORT=gateway to the deployment's message
   gateway (rate caps + cooldown bind and were observed doing so); the old
   Hermes webhook-route 404 path is moot for this deployment.
 - 2026-07-04 (Amendment 1): owner-approved graduated-autonomy amendment
   landed (section above). Item 4 promoted to trust engine; per-item designs
   touched; safety invariants rewritten to action-with-journaling.
-- 2026-07-04 (ops flips, owner-ordered, deployment layer): COLONY_DIRECTED_MODE
+- 2026-07-04 (ops flips, owner-ordered, deployment layer): PACOMIND_DIRECTED_MODE
   dry_run -> live (with a deployment delegate shim bridging the dispatch
   contract to the local agent gateway's async task surface; E2E verified:
   intake -> read-only auto-approval -> real dispatch -> agent execution ->
   structured report -> audit verdict clean -> feedback recorded; the owner
-  report was correctly gated by the delivery cooldown). COLONY_THINKING_MODE
+  report was correctly gated by the delivery cooldown). PACOMIND_THINKING_MODE
   shadow -> live (semantic note: shadow ALREADY delivered thinker proposals
   through guarded delivery; live additionally executes the thought-up items
-  as internal work). COLONY_WORLD_POPULATE_MODE shadow -> live (first real
-  entity writes observed same day). COLONY_DIRECTIVE_LLM_ASSIST off -> on
+  as internal work). PACOMIND_WORLD_POPULATE_MODE shadow -> live (first real
+  entity writes observed same day). PACOMIND_DIRECTIVE_LLM_ASSIST off -> on
   (verified against the deployment's fast classifier endpoint). The former
-  Colony-side delivery blocker is resolved at the deployment layer
-  (COLONY_DELIVERY_TRANSPORT=gateway); delivery is LIVE with rate caps
+  PacoMind-side delivery blocker is resolved at the deployment layer
+  (PACOMIND_DELIVERY_TRANSPORT=gateway); delivery is LIVE with rate caps
   binding. context.engine deliberately NOT flipped (engineering-rollout
   category).
 - Phase A: COMPLETE (2026-07-04). Landed:
   - `self_model/` (item 4 as trust engine): CompetenceStore + event log,
-    self-brief, ActionJournal (`colony-action-journal.db`), TrustEngine
+    self-brief, ActionJournal (`pacomind-action-journal.db`), TrustEngine
     (confidence, stages shadow/ask_first/act_first, auto-graduation with
     owner notices, circuit breakers, immutable floor, adaptive delivery
     cap). Wired into: initiative executor (outcomes + prompt brief),
     directed action (trust-graduated approval tiering + ask-first proposals
     carrying reasoning+confidence + audit-fed track record), delivery
     (outcome recording + adaptive cap), projects, beliefs. Flags:
-    COLONY_SELF_MODEL_ENABLED (true), COLONY_TRUST_* thresholds.
-  - `skills_memory/` (item 3): SkillStore (`colony-skills.db`), distillation
+    PACOMIND_SELF_MODEL_ENABLED (true), PACOMIND_TRUST_* thresholds.
+  - `skills_memory/` (item 3): SkillStore (`pacomind-skills.db`), distillation
     (retry-success / novel-diagnosis triggers, strict-JSON validation,
     signature dedup, cap+evict), retrieval blocks + per-domain failure
     notes; wired into executor + project planner/engine. Flags:
-    COLONY_SKILLS_ENABLED (true), COLONY_SKILLS_DISTILL (shadow default;
-    live on the reference deployment), COLONY_SKILLS_MAX.
+    PACOMIND_SKILLS_ENABLED (true), PACOMIND_SKILLS_DISTILL (shadow default;
+    live on the reference deployment), PACOMIND_SKILLS_MAX.
   - `projects/` (item 1): Project/Step models + ProjectStore
-    (`colony-projects.db`), planner (one LLM pass, deterministic
+    (`pacomind-projects.db`), planner (one LLM pass, deterministic
     validation: kind whitelist, cycle-breaking, cap), ProjectEngine
     (autonomy phase `_phase_projects`: adoption of project-type
     initiatives, boundary-checked step dispatch through existing sub-gates,
     bounded replans, milestone proposals, self-model defer + trust
     graduation of the shadow calibration stage). Tools list_projects /
     project_status / create_project / abandon_project; API /projects.
-    Flags: COLONY_PROJECTS_MODE (shadow default), _MAX_STEPS,
+    Flags: PACOMIND_PROJECTS_MODE (shadow default), _MAX_STEPS,
     _REVIEW_SECS, _MAX_REPLANS, _MAX_CONCURRENT, _DEFER_LOAD.
   - `beliefs/` (item 7): claim extraction (conservative), conflict
     detection, resolution (recency > confidence > source-trust; env
-    COLONY_SOURCE_TRUST), supersession audit (`colony-beliefs.db`), inline
+    PACOMIND_SOURCE_TRUST), supersession audit (`pacomind-beliefs.db`), inline
     property-audit hook on world-model updates, stale-entity decay,
     unresolvable -> data_quality review initiative; daily phase
     `_phase_belief_maintenance`. Live resolution requires the earned
@@ -759,7 +759,7 @@ adopted, upstream is unlicensed and immature):
   - Amendment extras: one-command global pause (extractor + guard +
     manager ack; "stop acting" binds instantly, staged lift), world-model
     LLM-assist extraction (`world_model/llm_extract.py`, daily batch phase,
-    journaled writes, COLONY_WORLD_LLM_EXTRACT), action_journal +
+    journaled writes, PACOMIND_WORLD_LLM_EXTRACT), action_journal +
     self_status tools, GET /self + /self/journal + /skills-memory +
     /world/llm-extract/status.
   - Tests: test_self_model, test_skills_memory, test_projects,
@@ -778,7 +778,7 @@ adopted, upstream is unlicensed and immature):
   tests: FTS token fusion broke exact-name dedup (every hyphenated mention
   minted a duplicate; exact-name fallback added), URLs/paths passed as
   entity names, and title-cased operational phrases became persons. The
-  world sqlite store is now anchored to COLONY_STATE_DIR (was cwd-relative
+  world sqlite store is now anchored to PACOMIND_STATE_DIR (was cwd-relative
   and checkout-resident on the reference deployment; relocated live, seeded
   from the bootstrap corpus, conversation entities re-extracted through the
   hardened gates, incident journaled). The graph client's run_query Cypher
@@ -805,7 +805,7 @@ adopted, upstream is unlicensed and immature):
     type is its own trust domain "worker:<job_type>" feeding item 4: clean
     real completions graduate it, a violation trips its circuit breaker;
     feedback + action journal + skill distillation ride the same chokepoint.
-    Mode COLONY_WORKERS_MODE off|shadow|live (default shadow = CALIBRATION:
+    Mode PACOMIND_WORKERS_MODE off|shadow|live (default shadow = CALIBRATION:
     evaluates + journals but never blocks, so enabling it does not disturb
     the already-live agent_action path; live enforces). `required_capability`
     rides job.tags (no schema migration). Enforcement lives inside
@@ -828,9 +828,9 @@ adopted, upstream is unlicensed and immature):
     server-owned governor requires a live DirectiveGuard; the class default is
     usable only for direct compatibility evaluation and is rejected as live
     QueueManager authority.
-  - `workers/colony_worker.py` (item 5, installable worker daemon): stdlib-only
-    console script `colony-worker`; authenticates (COLONY_API_KEY), registers
-    capability-typed (COLONY_WORKER_CAPABILITIES/_JOB_TYPES), polls claim,
+  - `workers/pacomind_worker.py` (item 5, installable worker daemon): stdlib-only
+    console script `pacomind-worker`; authenticates (PACOMIND_API_KEY), registers
+    capability-typed (PACOMIND_WORKER_CAPABILITIES/_JOB_TYPES), polls claim,
     reasons over each job with an OpenAI-compatible LLM in a READ/ANALYSE
     posture ONLY (never mutates, never reports a mutation -- sanitised
     client-side too), posts the audited report contract. --dry-run/--once.
@@ -842,7 +842,7 @@ adopted, upstream is unlicensed and immature):
     --cap-drop ALL, no-new-privileges, --cpus/--memory/--pids-limit, inner
     timeout, no env/creds mounted, artifact read-back size-capped) +
     DisabledSandbox default when Docker absent. SandboxManager adds the mode
-    gate (COLONY_SANDBOX_MODE off|dry_run|live, default off), a DirectiveGuard
+    gate (PACOMIND_SANDBOX_MODE off|dry_run|live, default off), a DirectiveGuard
     boundary check on purpose+script, approval tiering (owner-directed AUTO /
     otherwise FLAGGED), server-side limits the caller cannot widen, and
     journaling. Tools sandbox_run (agent-invoked = flagged; never self-grants
@@ -858,19 +858,19 @@ adopted, upstream is unlicensed and immature):
     (containment command, mode gate, approval tiering, boundary block, size
     cap, disabled backend, server-side limits), test_worker_integration lease
     requeue. Full unit suite green (1394 passed, 118 skipped).
-  - Flags added: COLONY_WORKERS_MODE (shadow), COLONY_WORKER_CAPABILITIES/
+  - Flags added: PACOMIND_WORKERS_MODE (shadow), PACOMIND_WORKER_CAPABILITIES/
     _JOB_TYPES/_POLL_SECS/_LLM_BASE_URL/_LLM_MODEL/_LLM_API_KEY,
-    COLONY_SANDBOX_MODE (off), COLONY_SANDBOX_IMAGE/_CPUS/_MEMORY/_TIMEOUT/
+    PACOMIND_SANDBOX_MODE (off), PACOMIND_SANDBOX_IMAGE/_CPUS/_MEMORY/_TIMEOUT/
     _PIDS/_EGRESS/_MAX_ARTIFACT_BYTES.
   - Private deployment layer (private repo + live host): which hosts run
-    colony-worker, their LLM endpoints + capabilities per host, the filled-in
-    workers/deploy unit (COLONY_API_KEY provisioning), and -- if a sandbox host
+    pacomind-worker, their LLM endpoints + capabilities per host, the filled-in
+    workers/deploy unit (PACOMIND_API_KEY provisioning), and -- if a sandbox host
     is ever wanted -- Docker availability + image + egress policy on that host
     (stays off/dry_run on the live host unless the owner enables it).
 - Phase C: COMPLETE (2026-07-04, successor session). Landed:
   - `connectors/` (item 2, senses / connector framework): base Connector ABC +
     Observation (domain, external_id, ts, payload, EntityHint[], text render) +
-    ConnectorConfig (env-only COLONY_CONNECTOR_<NAME>_*, no creds in code).
+    ConnectorConfig (env-only PACOMIND_CONNECTOR_<NAME>_*, no creds in code).
     ConnectorManager owns per-connector cadence + the ingest phase: poll ->
     OBSERVE-boundary check per observation (a perception blackout on a subject
     suppresses ingest; reads survive an ACT-level boundary) -> record to the
@@ -878,7 +878,7 @@ adopted, upstream is unlicensed and immature):
     populator via populate_from_text (reusing ALL its hardened boundary /
     quality / shadow-first gating). Belief maintenance rides the populator's
     inline property-audit hook, so changed facts reconcile without a second
-    pass. Mode COLONY_CONNECTORS_MODE off|shadow|live (default off; shadow =
+    pass. Mode PACOMIND_CONNECTORS_MODE off|shadow|live (default off; shadow =
     calibration: poll + log normalized output + would-populate entities,
     writing nothing; live = record + populate). Autonomy phase
     `_phase_connectors` (11e); API GET /connectors/status + POST
@@ -897,10 +897,10 @@ adopted, upstream is unlicensed and immature):
     fixture, ICS unfolding, dotted-path dig, base contract, cadence, and the
     manager's off/shadow/live gate + boundary suppression + populator/obs
     wiring). Full unit suite green.
-  - Flags added: COLONY_CONNECTORS_ENABLED, COLONY_CONNECTORS_MODE (off),
-    COLONY_CONNECTOR_IMAP_* (HOST/PORT/USER/PASSWORD/MAILBOX/MAX/ENABLED/
-    POLL_SECS), COLONY_CONNECTOR_CALENDAR_* (ICS_URL/USER/PASSWORD/MAX),
-    COLONY_CONNECTOR_FS_* (PATH/EXTENSIONS/MAX), COLONY_CONNECTOR_WEBHOOK_*
+  - Flags added: PACOMIND_CONNECTORS_ENABLED, PACOMIND_CONNECTORS_MODE (off),
+    PACOMIND_CONNECTOR_IMAP_* (HOST/PORT/USER/PASSWORD/MAILBOX/MAX/ENABLED/
+    POLL_SECS), PACOMIND_CONNECTOR_CALENDAR_* (ICS_URL/USER/PASSWORD/MAX),
+    PACOMIND_CONNECTOR_FS_* (PATH/EXTENSIONS/MAX), PACOMIND_CONNECTOR_WEBHOOK_*
     (URL/AUTH_HEADER/AUTH_VALUE/FIELD_MAP/ID_FIELD/ENTITY_NAME/ENTITY_KIND).
   - Private deployment layer (private repo + live host): actual mailbox host/
     user/app-password, the calendar ICS feed URL (+ the one-time Google/CalDAV
@@ -922,8 +922,8 @@ adopted, upstream is unlicensed and immature):
   backup-pre-scrub + refs/original/refs/heads/main; live host:
   live-overlay-20260704), only main remains locally and on origin; the
   three Phase B/C mode envs pinned explicitly in the live sidecar unit
-  (COLONY_WORKERS_MODE=shadow, COLONY_SANDBOX_MODE=off,
-  COLONY_CONNECTORS_MODE=off) so a future code-default change cannot
+  (PACOMIND_WORKERS_MODE=shadow, PACOMIND_SANDBOX_MODE=off,
+  PACOMIND_CONNECTORS_MODE=off) so a future code-default change cannot
   silently flip live behavior -- service rebootstrapped, boot clean, flags
   read back through the live API.
 
@@ -938,20 +938,20 @@ close-out review; none are blockers, all are content-clean today:
   literals in initiatives/action_registry.py and
   intelligence/components/initiative_engine.py; deployment-prose trim in
   this file's Program State history. DONE (2026-07-05): generic node names,
-  COLONY_WORK_REPO env-driven checkout path, prose trimmed.
+  PACOMIND_WORK_REPO env-driven checkout path, prose trimmed.
 - Directed-action delegate shim replacement: the deployment's interim
   dispatch shim (bridging the ScopedTask contract to the local agent
   gateway) is DESIGNATED to be replaced by the Phase B worker daemon path
-  (colony-worker claiming directed jobs under the WorkerGovernor, or the
+  (pacomind-worker claiming directed jobs under the WorkerGovernor, or the
   host framework's kanban/structured-runs surface per the Hermes survey).
   Same contract, server-side enforcement already in place; deployment-layer
   swap only.
 - Connector enablement (deployment layer): configure + shadow -> live per
   connector as the owner provides mailbox/ICS/folder/metrics config (see
   Phase C private deployment layer notes above).
-- Worker fleet rollout (deployment layer): place colony-worker on hosts
+- Worker fleet rollout (deployment layer): place pacomind-worker on hosts
   per the Phase B private deployment layer notes; graduate
-  COLONY_WORKERS_MODE shadow -> live once the shadow calibration record
+  PACOMIND_WORKERS_MODE shadow -> live once the shadow calibration record
   looks clean.
 
 ## Resumption note for a successor agent

@@ -52,8 +52,8 @@ jobs:
           context: ./sidecar
           push: true
           tags: |
-            ghcr.io/aevonix/apsimo:latest
-            ghcr.io/aevonix/apsimo:${{ github.ref_name }}
+            ghcr.io/aevonix/pacomind:latest
+            ghcr.io/aevonix/pacomind:${{ github.ref_name }}
 
   # --- GitHub Release ← tag + CHANGELOG ---
   # Runs only after PyPI and GHCR publish, so the Release never points at

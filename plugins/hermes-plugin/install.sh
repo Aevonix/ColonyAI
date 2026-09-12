@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compatibility launcher for the supported, profile-aware Apsimo installer.
+# Compatibility launcher for the supported, profile-aware PacoMind installer.
 set -euo pipefail
 
 args=()
@@ -12,5 +12,5 @@ while [[ $# -gt 0 ]]; do
     *) args+=("$1"); shift ;;
   esac
 done
-exec "${APSIMO_PYTHON:-python3}" -m apsimo init \
+exec "${PACOMIND_PYTHON:-python3}" -m pacomind init \
   --hermes-home "${HERMES_HOME:-$HOME/.hermes}" "${args[@]}"

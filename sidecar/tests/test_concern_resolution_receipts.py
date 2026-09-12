@@ -13,11 +13,11 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-import apsimo.api.routers.host as host_mod
-from apsimo.api.authority import RequestAuthority, required_scope
-from apsimo.commitments.store import CommitmentStore
-from apsimo.self_model import settlement
-from apsimo.self_model.workspace import (
+import pacomind.api.routers.host as host_mod
+from pacomind.api.authority import RequestAuthority, required_scope
+from pacomind.commitments.store import CommitmentStore
+from pacomind.self_model import settlement
+from pacomind.self_model.workspace import (
     RECENT_RESOLUTIONS_LIMIT,
     ConcernResolutionConflict,
     ConcernStore,
@@ -97,7 +97,7 @@ async def _client(workspace: WorkspaceEngine, authority: RequestAuthority):
 
     @app.middleware("http")
     async def _scoped_authority(request, call_next):
-        request.state.colony_authority = authority
+        request.state.pacomind_authority = authority
         return await call_next(request)
 
     app.include_router(host_mod.router)
@@ -150,7 +150,7 @@ def test_additive_migration_freezes_truthful_legacy_receipt(tmp_path):
     store = ConcernStore(str(path))
     receipt = store.get_resolution("concern-legacy")
     assert receipt is not None
-    assert receipt["schema"] == "ColonyConcernResolutionReceiptV1"
+    assert receipt["schema"] == "PacoMindConcernResolutionReceiptV1"
     assert receipt["provenance"] == "legacy_unrecorded"
     assert receipt["outcome"] is None
     assert receipt["cascade"] is None
@@ -181,7 +181,7 @@ def test_additive_migration_freezes_truthful_legacy_receipt(tmp_path):
 
 
 async def test_owner_scoped_exact_get_and_scope_mapping(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -225,7 +225,7 @@ async def test_owner_scoped_exact_get_and_scope_mapping(tmp_path, monkeypatch):
 async def test_resolution_receipt_is_exact_and_replay_is_idempotent(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -297,7 +297,7 @@ async def test_resolution_receipt_is_exact_and_replay_is_idempotent(
 async def test_conflicting_replay_returns_first_receipt_not_second_claim(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -348,7 +348,7 @@ async def test_conflicting_replay_returns_first_receipt_not_second_claim(
 async def test_concurrent_exact_http_replay_runs_source_settler_once(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -415,7 +415,7 @@ async def test_concurrent_exact_http_replay_runs_source_settler_once(
 async def test_concurrent_conflicting_http_loser_has_no_settler_or_write(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -465,7 +465,7 @@ async def test_concurrent_conflicting_http_loser_has_no_settler_or_write(
 async def test_legacy_terminal_row_never_adopts_later_callers_outcome(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     path = tmp_path / "legacy-workspace.db"
     _old_workspace(path)
     store = ConcernStore(str(path))
@@ -552,7 +552,7 @@ def test_recent_resolutions_are_bounded_validated_and_newest_first(tmp_path):
 async def test_recent_resolutions_only_appear_for_legacy_or_exact_owner(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     owner_concern = workspace.bump(
@@ -612,7 +612,7 @@ async def test_recent_resolutions_only_appear_for_legacy_or_exact_owner(
 async def test_workspace_and_legacy_deck_response_remain_compatible(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -723,7 +723,7 @@ def test_pre_feature_base_receipt_migrates_once_to_stable_unknown(tmp_path):
 async def test_failed_settler_is_durable_actionable_and_redacted(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -780,7 +780,7 @@ async def test_failed_settler_is_durable_actionable_and_redacted(
 async def test_outer_settlement_failure_records_failed_evidence_without_raw_error(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -865,7 +865,7 @@ def test_malformed_duplicate_and_unknown_results_fail_closed(tmp_path):
 async def test_write_failure_recovers_exact_multi_source_operations_on_same_post(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     commitments = CommitmentStore(tmp_path / "commitments.db")
@@ -936,7 +936,7 @@ async def test_write_failure_recovers_exact_multi_source_operations_on_same_post
 async def test_pending_replay_with_unsafe_settler_is_409_without_callback(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     concern = workspace.bump(
@@ -981,7 +981,7 @@ async def test_pending_replay_with_unsafe_settler_is_409_without_callback(
 async def test_restart_recovers_partial_exact_commitment_cascade(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     workspace_path = tmp_path / "workspace.db"
     store = ConcernStore(str(workspace_path))
     workspace = WorkspaceEngine(store)
@@ -1049,7 +1049,7 @@ async def test_restart_recovers_partial_exact_commitment_cascade(
 async def test_recovery_never_certifies_a_different_terminal_commitment(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     store = ConcernStore(str(tmp_path / "workspace.db"))
     workspace = WorkspaceEngine(store)
     commitments = CommitmentStore(tmp_path / "commitments.db")

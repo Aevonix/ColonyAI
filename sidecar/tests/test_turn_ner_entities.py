@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.api.schemas.host import (
+from pacomind.api.routers import host as host_mod
+from pacomind.api.schemas.host import (
     HostIdentity, HostMessage, HostTurnContext, TurnSyncRequest)
-from apsimo.gate.context_provenance import ContextProvenanceStore
+from pacomind.gate.context_provenance import ContextProvenanceStore
 
 
 class _FakeGraph:

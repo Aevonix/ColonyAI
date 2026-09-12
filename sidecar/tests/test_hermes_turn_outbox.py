@@ -25,7 +25,7 @@ PLUGIN_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 CLIENT_PATH = PLUGIN_DIR / "client.py"
 
 
-def _load_client(name="colony_hermes_turn_outbox_client_test"):
+def _load_client(name="pacomind_hermes_turn_outbox_client_test"):
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(name, CLIENT_PATH)
     module = importlib.util.module_from_spec(spec)
@@ -35,7 +35,7 @@ def _load_client(name="colony_hermes_turn_outbox_client_test"):
     return module
 
 
-def _load_plugin(name="colony_hermes_turn_outbox_plugin_test"):
+def _load_plugin(name="pacomind_hermes_turn_outbox_plugin_test"):
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(
         name,
@@ -141,7 +141,7 @@ def _logical_database_snapshot(path: Path) -> tuple:
 
 
 def test_private_outbox_accepts_new_and_existing_owner_private_files(tmp_path):
-    module = _load_client("colony_hermes_private_outbox_accept_test")
+    module = _load_client("pacomind_hermes_private_outbox_accept_test")
     database = tmp_path / "turn-outbox.sqlite3"
     outbox = module.TurnOutbox(database)
 
@@ -185,7 +185,7 @@ def test_private_outbox_accepts_new_and_existing_owner_private_files(tmp_path):
 
 
 def test_exact_predecessor_migrates_transactionally_and_preserves_rows(tmp_path):
-    module = _load_client("colony_hermes_exact_predecessor_migration_test")
+    module = _load_client("pacomind_hermes_exact_predecessor_migration_test")
     database = tmp_path / "turn-outbox.sqlite3"
     _create_database(database, [
         _PREDECESSOR_SCHEMA,
@@ -236,7 +236,7 @@ def test_exact_predecessor_migrates_transactionally_and_preserves_rows(tmp_path)
 def test_malformed_or_unknown_schema_is_rejected_without_mutation(
     tmp_path, malformation,
 ):
-    module = _load_client(f"colony_hermes_malformed_{malformation}_test")
+    module = _load_client(f"pacomind_hermes_malformed_{malformation}_test")
     database = tmp_path / "turn-outbox.sqlite3"
     current = _CURRENT_SCHEMA
     statements: list[str]
@@ -296,7 +296,7 @@ def test_malformed_or_unknown_schema_is_rejected_without_mutation(
 
 
 def test_quick_check_failure_cannot_attest(tmp_path, monkeypatch):
-    module = _load_client("colony_hermes_quick_check_attestation_test")
+    module = _load_client("pacomind_hermes_quick_check_attestation_test")
     database = tmp_path / "turn-outbox.sqlite3"
     module.TurnOutbox(database).prepare()
     original_connect = module.sqlite3.connect
@@ -336,7 +336,7 @@ def test_quick_check_failure_cannot_attest(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize("alias_kind", ["symlink", "hardlink"])
 def test_private_outbox_rejects_alias_without_mutating_target(tmp_path, alias_kind):
-    module = _load_client(f"colony_hermes_private_outbox_{alias_kind}_test")
+    module = _load_client(f"pacomind_hermes_private_outbox_{alias_kind}_test")
     victim = tmp_path / "victim"
     victim.write_bytes(b"")
     victim.chmod(0o644)
@@ -356,7 +356,7 @@ def test_private_outbox_rejects_alias_without_mutating_target(tmp_path, alias_ki
 
 
 def test_private_outbox_rejects_symlink_parent_and_insecure_parent(tmp_path):
-    module = _load_client("colony_hermes_private_outbox_parent_test")
+    module = _load_client("pacomind_hermes_private_outbox_parent_test")
     real_parent = tmp_path / "real-parent"
     real_parent.mkdir(mode=0o700)
     linked_parent = tmp_path / "linked-parent"
@@ -376,7 +376,7 @@ def test_private_outbox_rejects_symlink_parent_and_insecure_parent(tmp_path):
 def test_private_outbox_rejects_relative_nonregular_and_wrong_owner_posture(
     tmp_path, monkeypatch,
 ):
-    module = _load_client("colony_hermes_private_outbox_posture_test")
+    module = _load_client("pacomind_hermes_private_outbox_posture_test")
     monkeypatch.chdir(tmp_path)
     with pytest.raises(module.PrivateSQLitePathError):
         module.TurnOutbox("relative.sqlite3").prepare()
@@ -400,7 +400,7 @@ def test_private_outbox_rejects_relative_nonregular_and_wrong_owner_posture(
 
 
 def test_private_outbox_rejects_permissive_existing_file_without_chmod(tmp_path):
-    module = _load_client("colony_hermes_private_outbox_mode_test")
+    module = _load_client("pacomind_hermes_private_outbox_mode_test")
     database = tmp_path / "turn-outbox.sqlite3"
     database.touch(mode=0o644)
     database.chmod(0o644)
@@ -412,7 +412,7 @@ def test_private_outbox_rejects_permissive_existing_file_without_chmod(tmp_path)
 
 
 def test_private_outbox_detects_leaf_swap_across_sqlite_reopen(tmp_path, monkeypatch):
-    module = _load_client("colony_hermes_private_outbox_swap_test")
+    module = _load_client("pacomind_hermes_private_outbox_swap_test")
     database = tmp_path / "turn-outbox.sqlite3"
     original_connect = module.sqlite3.connect
     swapped = False
@@ -463,7 +463,7 @@ def test_process_exit_leaves_fsynced_pending_turn_for_next_process(tmp_path):
 
 
 def test_restart_retries_pending_turn_and_keeps_durable_receipt(tmp_path):
-    module = _load_client("colony_hermes_turn_outbox_retry_test")
+    module = _load_client("pacomind_hermes_turn_outbox_retry_test")
     database = tmp_path / "turn-outbox.sqlite3"
     first_process = module.TurnOutbox(database)
     first_process.enqueue("turn-1", _payload())
@@ -484,7 +484,7 @@ def test_restart_retries_pending_turn_and_keeps_durable_receipt(tmp_path):
 
 
 def test_outbox_replay_is_idempotent_and_changed_envelope_conflicts(tmp_path):
-    module = _load_client("colony_hermes_turn_outbox_idempotency_test")
+    module = _load_client("pacomind_hermes_turn_outbox_idempotency_test")
     outbox = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3")
     first = outbox.enqueue("turn-1", _payload())
     replay = outbox.enqueue("turn-1", _payload())
@@ -504,7 +504,7 @@ def test_outbox_replay_is_idempotent_and_changed_envelope_conflicts(tmp_path):
 
 
 def test_outbox_rejects_unbounded_or_noncanonical_payload(tmp_path):
-    module = _load_client("colony_hermes_turn_outbox_bounds_test")
+    module = _load_client("pacomind_hermes_turn_outbox_bounds_test")
     outbox = module.TurnOutbox(
         tmp_path / "turn-outbox.sqlite3", max_payload_bytes=4096,
     )
@@ -516,7 +516,7 @@ def test_outbox_rejects_unbounded_or_noncanonical_payload(tmp_path):
 
 
 def test_claim_can_exhaust_delivery_budget_before_callback(tmp_path, monkeypatch):
-    module = _load_client("colony_hermes_turn_outbox_claim_budget_test")
+    module = _load_client("pacomind_hermes_turn_outbox_claim_budget_test")
     outbox = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3")
     outbox.enqueue("turn-1", _payload())
     clock = [1_000.0]
@@ -543,7 +543,7 @@ def test_claim_can_exhaust_delivery_budget_before_callback(tmp_path, monkeypatch
 
 
 def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path, monkeypatch):
-    module = _load_client("colony_hermes_turn_outbox_lease_test")
+    module = _load_client("pacomind_hermes_turn_outbox_lease_test")
     database = tmp_path / "turn-outbox.sqlite3"
     # Exercise the callback phase independently of disk scheduling. Neighboring
     # lock/HTTP tests keep real clocks and enforce the whole drain wall budget.
@@ -624,7 +624,7 @@ def test_hung_delivery_does_not_lock_enqueue_and_expired_lease_recovers(tmp_path
 
 
 def test_delivery_exception_is_redacted_and_retryable(tmp_path):
-    module = _load_client("colony_hermes_turn_outbox_redaction_test")
+    module = _load_client("pacomind_hermes_turn_outbox_redaction_test")
     outbox = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3")
     outbox.enqueue("turn-1", _payload())
 
@@ -683,8 +683,8 @@ class _Client:
 
 class _Context:
     def __init__(self, outbox_path, *, drain_timeout_ms=250):
-        self.config = {"plugins": {"colony": {
-            "url": "http://colony.test",
+        self.config = {"plugins": {"pacomind": {
+            "url": "http://pacomind.test",
             "owner_contact_id": "cid-owner",
             "turn_outbox_path": str(outbox_path),
             "turn_outbox_drain_timeout_ms": drain_timeout_ms,
@@ -710,11 +710,11 @@ class _Context:
 def test_registration_validates_private_outbox_before_exposing_hooks(
     tmp_path, monkeypatch,
 ):
-    module = _load_plugin("colony_hermes_private_outbox_registration_test")
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module = _load_plugin("pacomind_hermes_private_outbox_registration_test")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     victim = tmp_path / "victim"
     victim.write_bytes(b"")
     victim.chmod(0o644)
@@ -736,11 +736,11 @@ def test_registration_validates_private_outbox_before_exposing_hooks(
 def test_registration_rejects_malformed_schema_before_exposing_surfaces(
     tmp_path, monkeypatch,
 ):
-    module = _load_plugin("colony_hermes_malformed_registration_test")
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module = _load_plugin("pacomind_hermes_malformed_registration_test")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     database = tmp_path / "turn-outbox.sqlite3"
     _create_database(
         database,
@@ -764,11 +764,11 @@ def test_writer_records_guard_replacement_that_pinned_hermes_delivers(
 ):
     module = _load_plugin()
     _Client.instances.clear()
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     database = tmp_path / "turn-outbox.sqlite3"
     context = _Context(database)
     module.register(context)
@@ -818,15 +818,15 @@ def test_writer_records_guard_replacement_that_pinned_hermes_delivers(
     }
 
 
-def test_colony_outage_never_withholds_safe_reply_after_durable_enqueue(
+def test_pacomind_outage_never_withholds_safe_reply_after_durable_enqueue(
     tmp_path, monkeypatch,
 ):
-    module = _load_plugin("colony_hermes_turn_outbox_outage_plugin_test")
+    module = _load_plugin("pacomind_hermes_turn_outbox_outage_plugin_test")
     _Client.instances.clear()
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     database = tmp_path / "turn-outbox.sqlite3"
     context = _Context(database, drain_timeout_ms=40)
     module.register(context)
@@ -858,12 +858,12 @@ def test_colony_outage_never_withholds_safe_reply_after_durable_enqueue(
 def test_post_turn_drains_recovered_backlog_when_budget_remains(
     tmp_path, monkeypatch,
 ):
-    module = _load_plugin("colony_hermes_post_turn_backlog_drain_test")
+    module = _load_plugin("pacomind_hermes_post_turn_backlog_drain_test")
     _Client.instances.clear()
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     database = tmp_path / "turn-outbox.sqlite3"
     context = _Context(database, drain_timeout_ms=250)
     module.register(context)
@@ -892,7 +892,7 @@ def test_post_turn_drains_recovered_backlog_when_budget_remains(
 
 
 def test_explicit_recovery_drain_is_caller_driven_and_bounded(tmp_path):
-    module = _load_plugin("colony_hermes_explicit_recovery_drain_test")
+    module = _load_plugin("pacomind_hermes_explicit_recovery_drain_test")
     database = tmp_path / "turn-outbox.sqlite3"
     outbox = module.TurnOutbox(database)
     for index in range(5):
@@ -917,7 +917,7 @@ def test_explicit_recovery_drain_is_caller_driven_and_bounded(tmp_path):
 def test_bounded_drain_does_not_repeat_full_schema_check_per_row(
     tmp_path, monkeypatch,
 ):
-    module = _load_client("colony_hermes_drain_schema_check_budget_test")
+    module = _load_client("pacomind_hermes_drain_schema_check_budget_test")
     database = tmp_path / "turn-outbox.sqlite3"
     writer = module.TurnOutbox(database)
     writer.prepare()
@@ -955,7 +955,7 @@ def test_bounded_drain_does_not_repeat_full_schema_check_per_row(
 
 
 def test_drain_database_lock_wait_is_inside_total_wall_budget(tmp_path):
-    module = _load_client("colony_hermes_drain_lock_budget_test")
+    module = _load_client("pacomind_hermes_drain_lock_budget_test")
     database = tmp_path / "turn-outbox.sqlite3"
     outbox = module.TurnOutbox(database)
     outbox.enqueue("turn-1", _payload())
@@ -981,7 +981,7 @@ def test_drain_database_lock_wait_is_inside_total_wall_budget(tmp_path):
 
 
 def test_drain_schema_lock_wait_is_inside_total_wall_budget(tmp_path):
-    module = _load_client("colony_hermes_drain_schema_lock_budget_test")
+    module = _load_client("pacomind_hermes_drain_schema_lock_budget_test")
     database = tmp_path / "turn-outbox.sqlite3"
     outbox = module.TurnOutbox(database)
     outbox.enqueue("turn-1", _payload())
@@ -1022,7 +1022,7 @@ def test_drain_schema_lock_wait_is_inside_total_wall_budget(tmp_path):
 
 
 def test_drain_finalize_lock_wait_is_inside_same_total_budget(tmp_path):
-    module = _load_client("colony_hermes_finalize_lock_budget_test")
+    module = _load_client("pacomind_hermes_finalize_lock_budget_test")
     database = tmp_path / "turn-outbox.sqlite3"
     outbox = module.TurnOutbox(database)
     outbox.enqueue("turn-1", _payload())
@@ -1051,7 +1051,7 @@ def test_drain_finalize_lock_wait_is_inside_same_total_budget(tmp_path):
 
 
 def test_drain_has_no_unbudgeted_explicit_fsync_tail(tmp_path, monkeypatch):
-    module = _load_client("colony_hermes_drain_fsync_budget_test")
+    module = _load_client("pacomind_hermes_drain_fsync_budget_test")
     outbox = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3")
     outbox.enqueue("turn-1", _payload())
     explicit_syncs = []
@@ -1070,7 +1070,7 @@ def test_drain_has_no_unbudgeted_explicit_fsync_tail(tmp_path, monkeypatch):
 def test_delivery_callback_is_cooperative_same_thread_and_receives_budget(
     tmp_path,
 ):
-    module = _load_client("colony_hermes_cooperative_delivery_test")
+    module = _load_client("pacomind_hermes_cooperative_delivery_test")
     outbox = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3")
     outbox.enqueue("turn-1", _payload())
     caller_thread = threading.get_ident()
@@ -1087,8 +1087,8 @@ def test_delivery_callback_is_cooperative_same_thread_and_receives_budget(
     assert 0 < observed[0][1] < 0.20
 
 
-def test_colony_client_timeout_is_fixed_ambiguous_outcome(monkeypatch):
-    module = _load_client("colony_hermes_client_timeout_truth_test")
+def test_pacomind_client_timeout_is_fixed_ambiguous_outcome(monkeypatch):
+    module = _load_client("pacomind_hermes_client_timeout_truth_test")
 
     class _TimeoutClient:
         def __init__(self, **_kwargs):
@@ -1104,7 +1104,7 @@ def test_colony_client_timeout_is_fixed_ambiguous_outcome(monkeypatch):
             raise module.httpx.ReadTimeout("secret remote timeout detail")
 
     monkeypatch.setattr(module.httpx, "Client", _TimeoutClient)
-    client = module.ColonyClient("http://127.0.0.1:7777")
+    client = module.PacoMindClient("http://127.0.0.1:7777")
 
     with pytest.raises(
         module.TurnDeliveryOutcomeUnknown,
@@ -1119,8 +1119,8 @@ def test_colony_client_timeout_is_fixed_ambiguous_outcome(monkeypatch):
     assert "secret" not in str(captured.value)
 
 
-def test_colony_client_uses_one_absolute_deadline_across_http_phases():
-    module = _load_client("colony_hermes_client_absolute_deadline_test")
+def test_pacomind_client_uses_one_absolute_deadline_across_http_phases():
+    module = _load_client("pacomind_hermes_client_absolute_deadline_test")
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
@@ -1172,7 +1172,7 @@ def test_colony_client_uses_one_absolute_deadline_across_http_phases():
 
     server = threading.Thread(target=serve_slow_phases, daemon=True)
     server.start()
-    client = module.ColonyClient(f"http://127.0.0.1:{port}")
+    client = module.PacoMindClient(f"http://127.0.0.1:{port}")
     began = time.monotonic()
     try:
         with pytest.raises(
@@ -1199,8 +1199,8 @@ def test_colony_client_uses_one_absolute_deadline_across_http_phases():
 
 
 @pytest.mark.parametrize('channel_id', ['', 'email:thread-739'])
-def test_colony_client_absolute_deadline_transport_accepts_exact_put(channel_id):
-    module = _load_client("colony_hermes_client_deadline_success_test")
+def test_pacomind_client_absolute_deadline_transport_accepts_exact_put(channel_id):
+    module = _load_client("pacomind_hermes_client_deadline_success_test")
     listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     listener.bind(("127.0.0.1", 0))
@@ -1237,7 +1237,7 @@ def test_colony_client_absolute_deadline_transport_accepts_exact_put(channel_id)
     server = threading.Thread(target=serve_once, daemon=True)
     server.start()
     try:
-        client = module.ColonyClient(
+        client = module.PacoMindClient(
             f"http://127.0.0.1:{port}", api_key="scoped-test-key",
         )
         assert client.sync_turn(
@@ -1269,8 +1269,8 @@ def test_colony_client_absolute_deadline_transport_accepts_exact_put(channel_id)
     }
 
 
-def test_colony_client_deadline_path_never_uses_unbounded_dns(monkeypatch):
-    module = _load_client("colony_hermes_client_no_dns_test")
+def test_pacomind_client_deadline_path_never_uses_unbounded_dns(monkeypatch):
+    module = _load_client("pacomind_hermes_client_no_dns_test")
     dns_calls = 0
 
     def counted_getaddrinfo(*_args, **_kwargs):
@@ -1283,7 +1283,7 @@ def test_colony_client_deadline_path_never_uses_unbounded_dns(monkeypatch):
         "getaddrinfo",
         counted_getaddrinfo,
     )
-    client = module.ColonyClient("http://colony.internal:7777")
+    client = module.PacoMindClient("http://pacomind.internal:7777")
 
     began = time.monotonic()
     assert client.sync_turn(
@@ -1300,7 +1300,7 @@ def test_colony_client_deadline_path_never_uses_unbounded_dns(monkeypatch):
 def test_durability_attestation_distinguishes_configuration_from_physical_proof(
     tmp_path,
 ):
-    module = _load_client("colony_hermes_durability_truth_test")
+    module = _load_client("pacomind_hermes_durability_truth_test")
     value = module.TurnOutbox(tmp_path / "turn-outbox.sqlite3").prepare()
 
     assert value["schema"] == "PrivateSQLiteDurabilityConfigurationAttestationV2"

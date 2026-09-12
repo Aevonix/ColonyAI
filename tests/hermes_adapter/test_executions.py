@@ -14,11 +14,11 @@ sys.path.insert(0, sys.argv[1])
 home = Path(os.environ["HERMES_HOME"])
 home.mkdir(mode=0o700)
 Path(os.environ["HERMES_BUNDLED_PLUGINS"]).mkdir()
-(home / "config.yaml").write_text(json.dumps({"plugins": {"enabled": ["apsimo"], "apsimo": {
+(home / "config.yaml").write_text(json.dumps({"plugins": {"enabled": ["pacomind"], "pacomind": {
     "owner_contact_id": "test-owner", "attested_system_platforms": ["cli", "cron"],
     "execution_registry_enabled": True,
     "turn_outbox_path": str(home / "turns.sqlite3")}}}))
-import apsimo_hermes
+import pacomind_hermes
 calls = []
 class Reply:
     def raise_for_status(self): pass
@@ -27,12 +27,12 @@ def post(self, path, **kwargs):
     assert path == "/v1/host/executions/observe", path
     calls.append(kwargs["json"])
     return Reply()
-apsimo_hermes.ColonyClient.post = post
+pacomind_hermes.PacoMindClient.post = post
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
 manager = get_plugin_manager()
 manager.discover_and_load()
-plugin = manager._plugins["apsimo"]
+plugin = manager._plugins["pacomind"]
 assert plugin.enabled, plugin.error
 assert Path(plugin.module.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 for event in ("pre_api_request", "post_api_request", "post_tool_call", "subagent_start", "on_session_end"):
@@ -61,6 +61,6 @@ def test_native_execution_hooks_from_installed_wheel(artifacts, tmp_path):
     _, _, _, installed = artifacts
     env = {key: os.environ[key] for key in ("PATH", "HOME", "TMPDIR", "LANG") if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path / "profile"), HERMES_BUNDLED_PLUGINS=str(tmp_path / "bundled"),
-               COLONY_GENERAL_PLUGIN_ACTIVE="1", COLONY_MEMORY_WORKER_TOOLS="0", COLONY_MEMORY_TURN_WRITER="disabled")
+               PACOMIND_GENERAL_PLUGIN_ACTIVE="1", PACOMIND_MEMORY_WORKER_TOOLS="0", PACOMIND_MEMORY_TURN_WRITER="disabled")
     result = run_python("-I", "-c", PROBE, installed, cwd=tmp_path, env=env)
     assert json.loads(result.stdout.splitlines()[-1])["native_hooks"] is True

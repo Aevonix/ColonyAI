@@ -20,8 +20,8 @@ from .client import source_message_hash
 
 logger = logging.getLogger(__name__)
 _MEMORY = re.compile(r"(?:\n\n)?<memory-context>.*?(?:</memory-context>|$)", re.S)
-_STAMP = re.compile(r"\[colony-recall-v1 (\{[^\n]*\})\]\n")
-_PACKET = re.compile(r"\[colony-recall-v1 \{[^\n]*\}\]\n.*?(?:\[/colony-recall-v1\]|$)", re.S)
+_STAMP = re.compile(r"\[pacomind-recall-v1 (\{[^\n]*\})\]\n")
+_PACKET = re.compile(r"\[pacomind-recall-v1 \{[^\n]*\}\]\n.*?(?:\[/pacomind-recall-v1\]|$)", re.S)
 _HERMES_MEMORY_NOTE = (
     "[System note: The following is recalled memory context, NOT new user input. "
     "Treat as authoritative reference data — this is the agent's persistent memory "
@@ -117,7 +117,7 @@ def _matches_read_text(value, expected):
     if match is None:
         return False
     try:
-        if json.loads(expected).get('apsimo_native_history_read_v1') is not True:
+        if json.loads(expected).get('pacomind_native_history_read_v1') is not True:
             return False
         from agent.tool_guardrails import ToolGuardrailDecision, append_toolguard_guidance, _DECISION_MESSAGES
         code, count = 'idempotent_no_progress_warning', int(match.group(1))
@@ -210,9 +210,9 @@ def _historical_source_read(row):
         text = _read_text(_read_value(row))
         payload = json.JSONDecoder().raw_decode(text.lstrip())[0] if isinstance(text, str) else None
         return isinstance(payload, dict) and (
-            payload.get('colony_source_read_v1') is True
-            or payload.get('apsimo_memory_search_v1') is True
-            or payload.get('apsimo_native_history_read_v1') is True)
+            payload.get('pacomind_source_read_v1') is True
+            or payload.get('pacomind_memory_search_v1') is True
+            or payload.get('pacomind_native_history_read_v1') is True)
     except (TypeError, ValueError):
         return False
 
@@ -349,7 +349,7 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
         # Native recollection lives in appended user api_content. Instruction
         # text can document its generic fence, including a literal opener with
         # no close, so that markup alone cannot identify recalled evidence.
-        # Exact erased sources and explicit Colony lineage packets still obey
+        # Exact erased sources and explicit PacoMind lineage packets still obey
         # the same erasure boundary when copied into trusted instructions.
         original = aliases.get(_content_key(value), value) if origins and aliases else value
         if erased(original):
@@ -867,7 +867,7 @@ class RequestMemory:
         if supplied_input is not None and updates:
             if not supplied_input.check_updates(scope, updates, fresh=fresh and observed, rules=rules):
                 return {'request': withheld_request(filtered, failure=supplied_input.failure),
-                    'source': 'colony', 'freshness_retryable': False,
+                    'source': 'pacomind', 'freshness_retryable': False,
                     'reason': 'source_update_unavailable'}
             filtered = _restore_source_updates(original_request, filtered, updates)
             supplied_input.admit_updates(scope, filtered, updates)
@@ -919,6 +919,6 @@ class RequestMemory:
                 if observed_key in self._supplied:
                     self._supplied[observed_key].update(supplied)
                     self._requests_seen.add(observed_key)
-        return {'request': filtered, 'source': 'colony',
+        return {'request': filtered, 'source': 'pacomind',
                 'freshness_retryable': freshness_retryable and not fresh,
                 'reason': 'source_erasure_checked' if fresh else 'source_erasure_unavailable'}

@@ -1,6 +1,6 @@
 """Governed event boundary for the Hermes general plugin.
 
-Colony does not yet expose a viewer-attested event projection suitable for a
+PacoMind does not yet expose a viewer-attested event projection suitable for a
 shared Hermes process.  The general plugin therefore has no subscriber, cache,
 replay cursor, or LLM injection path.  Event-driven context belongs in the
 canonical memory provider once the server can attest the exact viewer.

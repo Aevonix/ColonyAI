@@ -6,18 +6,18 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.router.tiers import ModelTier
-from apsimo.task_queue.handlers.inference import InferenceHandler
-from apsimo.task_queue.handlers.monitoring import _validate_endpoint
-from apsimo.task_queue.handlers.system_maintenance import (
+from pacomind.router.tiers import ModelTier
+from pacomind.task_queue.handlers.inference import InferenceHandler
+from pacomind.task_queue.handlers.monitoring import _validate_endpoint
+from pacomind.task_queue.handlers.system_maintenance import (
     SystemMaintenanceHandler,
 )
-from apsimo.task_queue.models import Job, JobType
-from apsimo.task_queue.worker import _prepare_embedded_report
+from pacomind.task_queue.models import Job, JobType
+from pacomind.task_queue.worker import _prepare_embedded_report
 
 
 def test_registry_has_real_handlers_and_preserves_historical_job_types():
-    from apsimo.task_queue.handlers.registry import build_default_handlers
+    from pacomind.task_queue.handlers.registry import build_default_handlers
     assert set(build_default_handlers()) == {
         JobType.MONITORING, JobType.SYSTEM_MAINTENANCE, JobType.CUSTOM}
     for legacy in ("desktop", "browser"):
@@ -27,7 +27,7 @@ def test_registry_has_real_handlers_and_preserves_historical_job_types():
 @pytest.mark.parametrize("parameter", ["desktop_config", "browser_config"])
 @pytest.mark.parametrize("enabled", [True, False])
 def test_registry_rejects_unsupported_legacy_worker_configuration(parameter, enabled):
-    from apsimo.task_queue.handlers.registry import build_default_handlers
+    from pacomind.task_queue.handlers.registry import build_default_handlers
     with pytest.raises(ValueError, match="native runtime"):
         build_default_handlers(**{parameter: SimpleNamespace(enabled=enabled)})
 
@@ -91,11 +91,11 @@ def test_embedded_result_contract_never_attests_failures_or_skips():
 async def test_monitoring_rejects_private_targets_unless_explicitly_allowlisted(
     monkeypatch,
 ):
-    monkeypatch.delenv("COLONY_MONITORING_HOST_ALLOWLIST", raising=False)
+    monkeypatch.delenv("PACOMIND_MONITORING_HOST_ALLOWLIST", raising=False)
     with pytest.raises(ValueError, match="non-public"):
         await _validate_endpoint("http://127.0.0.1:7777/health")
 
-    monkeypatch.setenv("COLONY_MONITORING_HOST_ALLOWLIST", "127.0.0.1")
+    monkeypatch.setenv("PACOMIND_MONITORING_HOST_ALLOWLIST", "127.0.0.1")
     assert await _validate_endpoint(
         "http://127.0.0.1:7777/health"
     ) == "http://127.0.0.1:7777/health"
@@ -103,14 +103,14 @@ async def test_monitoring_rejects_private_targets_unless_explicitly_allowlisted(
 
 @pytest.mark.asyncio
 async def test_monitoring_rejects_non_global_ip_and_unpinned_dns(monkeypatch):
-    monkeypatch.delenv("COLONY_MONITORING_HOST_ALLOWLIST", raising=False)
+    monkeypatch.delenv("PACOMIND_MONITORING_HOST_ALLOWLIST", raising=False)
     with pytest.raises(ValueError, match="non-public"):
         await _validate_endpoint("http://100.64.0.1/health")
     with pytest.raises(ValueError, match="explicitly configured"):
         await _validate_endpoint("https://status.example.test/health")
 
     monkeypatch.setenv(
-        "COLONY_MONITORING_HOST_ALLOWLIST", "status.example.test",
+        "PACOMIND_MONITORING_HOST_ALLOWLIST", "status.example.test",
     )
     assert await _validate_endpoint(
         "https://status.example.test/health"

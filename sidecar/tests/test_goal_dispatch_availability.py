@@ -3,16 +3,16 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.goals.config import GoalEngineConfig
-from apsimo.goals.engine import GoalEngine
-from apsimo.goals.models import Goal, GoalDAG, GoalStatus, Subtask, SubtaskStatus
-from apsimo.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
+from pacomind.api.routers import host
+from pacomind.goals.config import GoalEngineConfig
+from pacomind.goals.engine import GoalEngine
+from pacomind.goals.models import Goal, GoalDAG, GoalStatus, Subtask, SubtaskStatus
+from pacomind.goals.queue_bridge import GoalQueueBridge, InMemoryQueueBackend
 
 
 @pytest.mark.parametrize('mode', ['off', 'shadow'])
 async def test_api_acceptance_survives_restart_without_fake_dispatch(tmp_path, monkeypatch, mode):
-    monkeypatch.setenv('COLONY_COGNITION_SPINE', mode)
+    monkeypatch.setenv('PACOMIND_COGNITION_SPINE', mode)
     config = GoalEngineConfig(db_path=str(tmp_path / 'goals.db'), inference_enabled=False)
     engine = GoalEngine(config=config)
     monkeypatch.setattr(host, '_goals_store', engine)
@@ -49,7 +49,7 @@ async def test_live_native_mode_rejects_new_legacy_goal_but_retains_history(tmp_
     old = engine.propose_goal('Previously accepted project comparison')
     engine.accept_goal(old.goal_id)
     engine.activate_goal(old.goal_id)
-    monkeypatch.setenv('COLONY_COGNITION_SPINE', 'live')
+    monkeypatch.setenv('PACOMIND_COGNITION_SPINE', 'live')
     monkeypatch.setattr(host, '_goals_store', engine)
     app = FastAPI()
     app.include_router(host.router)
@@ -81,7 +81,7 @@ async def test_live_native_mode_rejects_new_legacy_goal_but_retains_history(tmp_
 
 
 async def test_reported_completion_closes_accepted_goal_and_survives_replay(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_COGNITION_SPINE', 'off')
+    monkeypatch.setenv('PACOMIND_COGNITION_SPINE', 'off')
     config = GoalEngineConfig(db_path=str(tmp_path / 'goals.db'), inference_enabled=False)
     engine = GoalEngine(config=config)
     monkeypatch.setattr(host, '_goals_store', engine)

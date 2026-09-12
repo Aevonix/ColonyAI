@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apsimo.feedback import TypeFeedbackStore
+from pacomind.feedback import TypeFeedbackStore
 
 
 def test_actioned_boosts_dismissed_decays():

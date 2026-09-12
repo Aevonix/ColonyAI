@@ -7,9 +7,9 @@ Their stored contents remain available through `/v1/host/briefings`. Scoped memo
 citations and current work context continue through the existing assembly path.
 
 Hermes 0.21.1 applies `hooks.output_spill` to external memory-provider output.
-Its default 10,000-character head/tail preview can cut a Apsimo source envelope
+Its default 10,000-character head/tail preview can cut a PacoMind source envelope
 or remove the middle of an original/correction bundle. Guided attachment and
-explicit `apsimo init --refresh-adapter` align `hooks.output_spill.max_chars` to
+explicit `pacomind init --refresh-adapter` align `hooks.output_spill.max_chars` to
 65,536 characters, retaining an existing larger cap or disabled spill setting.
 The original configuration is backed up and an adjustment is printed during
 refresh. The managed draft profile receives the same alignment at creation,
@@ -24,8 +24,8 @@ size their own transfer allowance. The aggregate of optional context sections
 has no universal size bound. A native MemoryManager regression verifies a complete envelope
 larger than the old default survives the installed configuration unchanged.
 
-`apsimo-hermes` packages the existing general adapter and memory provider for
-installation into the Python environment that runs Hermes. The Apsimo sidecar
+`pacomind-hermes` packages the existing general adapter and memory provider for
+installation into the Python environment that runs Hermes. The PacoMind sidecar
 is a separate service. The adapter does not install the sidecar, a context
 engine, a worker daemon, or operating-system services.
 
@@ -39,36 +39,36 @@ python -m build
 Install the resulting wheel with the Python interpreter that runs Hermes:
 
 ```sh
-python -m pip install dist/apsimo_hermes-1.4.0-py3-none-any.whl
+python -m pip install dist/pacomind_hermes-1.4.0-py3-none-any.whl
 ```
 
-The wheel exposes `apsimo` through `hermes_agent.plugins` and `apsimo-memory`
-through `hermes_agent.memory_providers`. Only the canonical `apsimo_hermes` and
-`apsimo_memory` packages are shipped. It maps the source files in
-`plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
-Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
+The wheel exposes `pacomind` through `hermes_agent.plugins` and `pacomind-memory`
+through `hermes_agent.memory_providers`. Only the canonical `pacomind_hermes` and
+`pacomind_memory` packages are shipped. It maps the source files in
+`plugins/hermes-plugin/` and `plugins/pacomind-memory/` to importable packages.
+Only `catalog.py` and `contract.py` from `hostworker/pacomind_hostworker/` are
 included in the adapter's private catalog package. The source installer forwards
 to the guided, profile-aware installer.
 
 ## Bundled skills
 
-The adapter wheel includes `apsimo-deep-research` for cited investigations and
-decision reports, and `apsimo-skill-creator` for creating useful, concise Hermes
+The adapter wheel includes `pacomind-deep-research` for cited investigations and
+decision reports, and `pacomind-skill-creator` for creating useful, concise Hermes
 skills. Both use the deployment's available tools without selecting a model or
-provider. New guided `apsimo init` attachments install them into the selected
+provider. New guided `pacomind init` attachments install them into the selected
 profile's native skill catalog.
 
 For an existing Hermes profile, install or explicitly refresh the bundled copy
 without instance setup, inference or configuration changes:
 
 ```sh
-apsimo init --skills-only --hermes-home /path/to/selected/hermes-home
+pacomind init --skills-only --hermes-home /path/to/selected/hermes-home
 ```
 
-The command reads the installed `apsimo-hermes` distribution. Use
-`--adapter-wheel /path/to/apsimo_hermes-VERSION-py3-none-any.whl` to select an
-exact built artifact instead. For each packaged `apsimo-*` skill it writes
-`skills/<name>/SKILL.md` and its local `.apsimo-owned.json` hash record,
+The command reads the installed `pacomind-hermes` distribution. Use
+`--adapter-wheel /path/to/pacomind_hermes-VERSION-py3-none-any.whl` to select an
+exact built artifact instead. For each packaged `pacomind-*` skill it writes
+`skills/<name>/SKILL.md` and its local `.pacomind-owned.json` hash record,
 retaining previous bytes in local backups on refresh. An unowned
 destination or modified bundled copy is preserved and reported as a conflict.
 Move a customized skill directory aside and give it a different name/path before
@@ -76,11 +76,11 @@ installing the bundled revision. Other skills are untouched. An adapter refresh 
 not replace the profile's skill; run `--skills-only` explicitly for that update.
 
 Hermes advertises the name and short description in its compact skill index;
-`skills_list` discovers it and `skill_view(name="apsimo-deep-research")` loads
+`skills_list` discovers it and `skill_view(name="pacomind-deep-research")` loads
 the full instructions on demand. The installer does not inject the body into
 every prompt or enable otherwise disabled skill tools.
 
-With this adapter version active, Apsimo refreshes skill discovery in ongoing
+With this adapter version active, PacoMind refreshes skill discovery in ongoing
 conversations. Before a model request it checks the current native skill
 locations and disabled state, hashes changed files including instruction bodies,
 and invalidates the native index/list caches when their inputs change. This
@@ -92,23 +92,23 @@ tool result clears that skill's reload notice. Full bodies still arrive only
 through native skill loading.
 
 Native loading can preprocess templates, so returned instructions need not
-equal the raw file bytes. A new successful native load after Apsimo observed
+equal the raw file bytes. A new successful native load after PacoMind observed
 the same unchanged file version also settles the notice. A restored transformed
-copy without that observation requires one reload; Apsimo does not execute
+copy without that observation requires one reload; PacoMind does not execute
 template commands to compare it.
 
 Refresh requires `skill_view` to be available directly or named in Hermes'
 current deferred-tool catalog. The default native configuration exposes skill
 tools directly. Explicit deferral works with full or names-only catalogs; a
 group-only or omitted catalog cannot establish an individual tool's availability,
-so Apsimo does not infer access or announce reloads from those summaries.
+so PacoMind does not infer access or announce reloads from those summaries.
 
 Hermes' original session prompt and historical tool results remain stored
 unchanged. Current discovery notices explicitly supersede their stale skill
 information; no global conversation rewrite or new chat is required. Selecting
 this adapter code initially still uses the normal runtime activation lifecycle.
 Afterward, skill file changes require no process restart. Installing skills alone
-does not enable Apsimo in an otherwise native-only profile; that profile retains
+does not enable PacoMind in an otherwise native-only profile; that profile retains
 Hermes' own cache behavior. The installer never restarts a process.
 
 Built-artifact tests exercise native discovery and deliver the loaded skill
@@ -119,29 +119,29 @@ instruction delivery, not research quality on a particular model.
 
 Installing the wheel makes the adapters discoverable. It does not change a
 Hermes profile, select a memory provider, or enable tools. Activation requires
-the existing general-adapter configuration, `plugins.enabled: [apsimo]`, and
-`memory.provider: apsimo-memory` in the selected private profile. Preserve
+the existing general-adapter configuration, `plugins.enabled: [pacomind]`, and
+`memory.provider: pacomind-memory` in the selected private profile. Preserve
 other enabled plugins when editing that list. These two durable selections make
 the general plugin the canonical writer and keep the memory provider read-only,
 including cold native workers that do not inherit launcher environment flags.
-An explicit `plugins.disabled: [apsimo]` or an enabled list excluding `apsimo`
+An explicit `plugins.disabled: [pacomind]` or an enabled list excluding `pacomind`
 takes precedence over inherited flags. A contradictory configured provider
-`turn_writer: enabled` is rejected; native `colony-memory.json` settings retain
+`turn_writer: enabled` is rejected; native `pacomind-memory.json` settings retain
 their precedence over legacy `memory.config`.
 
 Older embedded profiles without this paired selection still require the existing
 coexistence settings in the Hermes process environment:
 
 ```sh
-COLONY_GENERAL_PLUGIN_ACTIVE=1
-COLONY_MEMORY_WORKER_TOOLS=0
-COLONY_MEMORY_TURN_WRITER=disabled
+PACOMIND_GENERAL_PLUGIN_ACTIVE=1
+PACOMIND_MEMORY_WORKER_TOOLS=0
+PACOMIND_MEMORY_TURN_WRITER=disabled
 ```
 
 Configure the sidecar URL and contact through native `hermes memory setup`
-and matching `plugins.apsimo` configuration, and supply `APSIMO_API_KEY` privately.
+and matching `plugins.pacomind` configuration, and supply `PACOMIND_API_KEY` privately.
 Native setup stores non-secret fields in the selected profile's
-`apsimo-memory.json` (retaining an existing `colony-memory.json` selection), which overrides legacy `memory.config`. The
+`pacomind-memory.json`, which overrides inline `memory.config`. The
 general adapter needs a private writable turn outbox and verified participant
 bindings. Consequential tools retain their existing mediator requirements.
 This packaging change does not provision those dependencies.
@@ -153,14 +153,14 @@ override a same-name directory plugin. Remove or archive obsolete plugin
 directories only as part of an intentional profile migration.
 
 When the memory provider is selected, native CLI discovery exposes
-`hermes apsimo-memory status`, `goals`, `context`, and `sync`. These commands
+`hermes pacomind-memory status`, `goals`, `context`, and `sync`. These commands
 resolve the same selected profile settings and credentials as the provider;
 explicit URL/contact arguments remain available. The Typer app remains available
 to existing callers.
 
 Profile settings and handoff files stay scoped to the selected Hermes home.
 The provider remains attached through a sidecar startup outage and retries on
-later requests. Use `apsimo init` for guided attachment and explicit refresh of a managed
+later requests. Use `pacomind init` for guided attachment and explicit refresh of a managed
 installation. Packaging alone does not establish production readiness.
 
 ## Durable source capture
@@ -201,7 +201,7 @@ engine.
 ## Already captured host input
 
 From 1.0.32, a host that has already admitted the human input can wrap the
-existing native conversation in `apsimo_hermes.input_provenance.supplied_input`.
+existing native conversation in `pacomind_hermes.input_provenance.supplied_input`.
 The host validates its participant, source hashes and current revisions first.
 The native participant resolver and tool authority remain authoritative; the
 supplied contact does not grant capabilities.
@@ -222,7 +222,7 @@ The context exposes the durably queued result's dependencies for the host to
 revalidate before delayed delivery or further effects. It does not confirm
 backend delivery or reconstruct unlinked historical paraphrases. See the
 [supplied-input contract](../plugins/hermes-plugin/SUPPLIED-INPUT.md), also
-included as `apsimo_hermes/SUPPLIED-INPUT.md` in the adapter package.
+included as `pacomind_hermes/SUPPLIED-INPUT.md` in the adapter package.
 
 Hosts can also register [source-bound updates during native work](NATIVE-SOURCE-UPDATES.md)
 on this same input context. Registration, request visibility and behavioral
@@ -231,8 +231,8 @@ application are separate; native task execution stays with Hermes.
 ## Source erasure and replay
 
 `POST /v1/host/memory/sources/forget` accepts an authenticated contact and 1 to
-100 canonical source IDs. The existing MCP server exposes `colony_forget_sources`.
-The native plugin exposes `colony_memory_forget` for explicit owner requests in
+100 canonical source IDs. The existing MCP server exposes `pacomind_forget_sources`.
+The native plugin exposes `pacomind_memory_forget` for explicit owner requests in
 an attested interactive turn. It accepts source IDs from canonical recalled
 provenance, including older sessions; legacy graph memory IDs are not source IDs.
 Native Hermes committed memory removes also attempt an exact, session-bound
@@ -299,7 +299,7 @@ Ordinary answers carrying source references also use a dedicated route, preventi
 a predecessor backend from silently accepting an answer while discarding its links.
 Erased IDs cannot be enqueued again after
 reconciliation. This is not a model-generation counter. Generic caller-provided
-outbox delivery callbacks must use `ColonyClient.sync_turn(..., outbox=outbox)`
+outbox delivery callbacks must use `PacoMindClient.sync_turn(..., outbox=outbox)`
 to participate in reconciliation.
 
 Partial erasure events retain exact message hashes under opaque event IDs in the
@@ -342,13 +342,13 @@ The additional native provider-call memory boundary is qualified on Hermes
 0.21.1 with NeMo Relay 0.8.3 and the Linux 0.21.2 qualification environment
 with NeMo Relay 0.8.4. Upstream frozen environments can select another version;
 qualify that actual interpreter before switching a deployment. Install it with
-`python -m pip install 'apsimo-hermes[native-memory]'`; the supported Hermes
+`python -m pip install 'pacomind-hermes[native-memory]'`; the supported Hermes
 release also declares this Relay dependency. CI installs that extra explicitly.
 Missing scope-local Relay capabilities leave the ordinary adapter active and
 emit a warning when the native boundary cannot be registered.
 
 Hermes's maximum-iteration summary rebuilds historical `api_content` and bypasses
-`llm_request` and ordinary API observers. Apsimo binds its existing authenticated
+`llm_request` and ordinary API observers. PacoMind binds its existing authenticated
 source-validity and erasure filter to that native turn's scoped Relay execution
 contract. The SDK receives filtered history for the summary, including its
 empty-answer retry. A one-use digest avoids repeating the ordinary request
@@ -370,7 +370,7 @@ This is provider-input coverage on those dispatch paths, not erasure of native
 transcript files, Relay exports, arbitrary paraphrases, or calls outside them.
 
 Hermes 0.21.1 wraps provider recollection in a note calling it authoritative
-reference data. Apsimo's supported `llm_request` middleware replaces that outer
+reference data. PacoMind's supported `llm_request` middleware replaces that outer
 note only in an observed, current, source-stamped native memory suffix. It keeps
 the person’s input, quoted source bytes, source revisions and erasure checks
 unchanged. Recollection retains its speaker, time and factual, reported,
@@ -388,7 +388,7 @@ same evidence framing and source lineage when the two input forms differ.
 System/developer instructions and Responses instructions may document the generic
 `<memory-context>` fence. That markup alone is not a recalled packet there, even
 when the example omits a closing tag. Exact forgotten source copies and explicit
-Apsimo lineage packets still reconcile in these fields. Legacy untagged fenced
+PacoMind lineage packets still reconcile in these fields. Legacy untagged fenced
 instruction text is preserved unless it is an exact erased source or observed
 alias; substring and paraphrase erasure are not promised. Native automatic
 recollection continues to reconcile in its appended user-content boundary.
@@ -409,7 +409,7 @@ production profile, or channel is contacted.
 
 ## Opening retained task results
 
-`apsimo_memory_read_source` accepts `view="observations"` for an exact recalled
+`pacomind_memory_read_source` accepts `view="observations"` for an exact recalled
 instruction. It lists four retained original tool references per page. Open
 relevant references with `view="source"` to read what the tools actually returned.
 Selection reasons are model-authored navigation hints and may be wrong.
@@ -444,7 +444,7 @@ participant invalidation; corrected recall content can consequently differ.
 ## Shared execution observations
 
 On the [current qualification build](HERMES-HOOK-COMPATIBILITY.md), set
-`plugins.apsimo.execution_registry_enabled: true` to
+`plugins.pacomind.execution_registry_enabled: true` to
 publish native turn, API, tool and delegated-child lifecycle observations.
 This is opt-in for a current attachment. The adapter credential must already
 have scoped `turns:write` and exact person grants; `context:read` grants access
@@ -453,7 +453,7 @@ for this new surface. To observe trusted agent cron fires, include `cron` in
 the existing `attested_system_platforms` configuration; it is not enabled by
 the adapter's default `cli` binding. No network call is made during registration.
 
-Apsimo stores only execution IDs, participant/session linkage, channel, phase,
+PacoMind stores only execution IDs, participant/session linkage, channel, phase,
 tool name and observation times in the existing `turn-idempotency.db`. It does
 not copy prompts, tool arguments/results or task descriptions. Each hook has a
 400 ms network deadline and failures do not stop a turn. Ordinary use supplies
@@ -497,9 +497,9 @@ or unreadable ledgers are explicitly unavailable, and `complete` is always
 false for the combined work view.
 
 The same owner view reads native Kanban tasks, including general `goal_mode`
-work, without dispatching or reconciling them. `COLONY_HERMES_WORK_BOARDS` can
+work, without dispatching or reconciling them. `PACOMIND_HERMES_WORK_BOARDS` can
 select up to eight board slugs as a JSON list, for example
-`["default","colony-drafts"]`. Without that setting it follows only the
+`["default","pacomind-drafts"]`. Without that setting it follows only the
 selected home's native current board (`HERMES_KANBAN_BOARD`, then
 `kanban/current`, then `default`), including Hermes' lowercase normalization.
 It does not enumerate other boards. Profile
@@ -548,7 +548,7 @@ native task and session history remain under their existing retention policy.
 Queued delivery is not proof of central availability, and a reported result is
 not independent verification that its claimed effects occurred.
 
-An optional private `COLONY_WORKER_STATUS_PATHS` environment value maps neutral
+An optional private `PACOMIND_WORKER_STATUS_PATHS` environment value maps neutral
 worker labels to local JSON heartbeat paths, for example
 `{"Local transport":"/private/runtime/transport-heartbeat.json"}`. It is unset
 by default. The same owner API and context join expose these as separate
@@ -613,13 +613,13 @@ authority at native `tool_execution` middleware. Resolved owner turns and
 explicitly configured local system platforms retain native tools and existing
 Hermes toolset, approval and guardrail checks. Guests cannot directly invoke
 shell, files, network, devices, coding, delegation, native memory/session tools,
-or unknown plugin/MCP tools. The exact Apsimo tools keep their existing scoped
+or unknown plugin/MCP tools. The exact PacoMind tools keep their existing scoped
 read checks and action mediators. No arbitrary tool prefix or relationship
 score grants access.
 
 A native-tool request from a guest returns `requires_authorization`, with no
 effect and no approval created. The response directs the agent to an enabled
-Apsimo action request or the owner. It does not invent an approval request or
+PacoMind action request or the owner. It does not invent an approval request or
 permit a raw tool after conversational consent. Broader guest capabilities
 require a scoped mediated interface; this packet supplies none automatically.
 
@@ -638,7 +638,7 @@ is loaded. It does not sandbox trusted installed plugin code, remove private
 facts already present in old transcripts/system prompts, or replace the
 deployment's channel admission, secret isolation and consent policy. Native
 owner tools retain their existing consent behavior; they are not converted to
-Apsimo intents by this gate. Qualify both owner and guest messages before
+PacoMind intents by this gate. Qualify both owner and guest messages before
 enabling a public channel.
 
 ## Native post-turn review
@@ -682,7 +682,7 @@ controlled model fixture.
 
 ### Measured skill updates
 
-`python -m apsimo_hermes.review_evaluation --skill NAME --pending ID
+`python -m pacomind_hermes.review_evaluation --skill NAME --pending ID
 --oracle trusted_local_module:function` evaluates one explicitly selected,
 existing curator-owned `SKILL.md` proposal. It accepts native full-content
 edits or exact text patches, including a one-operation native batch. Text
@@ -729,14 +729,14 @@ recurring skill or an observed spontaneous model regression.
 
 ### Bounded operational reviews
 
-New `colony_work_initiative` reviews require a managed `colony-reviews`
-native profile. The existing guided `apsimo init --profile local` setup offers
+New `pacomind_work_initiative` reviews require a managed `pacomind-reviews`
+native profile. The existing guided `pacomind init --profile local` setup offers
 an optional review choice, default off; `--native-reviews` selects it explicitly.
 Existing attachments can use that same flag and their configured planning role.
 `--refresh-adapter` refreshes an already enabled review profile without enabling
 a previously disabled one. For private deployment staging, use the selected sidecar interpreter:
-`python -m apsimo.setup_native_reviews --install /private/instance`.
-This prepares the profile and enables `plugins.colony.native_reviews` in the
+`python -m pacomind.setup_native_reviews --install /private/instance`.
+This prepares the profile and enables `plugins.pacomind.native_reviews` in the
 selected native root configuration. An existing profile belonging to another
 instance is retained and installation fails. Named conversation profiles must
 select their root deployment for this shared worker.
@@ -746,8 +746,8 @@ server-eligible read-only proposals and reconciles already bound work. A separat
 LLM queue steward or scheduling service is unnecessary. Disabling the choice
 stops new discovery while preserving observation of existing bindings.
 
-The profile exposes two tools: `colony_read_work_source` and
-`colony_review_report`. Native `agent.disabled_toolsets: [kanban]` removes
+The profile exposes two tools: `pacomind_read_work_source` and
+`pacomind_review_report`. Native `agent.disabled_toolsets: [kanban]` removes
 the automatically added Kanban tools, including task creation and attachment
 access. Native `tools.tool_search.enabled: false` keeps both tools directly
 visible to the model; readiness checks the assembled schema array. The report
@@ -772,7 +772,7 @@ preserving logs. A useful report can identify unavailable configuration as the
 next bounded inspection. Existing bound contracts retain their exact body and
 digest; only new bindings use the bounded report-tool wording.
 The instance may set `operational_log_directory`; its
-default matches the existing producer's `~/.colony/logs`. A mismatched
+default matches the existing producer's `~/.pacomind/logs`. A mismatched
 registered directory is unavailable, never substituted with another log.
 
 Before promotion, the adapter refreshes this profile from the existing

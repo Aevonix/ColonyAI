@@ -5,7 +5,7 @@ from threading import Barrier
 
 import pytest
 
-from apsimo.contacts.transport_ingress import TransportIngress, ensure_schema
+from pacomind.contacts.transport_ingress import TransportIngress, ensure_schema
 
 
 def opened(path):

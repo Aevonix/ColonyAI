@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apsimo.events.journal import (
+from pacomind.events.journal import (
     acknowledge_event_record,
     append_event,
     append_event_record,
@@ -33,8 +33,8 @@ def journal_dir(tmp_path, monkeypatch):
     """Point the journal at a temp directory."""
     d = tmp_path / "events"
     d.mkdir()
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(d))
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(d))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     return d
 
 
@@ -79,7 +79,7 @@ class TestAppendEvent:
         assert "checksum" in raw
 
     def test_append_prunes_old_events(self, journal_dir, monkeypatch):
-        monkeypatch.setenv("COLONY_EVENT_JOURNAL_RETENTION", "5")
+        monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_RETENTION", "5")
 
         for i in range(10):
             append_event("test.event", {"i": i})
@@ -92,7 +92,7 @@ class TestAppendEvent:
 
     def test_append_event_returns_minus_one_on_failure(self, tmp_path, monkeypatch):
         # Point at a non-existent directory that can't be created
-        monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", "/dev/null/impossible")
+        monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", "/dev/null/impossible")
         seq = append_event("test.event", {})
         assert seq == -1
 
@@ -124,7 +124,7 @@ class TestAppendEvent:
     def test_steady_state_append_uses_cursor_not_directory_scan(
         self, journal_dir, monkeypatch
     ):
-        from apsimo.events import journal
+        from pacomind.events import journal
 
         assert append_event("test.event", {"i": 1}) == 1
 

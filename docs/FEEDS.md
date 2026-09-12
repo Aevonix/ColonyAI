@@ -1,4 +1,4 @@
-# Colony Feeds — spec-driven intelligence pipelines
+# PacoMind Feeds — spec-driven intelligence pipelines
 
 Turn "stay on top of TOPIC and brief DESTINATION" into a reproducible pipeline
 you instantiate from one YAML file. Any number of feeds on any topics coexist;
@@ -17,17 +17,17 @@ collect (script, no LLM)  ->  distill (agent)   ->  destination
 ## Quickstart
 
 ```bash
-colony feeds validate my-feed.yaml     # clear, itemized errors
-colony feeds create   my-feed.yaml     # data dirs + prompts + scheduled jobs
-colony feeds run my-feed collect       # first collection, inline
-colony feeds run my-feed distill       # first brief, in the background
-colony feeds status my-feed
-colony feeds pause|resume|delete my-feed [--purge]
+pacomind feeds validate my-feed.yaml     # clear, itemized errors
+pacomind feeds create   my-feed.yaml     # data dirs + prompts + scheduled jobs
+pacomind feeds run my-feed collect       # first collection, inline
+pacomind feeds run my-feed distill       # first brief, in the background
+pacomind feeds status my-feed
+pacomind feeds pause|resume|delete my-feed [--purge]
 ```
 
 Without an installed package: `PYTHONPATH=<repo>/sidecar python3 -m
-colony_sidecar.feeds.cli ...`. A commented example spec lives at
-`sidecar/colony_sidecar/feeds/example-feed.yaml`.
+pacomind.feeds.cli ...`. A commented example spec lives at
+`sidecar/pacomind/feeds/example-feed.yaml`.
 
 ## Spec schema
 
@@ -53,7 +53,7 @@ Required: `name` (slug), `topic`, `destination`, `cadence.collect`,
 
 - **collect** and **alerts** are plain-python cron jobs (`--no-agent`): a
   generated per-instance shim points the shared, stdlib-only engine
-  (`engine.py`, deployed as `colony-feed-engine.py`) at the instance config.
+  (`engine.py`, deployed as `pacomind-feed-engine.py`) at the instance config.
   Items are deduped against a per-feed sqlite seen-ledger; the queue is
   overwritten wholesale with never-seen items only, so a brief never repeats.
 - **distill/digest/discovery** are agent cron jobs whose prompts are rendered
@@ -70,7 +70,7 @@ agent `feed_create / feed_list / feed_status / feed_pause / feed_resume /
 feed_run / feed_delete` tools. "Keep me informed about X" becomes a spec the
 agent authors; when the request names no destination, briefs deliver to the
 conversation the request came from. Plugin config lives in
-`~/.colony-feeds.json` (python interpreter, PYTHONPATH to this repo,
+`~/.pacomind-feeds.json` (python interpreter, PYTHONPATH to this repo,
 specs dir).
 
 ## Operational notes

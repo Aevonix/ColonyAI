@@ -20,27 +20,27 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from apsimo.identity.resolver import (
+from pacomind.identity.resolver import (
     IdentityResolver,
     OwnerIdentityError,
     get_identity_resolver,
     get_owner_contact_id,
     reset_identity_resolver,
 )
-from apsimo.initiatives.action_registry import (
+from pacomind.initiatives.action_registry import (
     RiskTier,
     classify_agent_action,
     get_action,
     requires_owner_approval,
 )
-from apsimo.initiatives.context_freshness import (
+from pacomind.initiatives.context_freshness import (
     durability_for,
     freshness_ttl_for,
     is_context_fresh,
 )
-from apsimo.initiatives.models import StoredInitiative
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.intelligence.components.initiative_engine import (
+from pacomind.initiatives.models import StoredInitiative
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.intelligence.components.initiative_engine import (
     InitiativeConfig,
     InitiativeEngine,
     InitiativeType,
@@ -146,8 +146,8 @@ class FakeGraphClient:
 def owner_resolver(monkeypatch):
     """Resolver singleton with the owner resolvable in three formats."""
     reset_identity_resolver()
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-1")
-    monkeypatch.delenv("COLONY_HOST_CONTACT_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-1")
+    monkeypatch.delenv("PACOMIND_HOST_CONTACT_ID", raising=False)
     store = FakeContactStore(
         contacts=[
             _contact(
@@ -270,14 +270,14 @@ class TestInitiativeSerializer:
         return StoredInitiative(**base)
 
     def test_title_is_action_not_reason(self):
-        from apsimo.api.routers.host import _initiative_to_response
+        from pacomind.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored())
         assert resp.title == "Check in with Jordan Example"
         assert resp.title != "No contact for 14 days"
 
     def test_entity_id_and_context_returned(self):
-        from apsimo.api.routers.host import _initiative_to_response
+        from pacomind.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored())
         assert resp.entity_id == "uuid-jordan"
@@ -286,13 +286,13 @@ class TestInitiativeSerializer:
         assert resp.context_durability == "durable"
 
     def test_null_context_returns_empty_dict(self):
-        from apsimo.api.routers.host import _initiative_to_response
+        from pacomind.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored(context=None))
         assert resp.context == {}
 
     def test_target_agent_id_populated(self):
-        from apsimo.api.routers.host import _initiative_to_response
+        from pacomind.api.routers.host import _initiative_to_response
 
         assigned = self._stored(assigned_agent_id="test-agent", status="assigned")
         assert _initiative_to_response(assigned).target_agent_id == "test-agent"
@@ -306,7 +306,7 @@ class TestInitiativeSerializer:
     def test_assigned_status_serializes(self):
         # The status Literal was missing "assigned" — a store status the
         # loop sets when linking initiatives to queue jobs.
-        from apsimo.api.routers.host import _initiative_to_response
+        from pacomind.api.routers.host import _initiative_to_response
 
         resp = _initiative_to_response(self._stored(status="assigned"))
         assert resp.status == "assigned"
@@ -353,8 +353,8 @@ class TestIdentityResolver:
 
     @pytest.mark.asyncio
     async def test_missing_owner_config_raises(self, monkeypatch):
-        monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
-        monkeypatch.delenv("COLONY_HOST_CONTACT_ID", raising=False)
+        monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
+        monkeypatch.delenv("PACOMIND_HOST_CONTACT_ID", raising=False)
         resolver = IdentityResolver(contact_store=FakeContactStore())
         with pytest.raises(OwnerIdentityError):
             await resolver.owner_identities()
@@ -378,11 +378,11 @@ class TestIdentityResolver:
         assert not await resolver.is_owner("somebody-else")
 
     def test_legacy_env_var_shim(self, monkeypatch):
-        monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
-        monkeypatch.setenv("COLONY_HOST_CONTACT_ID", "cid-legacy")
+        monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
+        monkeypatch.setenv("PACOMIND_HOST_CONTACT_ID", "cid-legacy")
         assert get_owner_contact_id() == "cid-legacy"
 
-        monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-canonical")
+        monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-canonical")
         assert get_owner_contact_id() == "cid-canonical"
 
 
@@ -426,8 +426,8 @@ class TestOwnerExclusion:
         # No owner identity → generate NOTHING rather than risk targeting
         # the owner (the old behavior generated everything).
         reset_identity_resolver()
-        monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
-        monkeypatch.delenv("COLONY_HOST_CONTACT_ID", raising=False)
+        monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
+        monkeypatch.delenv("PACOMIND_HOST_CONTACT_ID", raising=False)
         engine = InitiativeEngine(
             graph_client=FakeGraphClient(manages_count=1),
             event_bus=None,
@@ -597,8 +597,8 @@ class TestQueueGating:
     """The dispatch path drops unregistered hints before the queue."""
 
     def _loop(self, task_queue):
-        from apsimo.autonomy.config import AutonomyConfig
-        from apsimo.autonomy.loop import AutonomyLoop
+        from pacomind.autonomy.config import AutonomyConfig
+        from pacomind.autonomy.loop import AutonomyLoop
 
         registry = MagicMock()
         registry.task_queue = task_queue

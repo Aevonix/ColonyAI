@@ -3,11 +3,11 @@ import asyncio
 
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.vector.collections import Collection
-from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog, IncompatibleIndex
-from apsimo.vector.migrate import migrate_tier
-from apsimo.vector.store import VectorStore
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.vector.collections import Collection
+from pacomind.vector.indexes import EmbeddingIdentity, IndexCatalog, IncompatibleIndex
+from pacomind.vector.migrate import migrate_tier
+from pacomind.vector.store import VectorStore
 
 
 class Pipeline:
@@ -157,9 +157,9 @@ def test_cli_migration_stops_truthfully(monkeypatch, capsys, status_code, status
     import httpx
     import sys
     import time
-    from apsimo import cli
+    from pacomind import cli
     monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
-    monkeypatch.setattr(sys, 'argv', ['colony', 'migrate-tier', '--wait-seconds', str(wait)])
+    monkeypatch.setattr(sys, 'argv', ['pacomind', 'migrate-tier', '--wait-seconds', str(wait)])
     clock = [0.]
     monkeypatch.setattr(time, 'monotonic', lambda: clock[0])
     monkeypatch.setattr(time, 'sleep', lambda seconds: clock.__setitem__(0, clock[0] + seconds))
@@ -178,10 +178,10 @@ def test_cli_migration_stops_truthfully(monkeypatch, capsys, status_code, status
 @pytest.mark.asyncio
 async def test_multimodal_api_has_explicit_endpoint_without_losing_text_provider(monkeypatch):
     import httpx
-    from apsimo.vector.config import EmbeddingConfig
-    from apsimo.vector.embedder import EmbeddingPipeline
-    from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
-    from apsimo.vector.multimodal_provider import make_multimodal_provider
+    from pacomind.vector.config import EmbeddingConfig
+    from pacomind.vector.embedder import EmbeddingPipeline
+    from pacomind.vector.openai_provider import OpenAIAPIEmbeddingProvider
+    from pacomind.vector.multimodal_provider import make_multimodal_provider
     config = EmbeddingConfig(provider='openai_api', model_id='neutral', dimensions=2)
     with pytest.raises(ValueError, match='explicit endpoint'):
         make_multimodal_provider(config)
@@ -208,9 +208,9 @@ async def test_multimodal_api_has_explicit_endpoint_without_losing_text_provider
 @pytest.mark.asyncio
 async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
     import httpx
-    from apsimo.vector.config import EmbeddingConfig
-    from apsimo.vector.embedder import EmbeddingPipeline
-    from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
+    from pacomind.vector.config import EmbeddingConfig
+    from pacomind.vector.embedder import EmbeddingPipeline
+    from pacomind.vector.openai_provider import OpenAIAPIEmbeddingProvider
     import json
 
     requests = []
@@ -223,7 +223,7 @@ async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
             {'index': i, 'embedding': [1., float(i)]} for i in reversed(range(count))]})
     client = httpx.AsyncClient
     monkeypatch.setattr(httpx, 'AsyncClient', lambda **kw: client(transport=httpx.MockTransport(response), **kw))
-    monkeypatch.setenv('COLONY_EMBED_QUERY_INSTRUCTION', 'Retrieve: ')
+    monkeypatch.setenv('PACOMIND_EMBED_QUERY_INSTRUCTION', 'Retrieve: ')
     provider = OpenAIAPIEmbeddingProvider(EmbeddingConfig(provider='openai_api', model_id='requested-alias', dimensions=2, revision='operator-r1'))
     provider.configure('http://fixture/v1', '')
     pipeline = EmbeddingPipeline(provider)
@@ -232,7 +232,7 @@ async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
     assert identity.requested_model == 'requested-alias' and identity.served_model == 'actual-model'
     assert identity.declared_revision == 'operator-r1'
     assert await pipeline.embed_batch(['first', 'second']) == [[1., 0.], [1., 1.]]
-    monkeypatch.setenv('COLONY_EMBED_QUERY_INSTRUCTION', 'Different: ')
+    monkeypatch.setenv('PACOMIND_EMBED_QUERY_INSTRUCTION', 'Different: ')
     await pipeline.embed_query('neutral question')
     assert requests[-1]['input'] == ['Retrieve: neutral question']
     assert pipeline.index_identity == identity
@@ -245,10 +245,10 @@ async def test_provider_order_identity_and_query_format_are_bound(monkeypatch):
 async def test_migration_api_and_forget_cover_retained_files_without_graph(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    import apsimo.vector as vector_module
-    from apsimo.api.routers import host
+    import pacomind.vector as vector_module
+    from pacomind.api.routers import host
 
-    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(tmp_path))
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     ledger.record_source('turn-a', contact_id='person-a', session_id='s', messages=[{'role':'user', 'content':'Neutral fact'}])
     await legacy(tmp_path, metadata={'source_uri':'turn:turn-a', 'person_id':'person-a'})
@@ -291,10 +291,10 @@ def test_vector_cli_request_matches_current_host_contract(monkeypatch, capsys, c
     import httpx
     import sys
     import time
-    from apsimo import cli
-    from apsimo.api.schemas import host
+    from pacomind import cli
+    from pacomind.api.schemas import host
     monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
-    monkeypatch.setattr(sys, 'argv', ['colony', command, '--batch-size', '32'])
+    monkeypatch.setattr(sys, 'argv', ['pacomind', command, '--batch-size', '32'])
     monkeypatch.setattr(time, 'sleep', lambda _: None)
     accepted, polls = [], []
     def post(url, *, json, **kwargs):

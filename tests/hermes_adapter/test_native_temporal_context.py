@@ -17,7 +17,7 @@ from agent.memory_manager import MemoryManager
 from agent.turn_context import (
  _memory_turn_start_and_prefetch, compose_user_api_content, substitute_api_content)
 from hermes_cli.cli_commands_mixin import _sync_agent_to_session
-import apsimo_memory.provider as provider_module
+import pacomind_memory.provider as provider_module
 home=Path(os.environ['HERMES_HOME']);home.mkdir(exist_ok=True)
 (home/'config.yaml').write_text('plugins: {enabled: []}\n')
 now=[100.0];requests=[]
@@ -34,7 +34,7 @@ def respond(self,request):
 httpx.HTTPTransport.handle_request=respond
 def no_network(*args,**kwargs):raise AssertionError('No network in temporal lifecycle qualification')
 socket.socket.connect=no_network;socket.create_connection=no_network
-provider=provider_module.ColonyMemoryProvider(config={
+provider=provider_module.PacoMindMemoryProvider(config={
  'url':'http://temporal.fixture','api_key':'fixture-key','contact_id':'owner','turn_writer':'disabled'})
 manager=MemoryManager();manager.add_provider(provider)
 manager.initialize_all('conversation-one',platform='cli')
@@ -67,7 +67,7 @@ _sync_agent_to_session(cli,'conversation-two',parent_session_id='compressed',rea
 assert provider._session_id==agent.session_id=='conversation-two'
 assert 'Gap before current turn:' not in render(3713)
 assert 'Gap before current turn: 1s.' in render(3714)
-assert manager.get_provider('apsimo') is provider
+assert manager.get_provider('pacomind') is provider
 assert requests.count('/v1/host/context/temporal')==2,requests
 # Later requests may reuse or refresh this turn's prefetched context. The gap
 # remains its measured interval, never an assertion that the message is 1s old.
@@ -87,11 +87,11 @@ def test_native_reused_provider_temporal_context(artifacts, tmp_path):
     if not os.environ.get('AEVA_HERMES_TEST_PYTHON') and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Use qualified Hermes interpreter for native integration')
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'hermes'), COLONY_HERMES_HOME=str(tmp_path/'hermes'),
+    env.update(HERMES_HOME=str(tmp_path/'hermes'), PACOMIND_HERMES_HOME=str(tmp_path/'hermes'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
-        COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system',
+        PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system',
         HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
+        PACOMIND_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = run_python('-I', '-B', '-c', PROBE, artifacts[3],
         os.environ.get('HERMES_TEST_SOURCE', ''), cwd=tmp_path, env=env)
     assert '"native_request_content": true' in result.stdout

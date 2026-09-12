@@ -1,4 +1,4 @@
-"""Tests for Colony Agent SDK."""
+"""Tests for PacoMind Agent SDK."""
 
 import json
 import tempfile
@@ -17,8 +17,8 @@ if 'websockets' not in sys.modules:
             return MockWebsockets
     sys.modules['websockets'] = MockWebsockets()
 
-from apsimo.agent import AgentClient, AgentConfig
-from apsimo.agent.models import NodeCertificate
+from pacomind.agent import AgentClient, AgentConfig
+from pacomind.agent.models import NodeCertificate
 
 
 class TestAgentConfig:
@@ -29,7 +29,7 @@ class TestAgentConfig:
         config = AgentConfig(
             agent_id="agent-1",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test-agent",
             capabilities=["messaging"],
             is_primary=True,
@@ -45,7 +45,7 @@ class TestAgentConfig:
         config = AgentConfig(
             agent_id="agent-1",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test-agent",
         )
 
@@ -61,10 +61,10 @@ class TestAgentConfig:
         config = AgentConfig(
             agent_id="agent-1",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test-agent",
             node_cert=NodeCertificate(
-                colony_id="colony-1",
+                pacomind_id="pacomind-1",
                 node_id="node-1",
                 signature="sig-123",
                 issued_at="2026-04-25T00:00:00Z",
@@ -84,12 +84,12 @@ class TestAgentClient:
         return AgentConfig(
             agent_id="agent-1",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test-agent",
             websocket_url="ws://localhost:7777/v1/host/agents/agent-1/stream",
             capabilities=["messaging"],
             node_cert=NodeCertificate(
-                colony_id="colony-1",
+                pacomind_id="pacomind-1",
                 node_id="node-1",
                 signature="test-sig",
                 issued_at="2026-04-25T00:00:00Z",
@@ -194,14 +194,14 @@ class TestAgentClientIntegration:
         return AgentConfig(
             agent_id="agent-1",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test-agent",
             websocket_url="ws://localhost:7777/test",
         )
 
     @pytest.mark.asyncio
     async def test_handle_initiative_message(self, config: AgentConfig) -> None:
-        """Test handling initiative message from Colony."""
+        """Test handling initiative message from PacoMind."""
         client = AgentClient(config=config)
 
         received_initiatives = []
@@ -301,7 +301,7 @@ class TestReconnection:
         return AgentConfig(
             agent_id="agent-1",
             node_id="node-1",
-            colony_id="colony-1",
+            pacomind_id="pacomind-1",
             name="test-agent",
             websocket_url="ws://localhost:7777/test",
         )

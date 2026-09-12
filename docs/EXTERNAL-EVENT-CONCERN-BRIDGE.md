@@ -1,8 +1,8 @@
 # External event concern bridge
 
-Colony can reduce the already-durable `cognition.external.*` journal lane into
+PacoMind can reduce the already-durable `cognition.external.*` journal lane into
 scoped concerns without treating an external producer as an authority. This
-bridge is generic Colony behavior. It does not change the host deployment, Hermes, Voice,
+bridge is generic PacoMind behavior. It does not change the host deployment, Hermes, Voice,
 phone, intercom, or Meet code.
 
 The governed path is:
@@ -14,7 +14,7 @@ ExternalEventIntake -> host journal -> ExternalEventConcernReducer
 ```
 
 The reducer has its own `workspace-external-concerns-v1` cursor and receipts in
-`colony-workspace.db`. The ordinary `EventConcernReducer` may skip the same
+`pacomind-workspace.db`. The ordinary `EventConcernReducer` may skip the same
 journal records without consuming them for this reducer. First enablement
 replays the retained journal so reports accepted while the flag was off are
 not silently lost. Retention gaps stop by default.
@@ -98,7 +98,7 @@ cannot hide an eligible ordinary concern.
 
 ## Modes and operation
 
-`COLONY_EXTERNAL_EVENT_CONCERNS=off|shadow|live` defaults to `off`; invalid
+`PACOMIND_EXTERNAL_EVENT_CONCERNS=off|shadow|live` defaults to `off`; invalid
 values fail off.
 
 - `off`: no external journal reduction and no cursor initialization.
@@ -109,7 +109,7 @@ values fail off.
   *current* external mode is not live, even if it was created live or carries
   an older promotion reference.
 
-`COLONY_EXTERNAL_EVENT_CONCERNS_GAP_POLICY=stop|acknowledge` defaults to
+`PACOMIND_EXTERNAL_EVENT_CONCERNS_GAP_POLICY=stop|acknowledge` defaults to
 `stop`. Use `acknowledge` only for an operator-reviewed retention incident; it
 records the missing range before advancing. External-only enablement does not
 suppress the legacy in-memory event compatibility path. When both durable
@@ -118,13 +118,13 @@ legacy third path as before.
 
 ## Canary and rollback
 
-Before a canary, quiesce Colony writers and copy `colony-workspace.db` with its
+Before a canary, quiesce PacoMind writers and copy `pacomind-workspace.db` with its
 WAL/SHM files. Start with the workspace and cognition spine in their existing
 safe deployment modes, then set:
 
 ```text
-COLONY_EXTERNAL_EVENT_CONCERNS=shadow
-COLONY_EXTERNAL_EVENT_CONCERNS_GAP_POLICY=stop
+PACOMIND_EXTERNAL_EVENT_CONCERNS=shadow
+PACOMIND_EXTERNAL_EVENT_CONCERNS_GAP_POLICY=stop
 ```
 
 Verify cursor lag, skipped receipts, owner/subject privacy, restart replay, and
@@ -133,7 +133,7 @@ status exposes receipt dispositions and the consumer's watermark count/latest
 event time, so stale and equal-time conflicts are reviewable without changing
 concern state. No provider or network call is required for that check.
 
-Rollback is flag-first: set `COLONY_EXTERNAL_EVENT_CONCERNS=off` and restart.
+Rollback is flag-first: set `PACOMIND_EXTERNAL_EVENT_CONCERNS=off` and restart.
 Keep the additive cursor, receipt, gap, per-consumer watermark, and concern
 rows for audit; old code names its existing columns and ignores the added
 table. If a full repository rollback is needed, retain the stopped workspace

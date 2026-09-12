@@ -9,7 +9,7 @@ import subprocess
 import pytest
 import yaml
 
-from apsimo import setup
+from pacomind import setup
 
 
 URL = "http://127.0.0.1:7777"
@@ -49,13 +49,13 @@ def test_preserve_nested_values_identity_and_existing_secret(tmp_path, capsys):
         "channels": {"voice": {"enabled": True}},
         "context": {"engine": "default", "limit": 9000},
         "context_engine": "legacy-setting-preserved",
-        "memory": {"provider": "apsimo", "limit": 20, "config": {
+        "memory": {"provider": "pacomind-memory", "limit": 20, "config": {
             "url": URL, "contact_id": "existing-owner", "api_key": "existing-secret",
             "custom": {"retain": ["nested", "values"]},
         }},
-        "plugins": {"enabled": ["unrelated", "apsimo"], "unrelated": {
+        "plugins": {"enabled": ["unrelated", "pacomind"], "unrelated": {
             "routes": {"private": ["one", "two"]}, "secret": "${PRIVATE_KEY}",
-        }, "apsimo": {"url": URL, "contact_id": "existing-owner", "api_key": "${OLD_KEY}"}},
+        }, "pacomind": {"url": URL, "contact_id": "existing-owner", "api_key": "${OLD_KEY}"}},
     }
     raw = "# Preserve this recovery copy\n" + yaml.safe_dump(before, sort_keys=False)
     config_path.write_text(raw)
@@ -63,12 +63,12 @@ def test_preserve_nested_values_identity_and_existing_secret(tmp_path, capsys):
     (home / "SOUL.md").write_text("Existing private identity")
     _write_config(config_path)
     after = yaml.safe_load(config_path.read_text())
-    before["memory"]["provider"] = "apsimo-memory"
+    before["memory"]["provider"] = "pacomind-memory"
     before['hooks'] = {'output_spill': {'max_chars': 65536}}
     assert after == before
     assert (home / "SOUL.md").read_text() == "Existing private identity"
     assert stat.S_IMODE(config_path.stat().st_mode) == 0o640
-    backups = list(home.glob(".config.yaml.colony-backup-*"))
+    backups = list(home.glob(".config.yaml.pacomind-backup-*"))
     assert len(backups) == 1 and backups[0].read_text() == raw
     assert stat.S_IMODE(backups[0].stat().st_mode) == 0o600
     assert "existing-secret" not in capsys.readouterr().out
@@ -104,21 +104,21 @@ def test_canonical_owner_binding_is_preserved_or_conflict_rejected(tmp_path):
     home = tmp_path / "hermes"
     home.mkdir()
     config_path = home / "config.yaml"
-    config_path.write_text("plugins:\n  colony:\n    owner_contact_id: existing-owner\n")
+    config_path.write_text("plugins:\n  pacomind:\n    owner_contact_id: existing-owner\n")
     before = snapshot(home)
     with pytest.raises(ValueError, match="contact bindings disagree"):
         _write_config(config_path, contact_id="other-owner")
     assert snapshot(home) == before
     _write_config(config_path)
     config = yaml.safe_load(config_path.read_text())
-    assert config["plugins"]["apsimo"]["owner_contact_id"] == "existing-owner"
+    assert config["plugins"]["pacomind"]["owner_contact_id"] == "existing-owner"
     assert config["memory"]["config"]["contact_id"] == "existing-owner"
 
 
 def test_native_memory_binding_is_not_silently_redirected(tmp_path):
     home = tmp_path / "hermes"
     home.mkdir()
-    (home / "colony-memory.json").write_text('{"url":"http://other-instance.test","contact_id":"other-owner"}')
+    (home / "pacomind-memory.json").write_text('{"url":"http://other-instance.test","contact_id":"other-owner"}')
     before = snapshot(home)
     with pytest.raises(ValueError, match="endpoint differs"):
         _write_config(home / "config.yaml", contact_id="owner")
@@ -131,21 +131,21 @@ def test_blank_key_uses_private_environment_reference(blank, tmp_path):
     home.mkdir()
     path = home / "config.yaml"
     path.write_text(yaml.safe_dump({"memory": {"config": {"api_key": blank}},
-                                    "plugins": {"apsimo": {"api_key": blank}}}))
+                                    "plugins": {"pacomind": {"api_key": blank}}}))
     _write_config(path, contact_id="owner")
     config = yaml.safe_load(path.read_text())
-    assert config["memory"]["config"]["api_key"] == "${APSIMO_API_KEY}"
-    assert config["plugins"]["apsimo"]["api_key"] == "${APSIMO_API_KEY}"
+    assert config["memory"]["config"]["api_key"] == "${PACOMIND_API_KEY}"
+    assert config["plugins"]["pacomind"]["api_key"] == "${PACOMIND_API_KEY}"
 
 
 @pytest.mark.parametrize("raw", [
     "memory:\n  provider: honcho\n", "memory:\n  provider: mem0\n",
     "[one, two]\n", "memory: scalar\n", "plugins: []\n",
-    "memory:\n  config: []\n", "plugins:\n  colony: false\n",
+    "memory:\n  config: []\n", "plugins:\n  pacomind: false\n",
     "memory: [unterminated\n", "memory: {}\nmemory: {}\n",
     "plugins:\n  private: secret-value\n  private: duplicate\n",
-    "memory:\n  provider: colony-memory\n  config:\n    contact_id: another-owner\n",
-    "memory:\n  provider: colony-memory\n  config:\n    url: https://existing.example\n",
+    "memory:\n  provider: pacomind-memory\n  config:\n    contact_id: another-owner\n",
+    "memory:\n  provider: pacomind-memory\n  config:\n    url: https://existing.example\n",
 ])
 def test_preflight_failure_leaves_every_file_unchanged(raw, tmp_path, capsys):
     home = tmp_path / "hermes"
@@ -181,8 +181,8 @@ def test_failed_atomic_replace_retains_original_and_private_backup(tmp_path, mon
     with pytest.raises(OSError):
         _write_config(config_path, contact_id="owner")
     assert config_path.read_bytes() == original
-    assert not list(tmp_path.glob(".config.yaml.colony-stage-*"))
-    backup, = tmp_path.glob(".config.yaml.colony-backup-*")
+    assert not list(tmp_path.glob(".config.yaml.pacomind-stage-*"))
+    backup, = tmp_path.glob(".config.yaml.pacomind-backup-*")
     assert backup.read_bytes() == original
     assert stat.S_IMODE(backup.stat().st_mode) == 0o600
 
@@ -195,7 +195,7 @@ def test_changed_config_precondition_preserves_newer_writer(tmp_path):
     with pytest.raises(ValueError, match="changed during staging"):
         setup._atomic_hermes_config_write(path, original, updated)
     assert path.read_text() == "model: changed-by-owner\n"
-    assert not list(tmp_path.glob(".config.yaml.colony-*"))
+    assert not list(tmp_path.glob(".config.yaml.pacomind-*"))
 
 
 def test_yaml_alias_does_not_mutate_unrelated_configuration(tmp_path):
@@ -208,7 +208,7 @@ def test_yaml_alias_does_not_mutate_unrelated_configuration(tmp_path):
 
 
 def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch):
-    from apsimo import setup_hermes
+    from pacomind import setup_hermes
     seen = []
     def fail(root_dir, args):
         seen.append((root_dir, args.hermes_home))
@@ -220,13 +220,13 @@ def test_run_init_returns_failure_and_passes_selected_home(tmp_path, monkeypatch
 
 
 def test_cli_threads_home_and_preserves_failure_exit(monkeypatch, tmp_path):
-    from apsimo import cli
+    from pacomind import cli
     selected = str(tmp_path / "chosen")
     def fail_init(root_dir, args):
         assert args.hermes_home == selected
         return 1
     monkeypatch.setattr(setup, "run_init", fail_init)
-    monkeypatch.setattr("sys.argv", ["apsimo", "init", "--agent-harness", "hermes", "--hermes-home", selected])
+    monkeypatch.setattr("sys.argv", ["pacomind", "init", "--agent-harness", "hermes", "--hermes-home", selected])
     with pytest.raises(SystemExit) as exc:
         cli.main()
     assert exc.value.code == 1
@@ -242,13 +242,13 @@ def test_cli_threads_home_and_preserves_failure_exit(monkeypatch, tmp_path):
     ["init", "--skip-model-download"],
 ])
 def test_removed_deployment_commands_exit_before_setup(command, monkeypatch, tmp_path):
-    from apsimo import cli
+    from pacomind import cli
 
     def forbidden(*args, **kwargs):
         pytest.fail("An unsupported command entered setup")
 
     monkeypatch.setattr(setup, "run_init", forbidden)
-    monkeypatch.setattr("sys.argv", ["apsimo", *command])
+    monkeypatch.setattr("sys.argv", ["pacomind", *command])
     before = snapshot(tmp_path)
     with pytest.raises(SystemExit) as exc:
         cli.main()
@@ -257,10 +257,10 @@ def test_removed_deployment_commands_exit_before_setup(command, monkeypatch, tmp
 
 
 def test_start_retains_graph_config_without_managing_its_container(monkeypatch):
-    from apsimo import cli, runtime_logging
+    from pacomind import cli, runtime_logging
     import uvicorn
 
-    monkeypatch.setenv("COLONY_GRAPH_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_GRAPH_ENABLED", "true")
     monkeypatch.setenv("NEO4J_URI", "bolt://configured-graph.invalid:7687")
     monkeypatch.setattr(cli, "_load_dotenv", lambda: None)
     monkeypatch.setattr(cli, "_is_service_loaded", lambda: False)
@@ -269,12 +269,12 @@ def test_start_retains_graph_config_without_managing_its_container(monkeypatch):
     calls = []
 
     def serve(app, **kwargs):
-        assert os.environ["COLONY_GRAPH_ENABLED"] == "true"
+        assert os.environ["PACOMIND_GRAPH_ENABLED"] == "true"
         assert os.environ["NEO4J_URI"] == "bolt://configured-graph.invalid:7687"
         calls.append((app, kwargs["host"], kwargs["port"]))
 
     monkeypatch.setattr(uvicorn, "run", serve)
-    monkeypatch.setattr("sys.argv", ["apsimo", "start", "--host", "127.0.0.1", "--port", "8877"])
+    monkeypatch.setattr("sys.argv", ["pacomind", "start", "--host", "127.0.0.1", "--port", "8877"])
     # The autouse fixture rejects any subprocess, including Docker management.
     cli.main()
-    assert calls == [("apsimo.server:app", "127.0.0.1", 8877)]
+    assert calls == [("pacomind.server:app", "127.0.0.1", 8877)]

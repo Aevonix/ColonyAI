@@ -1,6 +1,6 @@
 """Per-check enforce allowlist + circuit breaker (H6.3).
 
-Enforce ramps one check at a time (COLONY_GUARD_ENFORCE_CHECKS, default
+Enforce ramps one check at a time (PACOMIND_GUARD_ENFORCE_CHECKS, default
 secret_leak,tom2_epistemic since L3.2 — tom2_epistemic is inert without an
 active injection taint, so adding it changed no observable behavior here);
 a rolling-24h block counter trips a breaker that suspends
@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.gate.response_guard import GuardMode, ResponseGuard
-from apsimo.intelligence.relationships.trust_tiers import TrustTier
+from pacomind.gate.response_guard import GuardMode, ResponseGuard
+from pacomind.intelligence.relationships.trust_tiers import TrustTier
 
 SECRET = "the ssn is 123-45-6789"               # trips secret_leak (PII scan)
 DISCLOSURE = "his home address is on file"      # trips disclosure_tier at group_guest
@@ -25,7 +25,7 @@ def _guard():
 
 @pytest.mark.asyncio
 async def test_default_allowlist_blocks_only_secret_leak(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     guard = _guard()
     r1 = await guard.evaluate(surface="text_chat", response_text=SECRET,
                               trust_tier=TrustTier.GROUP_GUEST,
@@ -44,7 +44,7 @@ async def test_default_allowlist_blocks_only_secret_leak(monkeypatch):
 @pytest.mark.asyncio
 async def test_allowlist_all_restores_full_enforcement(monkeypatch):
     """Flag-off regression lock: =all is the legacy every-check enforce."""
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
     guard = _guard()
     r = await guard.evaluate(surface="text_chat", response_text=DISCLOSURE,
                              trust_tier=TrustTier.GROUP_GUEST,
@@ -54,7 +54,7 @@ async def test_allowlist_all_restores_full_enforcement(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shadow_never_blocks_regardless_of_allowlist(monkeypatch):
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
     guard = ResponseGuard(default_mode=GuardMode.SHADOW)
     r = await guard.evaluate(surface="text_chat", response_text=SECRET,
                              trust_tier=TrustTier.GROUP_GUEST,
@@ -65,8 +65,8 @@ async def test_shadow_never_blocks_regardless_of_allowlist(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_breaker_trips_after_n_blocks(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
-    monkeypatch.setenv("COLONY_GUARD_TRIP_BLOCKS", "3")
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_TRIP_BLOCKS", "3")
     guard = _guard()
     for _ in range(3):
         r = await guard.evaluate(surface="text_chat", response_text=SECRET, target_gateway="rcs")
@@ -87,9 +87,9 @@ async def test_breaker_trips_after_n_blocks(monkeypatch):
 @pytest.mark.asyncio
 async def test_breaker_off_flag_keeps_enforcing(monkeypatch):
     """Flag-off regression lock: BREAKER=off never suspends suppression."""
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
-    monkeypatch.setenv("COLONY_GUARD_BREAKER", "off")
-    monkeypatch.setenv("COLONY_GUARD_TRIP_BLOCKS", "1")
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_BREAKER", "off")
+    monkeypatch.setenv("PACOMIND_GUARD_TRIP_BLOCKS", "1")
     guard = _guard()
     for _ in range(3):
         r = await guard.evaluate(surface="text_chat", response_text=SECRET, target_gateway="rcs")
@@ -99,8 +99,8 @@ async def test_breaker_off_flag_keeps_enforcing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_trip_blocks_zero_disables_tripping(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
-    monkeypatch.setenv("COLONY_GUARD_TRIP_BLOCKS", "0")
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_TRIP_BLOCKS", "0")
     guard = _guard()
     for _ in range(5):
         r = await guard.evaluate(surface="text_chat", response_text=SECRET, target_gateway="rcs")

@@ -1,7 +1,7 @@
 # Bounded Approval Authority
 
-Colony's approval ledger is transport-neutral. A host may collect a decision
-from a phone, web console, CLI, or another trusted adapter, but Colony accepts
+PacoMind's approval ledger is transport-neutral. A host may collect a decision
+from a phone, web console, CLI, or another trusted adapter, but PacoMind accepts
 authority only from the authenticated API principal. Body fields such as
 `approved_by` and `rejected_by` are deprecated compatibility inputs and are
 ignored.
@@ -9,13 +9,13 @@ ignored.
 ## Durable model
 
 A gated queue job is first committed as an unclaimable approval-held row.
-Only then does Colony materialize its `ApprovalRequest` or consume an exact
+Only then does PacoMind materialize its `ApprovalRequest` or consume an exact
 bounded grant, followed by the queue transition. This queue-first ordering
 means a process crash can leave a safe `BLOCKED` row for scheduler repair but
 can never leave a prompt or spent grant without a canonical job. The job
 remains `BLOCKED` unless direct authority or an exact grant closes the gate.
-Colony records the request in
-`$COLONY_STATE_DIR/approval_authority.db` with:
+PacoMind records the request in
+`$PACOMIND_STATE_DIR/approval_authority.db` with:
 
 - the exact job ID and canonical action digest;
 - a canonical queue job ID matching
@@ -23,7 +23,7 @@ Colony records the request in
   approval ledger can change;
 - a server-derived scope containing job type, registered action, risk, and
   hashes of required action constraints;
-- an immutable, bounded `ColonyApprovalPresentationV1` containing redacted
+- an immutable, bounded `PacoMindApprovalPresentationV1` containing redacted
   summary, action, risk/effect, target, capabilities, deadline,
   reversibility, and hashed constraints (never the raw job payload or context
   references); owner display text also replaces complete or unterminated PEM
@@ -51,8 +51,8 @@ from `BLOCKED` to `QUEUED`; a retry of the same immutable action does not spend
 a second use.
 
 The deployment-wide envelope is configured with
-`COLONY_GRANT_MAX_TTL_SECONDS` (default `2592000`) and
-`COLONY_GRANT_MAX_USES` (default `100`). A TTL integer >= 60 seconds and a use
+`PACOMIND_GRANT_MAX_TTL_SECONDS` (default `2592000`) and
+`PACOMIND_GRANT_MAX_USES` (default `100`). A TTL integer >= 60 seconds and a use
 integer >= 1 set finite ceilings and preserve validation-time rejection above
 those limits. The exact, case-insensitive literal `unlimited` is the only
 standing sentinel: it removes expiry or the use cap for grants issued while
@@ -60,11 +60,11 @@ that envelope is active. An empty, unrecognized, zero, negative, or otherwise
 unparseable value refuses sidecar startup.
 Standing selection is logged at warning level, exposed by
 `GET /v1/host/autonomy/posture`, and reported as a distinct WARN by
-`colony doctor`.
+`pacomind doctor`.
 
 Changing a standing setting back to finite affects future issuance only; it
 does not rewrite an existing owner decision. The posture includes active
-standing-grant counts, and `colony doctor` continues to WARN until those
+standing-grant counts, and `pacomind doctor` continues to WARN until those
 persisted grants terminate through a remaining finite expiry/use cap or are
 explicitly revoked.
 
@@ -111,7 +111,7 @@ lifecycle, or attestation authority. The canonical endpoints are:
 
 `GET /approvals/requests` is an administrative ledger view filtered to
 requests that still own a canonical queue job. It must not be used for bridge
-discovery because other Colony subsystems can share the authority store.
+discovery because other PacoMind subsystems can share the authority store.
 
 Blocked discovery returns a JSON list. Results are
 filtered to approval-held jobs, emit only canonical IDs, and are ordered by
@@ -126,7 +126,7 @@ lower ID is discovered on the next no-cursor poll.
 
 Pre-contract blocked rows with noncanonical IDs are never emitted or silently
 treated as executable approvals. They are counted, after applying the same
-`task_type` filter, in `X-Colony-Blocked-Legacy-Count`. A nonzero count makes
+`task_type` filter, in `X-PacoMind-Blocked-Legacy-Count`. A nonzero count makes
 bridge readiness degraded until those rows are reconciled offline; GET remains
 strictly read-only and never rewrites or deletes the legacy inventory.
 
@@ -149,9 +149,9 @@ request's exact server-owned scope. Any supplied difference is rejected.
 
 ## Host bridge contract
 
-Colony owns the one canonical request. The host may mirror it into a short-lived
+PacoMind owns the one canonical request. The host may mirror it into a short-lived
 phone or Operator Deck challenge, but must not mint a second approval identity
-or wait for a second approval. The mirror remains bound to Colony's canonical
+or wait for a second approval. The mirror remains bound to PacoMind's canonical
 `request_id` and `expires_at` (up to the default 24-hour lifetime); it cannot
 extend or replace either. Operator Deck decisions still require a fresh
 authenticated OperatorSession, and phone decisions require the exact attested
@@ -159,7 +159,7 @@ code/reply contract. Shorter reissuable challenge windows are optional future
 hardening, not part of this bridge contract.
 
 `GET /approvals/jobs/{job_id}` returns
-`ColonyApprovalAuthorizationProjectionV1`. The host may import authority only when
+`PacoMindApprovalAuthorizationProjectionV1`. The host may import authority only when
 all applicable job, action, scope, binding, presentation, and request digests
 match their canonical records, the SHA-256 over canonical JSON after removing
 `projection_digest` recomputes exactly, and `authorization.status` is
@@ -174,7 +174,7 @@ match their canonical records, the SHA-256 over canonical JSON after removing
 `kind=request`, `kind=none`, `missing_source_request`, `invalid_binding`, or
 `invalid_provenance` is not authority. Queue tags and caller/body claims are
 never bridge evidence. The projection includes the redacted
-`ColonyApprovalPresentationV1`, not the raw queue payload.
+`PacoMindApprovalPresentationV1`, not the raw queue payload.
 
 The projection also binds the current strictly parsed `authority_mode` and a
 bounded `queue_authority_state` (`job_status`, `hold_kind`, and
@@ -186,7 +186,7 @@ has not committed. Effects-on consumers require current `enforce` mode plus
 exact scoped decision evidence.
 
 The historical `/queue/jobs/{id}/approve` and `/reject` endpoints remain as
-wrappers. In the default `COLONY_APPROVAL_AUTHORITY_MODE=shadow` they accept
+wrappers. In the default `PACOMIND_APPROVAL_AUTHORITY_MODE=shadow` they accept
 legacy traffic, derive the actor from its credential, and record whether that
 credential would pass enforcement. Under the default envelope,
 `{"always": true}` creates a seven-day, five-use exact-scope grant. It becomes
@@ -199,7 +199,7 @@ operator surfaces use `approvals:read`; grant revokers use
 `approvals:manage`. Approval routes always map to those exact scopes, including
 in shadow, so the bridge never needs generic API fallback. After every consumer
 is observed using the new request/digest fields, set
-`COLONY_APPROVAL_AUTHORITY_MODE=enforce`. In enforcement mode, the middleware
+`PACOMIND_APPROVAL_AUTHORITY_MODE=enforce`. In enforcement mode, the middleware
 requires the exact approval scope and the decision handler rejects anonymous,
 legacy-global, missing-request-ID, missing-digest, and missing-decision-ID
 traffic.
@@ -211,7 +211,7 @@ authorize queue jobs.
 
 ## Backup and rollback
 
-Back up `approval_authority.db` with the other Colony SQLite stores before an
+Back up `approval_authority.db` with the other PacoMind SQLite stores before an
 enforcement cutover. A code rollback may keep the database in place; older
 versions ignore it. If rolling forward again, the monotonic decision and grant
 ledgers resume without replaying spent uses. Keep the old JSON file during the

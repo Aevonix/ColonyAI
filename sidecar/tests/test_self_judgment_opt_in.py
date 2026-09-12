@@ -1,7 +1,7 @@
 """Unqualified opinions stay inactive without losing sources or owner controls."""
 import pytest
 
-from apsimo.self_model.perspective import SelfPerspective
+from pacomind.self_model.perspective import SelfPerspective
 from test_self_judgments import Processor, judgments, run_row, source
 
 
@@ -10,9 +10,9 @@ from test_self_judgments import Processor, judgments, run_row, source
 async def test_only_exact_opt_in_enqueues_or_calls(judgments, monkeypatch, setting):
     state, _ = judgments
     if setting is None:
-        monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED')
+        monkeypatch.delenv('PACOMIND_SELF_JUDGMENTS_ENABLED')
     else:
-        monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', setting)
+        monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', setting)
     source(state)
     processor = Processor()
     assert state.enabled is False
@@ -31,7 +31,7 @@ async def test_disabled_pending_work_is_held_unchanged_and_resumes(judgments, mo
     state, _ = judgments
     source(state)
     before = run_row(state, 'first')
-    monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED')
+    monkeypatch.delenv('PACOMIND_SELF_JUDGMENTS_ENABLED')
     processor = Processor()
     assert not await state.process_one(processor)
     assert processor.requests == []
@@ -39,7 +39,7 @@ async def test_disabled_pending_work_is_held_unchanged_and_resumes(judgments, mo
     snapshot = SelfPerspective(state.ledger, owner_id='contact-a').status()
     assert snapshot['judgments_enabled'] is False
     assert snapshot['judgment_processing'][0]['held'] is True
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     assert await state.process_one(processor)
     assert len(processor.requests) == 1
     assert state.revisions()[0]['stance'] in state.brief('local work checkpoints')
@@ -52,7 +52,7 @@ async def test_disabled_history_withdrawal_and_reconsideration_remain_available(
     source(state)
     await state.process_one(Processor())
     view = state.revisions()[0]
-    monkeypatch.delenv('COLONY_SELF_JUDGMENTS_ENABLED')
+    monkeypatch.delenv('PACOMIND_SELF_JUDGMENTS_ENABLED')
     assert state.revisions() == [view]
     assert state.revisions(history=True)[0]['id'] == view['id']
     source_ids = []
@@ -72,7 +72,7 @@ async def test_disabled_history_withdrawal_and_reconsideration_remain_available(
     assert not await state.process_one(processor)
     assert run_row(state, 'control') == before and processor.requests == []
     assert state.processing()[0]['held'] is True
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     assert await state.process_one(processor)
     assert len(processor.requests) == 1
     assert run_row(state, 'control')['disposition'] == 'revised'

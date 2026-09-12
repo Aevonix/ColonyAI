@@ -1,4 +1,4 @@
-"""World-context query mode (U18): COLONY_WORLD_CONTEXT_QUERY=message/entities.
+"""World-context query mode (U18): PACOMIND_WORLD_CONTEXT_QUERY=message/entities.
 
 The Related Entities context section used to FTS the WHOLE message against the
 world model — sentence noise in, noise entities out. `entities` mode extracts
@@ -12,7 +12,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
+from pacomind.api.routers import host as host_mod
 
 
 class _FakeWorldStore:
@@ -35,7 +35,7 @@ _MSG = "did Robin Sanchez ever reply about the Falcon Initiative rollout?"
 @pytest.mark.asyncio
 async def test_default_mode_is_single_whole_message_call(monkeypatch):
     """Regression lock: message mode (default) = legacy single FTS call."""
-    monkeypatch.delenv("COLONY_WORLD_CONTEXT_QUERY", raising=False)
+    monkeypatch.delenv("PACOMIND_WORLD_CONTEXT_QUERY", raising=False)
     store = _FakeWorldStore(by_query={_MSG: [_ent("e1", "Robin Sanchez")]})
     monkeypatch.setattr(host_mod, "_world_store", store)
     out = await host_mod._world_context_entities(_MSG, limit=5)
@@ -45,7 +45,7 @@ async def test_default_mode_is_single_whole_message_call(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_entities_mode_ors_per_candidate_lookups(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_CONTEXT_QUERY", "entities")
+    monkeypatch.setenv("PACOMIND_WORLD_CONTEXT_QUERY", "entities")
     store = _FakeWorldStore(by_query={
         "Robin Sanchez": [_ent("e1", "Robin Sanchez")],
         "Falcon Initiative": [_ent("e2", "Falcon Initiative")],
@@ -62,7 +62,7 @@ async def test_entities_mode_ors_per_candidate_lookups(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_entities_mode_dedupes_and_caps(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_CONTEXT_QUERY", "entities")
+    monkeypatch.setenv("PACOMIND_WORLD_CONTEXT_QUERY", "entities")
     dup = _ent("e1", "Robin Sanchez")
     store = _FakeWorldStore(by_query={
         "Robin Sanchez": [dup, dup],
@@ -77,7 +77,7 @@ async def test_entities_mode_dedupes_and_caps(monkeypatch):
 @pytest.mark.asyncio
 async def test_entities_mode_falls_back_on_empty_extraction(monkeypatch):
     """No proper nouns in the message -> the legacy whole-message call runs."""
-    monkeypatch.setenv("COLONY_WORLD_CONTEXT_QUERY", "entities")
+    monkeypatch.setenv("PACOMIND_WORLD_CONTEXT_QUERY", "entities")
     msg = "hey, any update on that thing from earlier?"
     store = _FakeWorldStore(by_query={msg: [_ent("e9", "fallback")]})
     monkeypatch.setattr(host_mod, "_world_store", store)
@@ -88,7 +88,7 @@ async def test_entities_mode_falls_back_on_empty_extraction(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_entities_mode_falls_back_on_extractor_error(monkeypatch):
-    monkeypatch.setenv("COLONY_WORLD_CONTEXT_QUERY", "entities")
+    monkeypatch.setenv("PACOMIND_WORLD_CONTEXT_QUERY", "entities")
     store = _FakeWorldStore(by_query={_MSG: [_ent("e9", "fallback")]})
     monkeypatch.setattr(host_mod, "_world_store", store)
 

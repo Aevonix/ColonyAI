@@ -3,9 +3,9 @@ requires = ["setuptools>=77", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "apsimo-hermes"
-version = "1.4.8"
-description = "Native Hermes general and memory adapters for Apsimo"
+name = "pacomind-hermes"
+version = "1.5.0"
+description = "Native Hermes general and memory adapters for PacoMind"
 readme = "docs/HERMES-ADAPTER.md"
 requires-python = ">=3.11,<3.14"
 license = "MIT"
@@ -17,23 +17,23 @@ test = ["build>=1.2", "pytest>=8", "setuptools>=77", "wheel"]
 native-memory = ["nemo-relay>=0.8.3,<0.9"]
 
 [project.entry-points."hermes_agent.plugins"]
-apsimo = "apsimo_hermes"
+pacomind = "pacomind_hermes"
 
 [project.entry-points."hermes_agent.memory_providers"]
-apsimo-memory = "apsimo_memory"
+pacomind-memory = "pacomind_memory"
 
 [tool.setuptools]
-packages = ["apsimo_hermes", "apsimo_hermes.apsimo_hostworker", "apsimo_memory"]
+packages = ["pacomind_hermes", "pacomind_hermes.pacomind_hostworker", "pacomind_memory"]
 include-package-data = false
 
 [tool.setuptools.package-dir]
-apsimo_hermes = "plugins/hermes-plugin"
-"apsimo_hermes.apsimo_hostworker" = "plugins/hermes-plugin/apsimo_hostworker"
-apsimo_memory = "plugins/apsimo-memory"
+pacomind_hermes = "plugins/hermes-plugin"
+"pacomind_hermes.pacomind_hostworker" = "plugins/hermes-plugin/pacomind_hostworker"
+pacomind_memory = "plugins/pacomind-memory"
 
 [tool.setuptools.package-data]
-apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md", "bundled_skills/*/SKILL.md"]
-apsimo_memory = ["plugin.yaml", "SKILL.md"]
+pacomind_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md", "bundled_skills/*/SKILL.md"]
+pacomind_memory = ["plugin.yaml", "SKILL.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests/hermes_adapter"]

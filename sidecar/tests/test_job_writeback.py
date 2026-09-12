@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.task_queue.models import JobResult, JobStatus
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.task_queue.models import JobResult, JobStatus
 
 
 def _job(job_id="j1", status=JobStatus.COMPLETED, action="coding_check_ci",
@@ -52,7 +52,7 @@ async def test_completed_job_writes_memory_and_closes_initiative():
     kwargs = graph.store_memory.await_args.kwargs
     assert "coding_check_ci" in kwargs["content"]
     assert kwargs["memory_type"] == "episodic"
-    assert kwargs["source_uri"] == "colony://jobs/j1"
+    assert kwargs["source_uri"] == "pacomind://jobs/j1"
     store.complete.assert_called_once()
     # Terminal jobs are tagged via merge_job_tags (update_job_status refuses
     # terminal jobs, which would re-process this job every cycle forever).
@@ -170,7 +170,7 @@ async def test_merge_job_tags_persists_on_terminal_job(tmp_path):
     before merge_job_tags existed the ``memory_synced`` marker never persisted
     and every finished agent_action job was re-processed every cycle forever.
     """
-    from apsimo.task_queue.queue_manager import TaskQueueManager
+    from pacomind.task_queue.queue_manager import TaskQueueManager
 
     TaskQueueManager._instance = None
     mgr = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")
@@ -212,8 +212,8 @@ async def test_writeback_phase_is_idempotent_across_runs(tmp_path):
     """
     from datetime import datetime, timezone
 
-    from apsimo.task_queue.models import WorkerCapabilities
-    from apsimo.task_queue.queue_manager import TaskQueueManager
+    from pacomind.task_queue.models import WorkerCapabilities
+    from pacomind.task_queue.queue_manager import TaskQueueManager
 
     TaskQueueManager._instance = None
     mgr = await TaskQueueManager.initialize(db_path=tmp_path / "q.db")

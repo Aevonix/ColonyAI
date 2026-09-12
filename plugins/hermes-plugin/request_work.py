@@ -11,9 +11,9 @@ import re
 import time
 
 
-_OPEN = '[colony-work-request-v1]'
-_CLOSE = '[/colony-work-request-v1]'
-_BLOCK = re.compile(r'(?:\n\n)?\[colony-work-request-v1\].*?\[/colony-work-request-v1\]', re.S)
+_OPEN = '[pacomind-work-request-v1]'
+_CLOSE = '[/pacomind-work-request-v1]'
+_BLOCK = re.compile(r'(?:\n\n)?\[pacomind-work-request-v1\].*?\[/pacomind-work-request-v1\]', re.S)
 _UNAVAILABLE = ('Current shared work is unavailable for this model request. '
                 'The turn-start snapshot may be stale; this does not establish '
                 'that previously observed work has stopped.')
@@ -26,7 +26,7 @@ def _owned_message(row, opening=_OPEN, closing=_CLOSE):
             and row['content'].endswith('\n' + closing))
 
 
-def replace_context(request, text=None, *, api_mode='', marker='colony-work-request-v1'):
+def replace_context(request, text=None, *, api_mode='', marker='pacomind-work-request-v1'):
     """Replace our request-only block without changing user or tool content."""
     result = dict(request)
     opening, closing = '[' + marker + ']', '[/' + marker + ']'
@@ -89,7 +89,7 @@ class RequestWork:
                 or scope.platform in ('cron', 'background_review')):
             return replace_context(request, api_mode=api_mode), None
         session = json.dumps(scope.session_id, ensure_ascii=True).replace(
-            _CLOSE, r'\u005b/colony-work-request-v1\u005d')
+            _CLOSE, r'\u005b/pacomind-work-request-v1\u005d')
         identity = f'Current request session: {session}.\n'
         text = identity + _UNAVAILABLE
         provenance = None
@@ -102,7 +102,7 @@ class RequestWork:
             response.raise_for_status()
             value = response.json()
             observed = value.get('observed_at')
-            if (value.get('schema') != 'ColonyRequestWorkV1'
+            if (value.get('schema') != 'PacoMindRequestWorkV1'
                     or not isinstance(value.get('text'), str)
                     or not 1 <= len(value['text']) <= 4000
                     or type(observed) not in (int, float) or not math.isfinite(observed)

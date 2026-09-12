@@ -5,7 +5,7 @@ import importlib
 
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.turns import TurnIdempotencyLedger
 from test_hermes_turn_outbox import _Client, _Context, _load_plugin
 
 
@@ -16,12 +16,12 @@ SAFE_ANSWER = "Those details are unavailable. Please provide them again."
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
-    module = _load_plugin("colony_hermes_survivor_delivery_test")
+    module = _load_plugin("pacomind_hermes_survivor_delivery_test")
     _Client.instances.clear()
-    monkeypatch.setattr(module, "ColonyClient", _Client)
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    monkeypatch.setattr(module, "PacoMindClient", _Client)
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     database = tmp_path / "outbox.sqlite3"
     context = _Context(database, drain_timeout_ms=250)
     module.register(context)
@@ -95,7 +95,7 @@ def test_failed_or_cancelled_survivor_delivery_remains_recoverable(runtime, monk
 def test_checkpoint_reports_original_erased_and_delivers_its_survivor(runtime, monkeypatch, tmp_path):
     module, _context, outbox, client = runtime
     evidence = importlib.import_module(module.__name__ + ".evidence")
-    monkeypatch.setattr(evidence, "ColonyClient", lambda **kw: client)
+    monkeypatch.setattr(evidence, "PacoMindClient", lambda **kw: client)
     messages = [{"role": "user", "content": QUESTION},
                 {"role": "assistant", "content": SAFE_ANSWER}]
     result = evidence.checkpoint(messages, session_id="session-1", contact_id="cid-owner",

@@ -3,9 +3,9 @@ import json
 
 import pytest
 
-from apsimo.beliefs.source_claims import validated_claims
-from apsimo.beliefs.source_time import source_event_time
-from apsimo.memory.recall import pack_memory_context, source_candidates
+from pacomind.beliefs.source_claims import validated_claims
+from pacomind.beliefs.source_time import source_event_time
+from pacomind.memory.recall import pack_memory_context, source_candidates
 from test_source_claim_projection import claim
 
 

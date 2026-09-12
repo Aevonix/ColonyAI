@@ -9,8 +9,8 @@ import sqlite3
 
 import pytest
 
-from apsimo.commitments.local_work import LocalWork
-from apsimo.turns.local_work import local_work_view
+from pacomind.commitments.local_work import LocalWork
+from pacomind.turns.local_work import local_work_view
 from test_accepted_local_work import body, local_api, native_run, post
 
 
@@ -20,11 +20,11 @@ HEADERS = {'Authorization': 'Bearer writer-key'}
 
 @pytest.fixture
 def native_api(local_api, monkeypatch):
-    monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'kanban')
-    monkeypatch.setenv('COLONY_LOCAL_WORK_BOARD', 'colony-drafts')
-    monkeypatch.setenv('COLONY_LOCAL_WORK_PROFILE', 'colony-drafts')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_EXECUTOR', 'kanban')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_BOARD', 'pacomind-drafts')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_PROFILE', 'pacomind-drafts')
     native = local_api[-1]
-    board = native/'kanban/boards/colony-drafts/kanban.db'
+    board = native/'kanban/boards/pacomind-drafts/kanban.db'
     board.parent.mkdir(parents=True)
     with sqlite3.connect(board) as db:
         db.execute('''CREATE TABLE tasks(
@@ -45,14 +45,14 @@ def accept(native_api, tmp_path, **changes):
 
 
 def task(board, initiative_id, identifier='task-one', **changes):
-    row = {'id': identifier, 'created_by': 'colony-local-work',
-           'idempotency_key': 'colony-local-work:'+initiative_id,
-           'tenant': 'cid-owner', 'assignee': 'colony-drafts',
+    row = {'id': identifier, 'created_by': 'pacomind-local-work',
+           'idempotency_key': 'pacomind-local-work:'+initiative_id,
+           'tenant': 'cid-owner', 'assignee': 'pacomind-drafts',
            'status': 'ready', 'current_run_id': None, 'claim_lock': None}
     row.update(changes)
     with sqlite3.connect(board) as db:
         db.execute('INSERT INTO tasks VALUES(?,?,?,?,?,?,?,?)', tuple(row.values()))
-    return {'contact_id': 'cid-owner', 'native_board': 'colony-drafts',
+    return {'contact_id': 'cid-owner', 'native_board': 'pacomind-drafts',
             'native_task_id': identifier}
 
 
@@ -102,9 +102,9 @@ def test_owner_acceptance_selects_backend_on_server_and_replays_once(native_api,
     assert accepted['context']['execution_backend'] == 'kanban'
     assert accepted['context']['accepted_principal_id'] == 'host'
     assert accept(native_api, tmp_path) == accepted
-    monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'cron')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_EXECUTOR', 'cron')
     assert accept(native_api, tmp_path) == accepted
-    monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'unknown')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_EXECUTOR', 'unknown')
     assert post(api, path, value).status_code == 503
     with sqlite3.connect(initiatives._db_path) as db:
         assert db.execute('SELECT count(*) FROM initiatives').fetchone()[0] == 1
@@ -112,7 +112,7 @@ def test_owner_acceptance_selects_backend_on_server_and_replays_once(native_api,
 
 
 @pytest.mark.parametrize('changes', [
-    {'created_by': 'unrelated'}, {'idempotency_key': 'colony-local-work:other'},
+    {'created_by': 'unrelated'}, {'idempotency_key': 'pacomind-local-work:other'},
     {'tenant': 'guest'}, {'assignee': 'another-profile'},
 ])
 def test_native_task_binding_requires_accepted_provenance(native_api, tmp_path, changes):
@@ -234,7 +234,7 @@ def test_parent_cancellation_stops_binding_and_result_acceptance(native_api, tmp
 
 def test_pending_legacy_migrates_once_while_active_legacy_drains(native_api, tmp_path, monkeypatch):
     api, commitments, initiatives, _, _, _ = native_api
-    monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'cron')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_EXECUTOR', 'cron')
     active = accept(native_api, tmp_path, turn_id='active-legacy')
     claimed = post(api, ROOT+'/local-work/next', native_run()).json()['assignment']
     assert claimed['id'] == active['id']
@@ -243,7 +243,7 @@ def test_pending_legacy_migrates_once_while_active_legacy_drains(native_api, tmp
     second = commitments.create('cid-owner', 'Compare another selected repair')
     waiting = post(api, ROOT+'/'+second['id']+'/local-draft',
                    {**body(tmp_path), 'turn_id':'waiting-legacy'}).json()
-    monkeypatch.setenv('COLONY_LOCAL_WORK_EXECUTOR', 'kanban')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_EXECUTOR', 'kanban')
     migrated = pending(api)
     assert migrated['legacy_in_flight'] == 1
     assert [item['id'] for item in migrated['items']] == [waiting['id']]

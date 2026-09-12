@@ -5,11 +5,11 @@ import sqlite3
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.beliefs.source_claims import validated_claims
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.idempotency import source_message_hash
-from apsimo.turns.source_vectors import SourceVectors
+from pacomind.beliefs.source_claims import validated_claims
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.idempotency import source_message_hash
+from pacomind.turns.source_vectors import SourceVectors
 from test_turn_source_evidence import source_app
 
 
@@ -36,12 +36,12 @@ async def recalled(client, query):
         'context': {'contact_id': 'contact-a', 'session_id': 'later'},
         'incoming_message': {'role': 'user', 'content': query}})
     assert response.status_code == 200, response.text
-    return next((row for row in response.json()['sections'] if row['id'] == 'colony-memory'), None)
+    return next((row for row in response.json()['sections'] if row['id'] == 'pacomind-memory'), None)
 
 
 @pytest.mark.asyncio
 async def test_partial_erase_preserves_independent_atomic_user_claim(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     async def no_semantic_request(*args, **kwargs):
         return [], []
     monkeypatch.setattr(SourceVectors, 'search', no_semantic_request)
