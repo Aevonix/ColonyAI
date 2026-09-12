@@ -2428,7 +2428,8 @@ async def context_assemble(
                 contact_id=body.context.contact_id, session_id=body.context.session_id,
                 vector_store=get_store(), embedding_pipeline=get_pipeline())
             # Existing graph input remains caller-owned until its retirement.
-            erased_filter = getattr(_graph, "_filter_erased_source_memories", None)
+            erased_filter = (getattr(_graph, "_filter_erased_source_memories", None)
+                             if not _canonical_only else None)
             if not _canonical_only and callable(erased_filter):
                 beliefs = await erased_filter(beliefs)
             contact_tz = None
@@ -2449,7 +2450,8 @@ async def context_assemble(
                 sections.append(ContextSection(
                     id="colony-memory", title="Relevant Memories", body=packet.content,
                     priority=90, citations=packet.source_refs or None))
-                record_use = getattr(_graph, "record_recall_use", None)
+                record_use = (getattr(_graph, "record_recall_use", None)
+                              if not _canonical_only else None)
                 if not _canonical_only and callable(record_use):
                     record_use(packet.selected)
         except Exception as exc:
