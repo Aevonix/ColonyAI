@@ -7,6 +7,8 @@ declared elapsed deadline and separate cleanup allowance. It uses the recorded
 Hermes interpreter, retains first failures and records whether its owned process
 stopped. An incomplete cleanup prevents later cases from running. This suite
 tests a grounded chat case; it does not qualify channels, tools or recollection.
+The isolated profile preserves native timeout inheritance, and runtime identity
+covers the selected Hermes package sources used to construct and route the run.
 
 `pacomind init --model-config PATH` preserves a supplied private model pool,
 function and task roles, capabilities, credentials, request settings and limits.
@@ -18,6 +20,11 @@ Source dates now recognize literal full English month names and explicit UTC
 clocks. Calendar days remain distinct from instants, and ambiguous or nonexistent
 local clock times remain unresolved. This fixes date interpretation after source
 extraction; it does not fix model extraction timeouts or establish answer quality.
+
+Initial recollection uses the existing bounded work summary, prioritizing the
+current conversation and linked work. It retains source references and unknown
+states while excluding full diagnostic reports and task-input excerpts. Detailed
+work remains available through the existing readers.
 
 Phase 1 validation remains open. These changes do not establish improved model
 performance or complete installation and ordinary-use acceptance.
