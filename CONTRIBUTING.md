@@ -8,8 +8,8 @@ Apsimo is Python-only (the former TypeScript/npm plugin was removed along with
 OpenClaw support in v0.21.14).
 
 ```bash
-git clone https://github.com/Aevonix/ColonyAI.git
-cd ColonyAI/sidecar
+git clone https://github.com/Aevonix/ApsimoAGI.git
+cd ApsimoAGI/sidecar
 pip install -e ".[dev]"
 ```
 

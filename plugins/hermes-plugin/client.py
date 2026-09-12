@@ -623,6 +623,15 @@ def redact_source_payload(payload: Mapping[str, Any], rules: Sequence[Mapping[st
         return None
     session = str(original.get("session_id") or "")
     hashes = {value for rule in rules if rule["session_id"] == session for value in rule["message_hashes"]}
+    if original.get('observation') is not None:
+        observation = original['observation']
+        refs = [observation['origin'], *observation.get('sources', [])]
+        if any(ref.get('source_id') == rule.get('source_turn_id', rule['turn_id'])
+                and (rule.get('whole_source', True) or ref.get('source_version') == rule.get('source_version'))
+                for ref in refs for rule in rules):
+            return None
+        message = {'role': 'tool', 'content': observation['content']}
+        return None if source_message_hash(session, message) in hashes else original
     messages = original.get("checkpoint_messages")
     if messages is None:
         messages = [{"role": role, "content": original[key]} for role, key in (("user", "user_message"), ("assistant", "assistant_message")) if original.get(key)]
