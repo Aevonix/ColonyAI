@@ -1,6 +1,6 @@
 ---
 name: apsimo-deep-research
-description: Investigate complex questions across sources and produce a cited decision report. Use for deep research, literature reviews, or evidence-based comparisons; skip simple factual lookups.
+description: Deep research, literature reviews and evidence comparisons.
 ---
 
 # Deep research

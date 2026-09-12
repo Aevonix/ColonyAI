@@ -48,14 +48,16 @@ through `hermes_agent.memory_providers`. Only the canonical `apsimo_hermes` and
 `apsimo_memory` packages are shipped. It maps the source files in
 `plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
 Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
-included in the adapter's private catalog package. The legacy source installer forwards to the guided, profile-aware installer.
+included in the adapter's private catalog package. The source installer forwards
+to the guided, profile-aware installer.
 
-## Bundled research skill
+## Bundled skills
 
-The adapter wheel includes `apsimo-deep-research`, an original research workflow
-for cited investigations and decision reports. It uses the available research
-tools without selecting a model or provider. New guided `apsimo init` attachments
-install it into the selected profile's native skill catalog.
+The adapter wheel includes `apsimo-deep-research` for cited investigations and
+decision reports, and `apsimo-skill-creator` for creating useful, concise Hermes
+skills. Both use the deployment's available tools without selecting a model or
+provider. New guided `apsimo init` attachments install them into the selected
+profile's native skill catalog.
 
 For an existing Hermes profile, install or explicitly refresh the bundled copy
 without instance setup, inference or configuration changes:

@@ -1,5 +1,24 @@
 # Changelog
 
+## v1.4.5 - bundled skills and current instructions
+
+The adapter includes Deep Research and Skill Creator workflows. Guided setup
+installs them into the selected Hermes profile; `apsimo init --skills-only`
+installs or refreshes owned bundled copies without model or instance setup.
+Locally modified copies are preserved. Hermes advertises short descriptions
+and loads the full instructions through its native skill tools when needed.
+
+Existing conversations receive current skill metadata and reload guidance when
+instructions change. Native discovery and view caches are refreshed for edits,
+removal and disabling, including ordinary profile skills. A current successful
+load clears its reload notice. Saved system prompts and historical messages are
+preserved; unchanged skills add no request text. The integration uses the
+existing request middleware and native tools, without a new service or core patch.
+
+Shared recall and evidence-selection helpers now live in `apsimo.memory`,
+independently of the Neo4j graph package. Their selection behavior is unchanged.
+The separate graph retirement and measured memory-quality work remain open.
+
 ## v1.4.4 - first-baseline cleanup
 
 Phase 1 defines the first supported release baseline. This preparation removes
