@@ -20,12 +20,11 @@ Restore checks all referenced originals before replacing state. Database
 restoration uses SQLite's backup API, so an old destination WAL cannot overlay
 the recovered main file. Original images return to their source namespace, with
 the same scope and source links. Captions and source-erasure behavior survive
-with the ledger. Format 1 archives without source-image references remain
-readable; an older archive that omitted referenced originals fails with a
+with the ledger. An archive that omitted referenced originals fails with a
 missing-image error. It cannot recover bytes it never retained.
 
 Restore into a fresh destination with services stopped, then verify source
-retrieval before starting them. Existing installations also require their
+retrieval before starting them. A deployed instance also requires its
 private configuration, credentials and runtime backup procedures. Do not restore
 an old archive over ongoing work as an ordinary deployment rollback.
 

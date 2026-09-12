@@ -1,7 +1,7 @@
 ---
 name: apsimo
 version: 1.3.1
-description: Apsimo context sidecar for Hermes with exact per-turn participant binding, scoped P8 guest projection, and read-only general-plugin coexistence.
+description: Apsimo context sidecar for Hermes with exact per-turn participant binding, scoped guest projection, and read-only general-plugin coexistence.
 author: Aevonix
 ---
 
@@ -22,11 +22,11 @@ APSIMO_MEMORY_DEFAULT_CONTEXT_AUTHORITY=none
 
 Bind owner CLI context through the general adapter's explicit
 `attested_system_platforms: [cli]` configuration. Every real channel resolves
-its sender independently; a miss yields no Apsimo context or write. Existing
-`COLONY_*` environment names remain supported.
+its sender independently; a miss yields no Apsimo context or write.
 
 Guest context requires a `context:read` scoped channel principal, exact
-server-resolved contact grant, and P8 scoped projection. The provider preflights
+server-resolved contact grant, and a ready P8 or canonical-source projection.
+The provider preflights
 `/v1/host/context/projection-readiness`, sends
 `projection_policy=scoped_viewer_required`, and verifies the response viewer.
 If any step fails, use no Apsimo context. Never substitute owner context.

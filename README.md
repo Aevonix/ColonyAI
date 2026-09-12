@@ -14,8 +14,10 @@ Hermes handles conversations and tools. Apsimo adds recollection, task
 coordination, and the stored preferences and relationships that guide the agent.
 Each installation has its own identity, models, channels and optional devices.
 
-Formerly ColonyAI. Existing installations should follow the
-[migration guide](docs/APSIMO-MIGRATION.md); historical names and state paths remain valid.
+Phase 1 establishes Apsimo's first supported baseline; validation is still in
+progress. Older ColonyAI releases and their migration paths are outside that
+baseline. Retained historical names and modules are implementation details,
+not promises of backward compatibility.
 
 ## Mission: what we mean by pseudo-AGI
 
@@ -91,8 +93,9 @@ per turn.
 
 **Source records outlive search indexes.** SQLite supports the minimum
 installation. Optional Lance indexes support semantic search and can be replaced
-when embedding models change. Some existing deployments retain legacy Neo4j
-records that cannot yet be fully rebuilt from the original sources.
+when embedding models change. A separate optional Neo4j memory graph remains
+in the code. It is not required by the supported setup, and graph records
+without canonical sources cannot be reconstructed from those sources.
 
 **Models are assigned by role.** [Named roles](docs/FUNCTION-ROUTING.md) select
 configured endpoints and fallbacks. Later requests can use new assignments while
@@ -151,8 +154,8 @@ Use Python 3.12, an existing supported Hermes deployment and one local
 OpenAI-compatible chat endpoint. The lightweight profile needs no Docker,
 Neo4j, embedding model or external account.
 
-The currently tested Hermes version is 0.21.2; 0.21.0 and 0.21.1 attachment
-remain supported. Optional concurrent tasks and current detached-review
+The qualification target is Hermes 0.21.2. Optional concurrent tasks and
+current detached-review
 integration use the [documented compatibility build](docs/HERMES-HOOK-COMPATIBILITY.md).
 Setup does not patch Hermes core or restart an existing gateway. The daily
 upstream compatibility check is separate from the pinned release checks.
@@ -186,7 +189,7 @@ survive a missed notification.
 
 The [setup guide](docs/LOCAL-HERMES-SETUP.md) covers services, native tasks,
 [accepted local drafts](docs/ACCEPTED-LOCAL-WORK.md), existing profiles and recovery.
-For upgrades, follow the
+For updates within the current baseline, follow the
 [adapter refresh procedure](docs/LOCAL-HERMES-SETUP.md#update-an-existing-attachment).
 A package upgrade alone does not replace an adapter copied into a profile.
 

@@ -30,8 +30,9 @@ This design intentionally does not add a general policy engine.
 - Contained pure evaluations use the sandbox read-only fast path. Toolsmith
   sends `owner_directed=false`; it no longer impersonates owner direction.
 - The general sandbox HTTP route derives owner direction from a scoped,
-  owner-bound `sandbox:execute` principal (with a legacy-bearer migration
-  carve-out). Body fields can no longer self-assert direction or approval.
+  owner-bound `sandbox:execute` principal. A retained global-bearer carve-out
+  is outside the supported baseline. Body fields cannot self-assert direction
+  or approval.
 - Sandbox directive errors fail closed with `boundary_check_error`.
 - Inputs and outputs are canonical JSON capped at 32 KiB each.
 - The audit database stores digests and receipt metadata, not captured input
@@ -99,8 +100,11 @@ The graduation request carries only narrowing data: `authority_id`,
 and `max_uses=1`. Principal and owner identity always come from authenticated
 request state, never the body.
 
-See `docs/runbooks/P5-TOOLSMITH-CANARY-ROLLBACK.md` for migration, canary, and
-rollback.
+This optional subsystem is not qualified by package installation. Before
+activation, verify captured comparisons, exact owner authority, publication
+and retirement against the selected runtime, including failed comparisons and
+replayed authority. No older Toolsmith candidate schema has a supported public
+migration path.
 
 ## Intentionally deferred integration work
 

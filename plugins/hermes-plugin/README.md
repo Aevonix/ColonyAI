@@ -25,7 +25,7 @@ plugins:
     api_key: ${APSIMO_API_KEY}
     owner_contact_id: <deployment-owned-contact-id>
     attested_system_platforms: [cli]
-    # Optional. Omit to preserve the complete historical read catalog.
+    # Optional. Omit to register the complete current read catalog.
     # An explicit empty list gives a profile no Apsimo read tools.
     enabled_read_tools:
       - apsimo_list_commitments
@@ -61,7 +61,7 @@ also require an explicit `enabled_action_tools` entry; the static catalog is an
 upper bound, not a claim that a deployment executor supports every action.
 
 `enabled_read_tools` is an optional deployment-profile boundary. Omitting it
-registers the complete read catalog exactly as earlier releases did. Supplying
+registers the complete current read catalog. Supplying
 it registers only that exact subset; `[]` registers no reads without disabling
 a separately configured action or message tool. Lists and comma-separated
 strings are accepted, but blank entries, duplicates after whitespace
@@ -80,9 +80,8 @@ local system turn, which lets Apsimo autonomy initiate and follow up without
 inventing human authority. Guests and speech surfaces cannot call it. The
 model selects an existing contact by display name, never a transport address,
 principal, or contact ID. An optional `channel` is bounded to WhatsApp, RCS,
-or SMS; omitting it preserves the exact legacy V1 WhatsApp request. An
-explicit channel produces a versioned V2 request so an old deployment holds
-instead of silently choosing another transport. An attested system turn uses
+or SMS; omitting it emits the V1 WhatsApp request. An explicit channel produces
+a versioned V2 request; the receiver must implement that contract. An attested system turn uses
 V3 and carries a server-derived `attested_system` origin plus an explicit
 channel (WhatsApp when omitted by the model), so autonomous outreach is never
 misreported as an owner instruction.
@@ -93,7 +92,7 @@ standing, one exact verified handle, and one active fixed route. No route is a
 held result; this tool never falls into `proactive_new_target` or creates a
 per-message owner prompt. Its credential must be distinct from the normal
 Apsimo delivery ingress credential. That private bearer is the producer's
-service identity; `owner_message_mediator_principal` is retained as compatible
+service identity; `owner_message_mediator_principal` is
 local audit metadata and is not sent as an unverified identity header.
 
 `post_llm_call` commits a bounded canonical envelope using SQLite configured as
@@ -140,7 +139,7 @@ chmods an existing file or follows an alias. A normal one-time setup is:
 install -d -m 0700 "$HOME/.hermes/state"
 ```
 
-If a legacy database has a different mode, first verify that it is not a
+If a database has a different mode, first verify that it is not a
 symlink, is a regular file owned by the current user, and has link count one;
 only then correct it manually. A rejected file is left unchanged.
 
@@ -151,16 +150,17 @@ agree. New empty ledgers and the one exact pre-lease predecessor are initialized
 transactionally. Unknown or partially migrated databases are rejected without
 being rebuilt or deleted.
 
-## Install and rollback
+## Installation and verification
 
 ```bash
 ./install.sh --memory
 ```
 
-The compatibility launcher runs guided setup against the selected Hermes home.
+The launcher runs guided setup against the selected Hermes home.
 Managed refresh validates the current attachment and preserves private state.
-`--force` does not bypass those checks. Review any old scheduler entries before
-refreshing a historical deployment; the launcher creates no cron jobs.
+`--force` does not bypass those checks. Use the
+[current setup guide](../../docs/LOCAL-HERMES-SETUP.md) for package installation,
+adapter refresh and recovery.
 
 Run the focused governance suite with:
 
@@ -176,16 +176,12 @@ separate `runtime_governance_attestation(config)` initializes and verifies the
 private outbox's SQLite/filesystem configuration plus the exact mediator origin,
 resolved credential, principal, and nonempty enabled-action subset without
 making a network call. It also reports the effective normalized read subset,
-its digest, and whether it came from the compatibility default or an explicit
+its digest, and whether it came from the default or an explicit
 configuration. Deployment preflight must require the runtime schema and
 must not map source readiness to a live claim. The local runtime proof also
 always keeps `live_ready=false`; only a separate deployment-owned network/canary
 probe may claim operational liveness. `turn_outbox_configuration_ready=true` is
 usable local configuration readiness; it never changes the separate
 `physical_power_loss_verified=false` truth field.
-
-## Existing deployments
-
-The `colony` plugin key, `colony-memory` provider ID and `colony_hermes` Python imports remain compatibility aliases. New attachment uses `apsimo`, `apsimo-memory` and `apsimo_hermes`. Guided refresh retains existing private state paths and migrates managed discovery metadata without loading two adapters. Historical task bodies and governed intent tool identifiers remain unchanged.
 
 `install.sh` forwards to `python -m apsimo init`; install the Apsimo CLI first. The guided installer checks the selected Hermes interpreter and profile before changing the attachment.

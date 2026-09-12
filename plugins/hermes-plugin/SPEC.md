@@ -36,7 +36,7 @@ hashes the exact schema and empty event catalog for source preflight, but never
 claims runtime or live readiness.
 
 The source read catalog is an upper bound. If `enabled_read_tools` is omitted,
-runtime registers that full read catalog unchanged for backward compatibility.
+runtime registers that full read catalog.
 An explicit configuration registers only its validated exact subset, including
 the useful empty subset for message-only profiles. Blank, duplicate, unknown,
 or malformed entries fail before registration. Registration filtering is the
@@ -49,7 +49,7 @@ It requires a safe mediator origin, resolved bounded credential, valid
 principal, nonempty exact enabled-action subset, and an initialized private
 outbox with attested SQLite/filesystem configuration. It exposes only component
 booleans, normalized read/action/message names and digests, read-selection
-source, and a path digest—never a credential or filesystem path. No network
+source, and a path digest, never a credential or filesystem path. No network
 reachability is claimed or tested by this local
 proof. Configuration readiness is explicitly separate from physical media
 verification: `physical_power_loss_verified=false` is invariant here.
