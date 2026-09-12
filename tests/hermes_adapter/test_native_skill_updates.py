@@ -8,17 +8,19 @@ from test_native_current_work import environment
 
 
 PROBE = r'''
-import copy,hashlib,json,os,socket,sys
+import copy,hashlib,json,os,re,socket,sys
 from pathlib import Path
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock,patch
 sys.path.insert(0,sys.argv[1]);sys.path.insert(1,sys.argv[2])
 if sys.argv[3]:sys.path.insert(0,sys.argv[3])
+deferred=sys.argv[4]=='deferred'
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
     'owner_contact_id':'fixture-owner','attested_system_platforms':['cli'],
-    'turn_outbox_path':str(home/'outbox.db')}}}))
+    'turn_outbox_path':str(home/'outbox.db')}},'tools':{'tool_search':{
+        'enabled':'on' if deferred else 'off','defer':['skills_list','skill_view','skill_manage']}}}))
 def no_network(*args,**kwargs):raise AssertionError('Skill update fixture is local')
 socket.socket.connect=no_network;socket.create_connection=no_network
 import apsimo_hermes
@@ -38,9 +40,11 @@ from tools.skills_tool import skills_list
 from agent.prompt_builder import build_skills_system_prompt
 
 name='apsimo-cache-fixture';removed='apsimo-retired-fixture';local='manual-index-local'
+body_addition=''
 def skill_text(version,target=name):
     return ('---\nname: '+target+'\ndescription: Index manuals using revision '+version+'.\n---\n'
-        'Use the '+version+' tab for each manual.\n')
+        'Use the '+version+' tab for each manual.\n'+body_addition
+        +('Template directory: ${HERMES_SKILL_DIR}.\n' if target==local else ''))
 current=home/'skills'/name/'SKILL.md';current.parent.mkdir(parents=True)
 current.write_text(skill_text('amber'))
 ordinary=home/'skills'/local/'SKILL.md';ordinary.parent.mkdir()
@@ -67,11 +71,24 @@ requests=[];phase='initial';phase_requests=[];saved_prompt=''
 expected_version='amber';expect_removed=False
 target='run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
 def tool(tool_name,args,identifier):
+    if deferred:
+        tool_name,args='tool_call',{'calls':[{'name':tool_name,'arguments':args}]}
     return NS(id=identifier,type='function',function=NS(name=tool_name,arguments=json.dumps(args)))
+def refresh_names(messages):
+    names=set()
+    for row in messages:
+        if row['role']!='system':continue
+        for match in re.finditer(r'instructions needing refresh: ([^.]+)\.',str(row.get('content',''))):
+            names.update(match[1].split(', '))
+    return names
 def completion(**kwargs):
     messages=copy.deepcopy(kwargs['messages'])
     requests.append(messages);phase_requests.append(messages)
     if len(phase_requests)==1:
+        actual_tools={row['function']['name'] for row in kwargs['tools']}
+        if deferred:
+            assert 'skill_view' not in actual_tools and {'tool_search','tool_describe','tool_call'}<=actual_tools,actual_tools
+        else:assert {'skills_list','skill_view'}<=actual_tools,actual_tools
         # Current middleware may add system context adjacent to the initial
         # system prompt. Exclude the frozen prompt and historical tool results.
         last_user=max(i for i,row in enumerate(messages) if row['role']=='user')
@@ -80,6 +97,9 @@ def completion(**kwargs):
         if phase!='initial':
             assert 'Index manuals using revision '+expected_version+'.' in fresh,(phase,fresh)
         assert 'Use the '+expected_version+' tab for each manual.' not in fresh,(phase,fresh)
+        if phase=='body_only':
+            assert {name,local}<=refresh_names(messages),messages
+            assert body_addition.strip() not in fresh,(phase,fresh)
         calls=[tool('skills_list',{},phase+'-list'),tool('skill_view',{'name':local},phase+'-local')]
         if phase!='disabled':calls.append(tool('skill_view',{'name':name},phase+'-view'))
         if phase in {'initial','resumed'}:
@@ -101,7 +121,9 @@ def completion(**kwargs):
             assert viewed.get('success') and viewed.get('content')==skill_text(expected_version),(phase,viewed)
             assert any(row['name']==local and row['description']=='Index manuals using revision '+expected_version+'.'
                 for row in listed['skills']),(phase,listed)
-            assert local_result.get('success') and local_result.get('content')==skill_text(expected_version,local),(phase,local_result)
+            expected_local=skill_text(expected_version,local).replace('${HERMES_SKILL_DIR}',str(ordinary.parent))
+            assert local_result.get('success') and local_result.get('content')==expected_local,(phase,local_result)
+            assert not ({name,local}&refresh_names(messages)),(phase,refresh_names(messages))
         if expect_removed and phase=='resumed':
             assert not any(row['name']==removed for row in listed['skills']),listed
             missing=by_id[phase+'-removed']
@@ -130,10 +152,16 @@ with patch(target,return_value=client):
     agent=make_agent()
     initial=run(agent)
     saved_prompt=db.get_session(session)['system_prompt']
-    assert saved_prompt and 'revision amber' in saved_prompt
+    assert saved_prompt
+    if not deferred:assert 'revision amber' in saved_prompt
     rows=saved_rows();assert rows
     change('cobalt');phase='updated';phase_requests=[];expected_version='cobalt'
     updated=run(agent,initial['messages'])
+    old_rows_unchanged(rows)
+    # Only instructions change here: both discovery descriptions stay cobalt.
+    rows=saved_rows();body_addition='Finish by recording the manual index locally.\n'
+    change('cobalt');phase='body_only';phase_requests=[]
+    run(agent,updated['messages'])
     old_rows_unchanged(rows)
     # Reconstruct the native agent while keeping the running process and
     # its caches. Resume actual saved messages and the persisted prompt.
@@ -141,7 +169,7 @@ with patch(target,return_value=client):
     change('silver');retired.unlink()
     phase='resumed';phase_requests=[];expected_version='silver';expect_removed=True
     restored=db.get_messages_as_conversation(session)
-    assert restored and 'revision amber' in db.get_session(session)['system_prompt']
+    assert restored and db.get_session(session)['system_prompt']==saved_prompt
     agent=make_agent();resumed=run(agent,restored)
     old_rows_unchanged(rows)
     assert db.get_session(session)['system_prompt']==saved_prompt
@@ -156,18 +184,20 @@ db.close()
 print(json.dumps({'same_process_skill_edit':True,'saved_conversation_skill_edit':True,
     'removed_skill_unavailable':True,'disabled_skill_unavailable':True,
     'ordinary_unowned_skill_updated':True,'current_description_visible':True,
+    'body_only_update_reloaded':True,'template_load_settles_notice':True,'deferred':deferred,
     'current_body_loaded_on_use':True,'historical_rows_unchanged':True,
     'full_body_not_preloaded':True,'controlled_sdk_requests':len(requests),'model_calls':0,'network':0}))
 '''
 
 
-def test_native_skill_updates_reach_running_and_saved_conversations(artifacts, tmp_path):
+@pytest.mark.parametrize('mode',['direct','deferred'])
+def test_native_skill_updates_reach_running_and_saved_conversations(artifacts, tmp_path, mode):
     native = os.environ.get('COLONY_TEST_HERMES_PATH') or os.environ.get('HERMES_TEST_SOURCE', '')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native skill update integration')
     env = environment(tmp_path)
     env.update(COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result = run_python('-I', '-B', '-c', PROBE, artifacts[3], ROOT/'sidecar', native,
+    result = run_python('-I', '-B', '-c', PROBE, artifacts[3], ROOT/'sidecar', native, mode,
         cwd=tmp_path, env=env)
     assert '"saved_conversation_skill_edit": true' in result.stdout
     assert '"historical_rows_unchanged": true' in result.stdout
