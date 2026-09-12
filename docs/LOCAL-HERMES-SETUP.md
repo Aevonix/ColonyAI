@@ -72,6 +72,34 @@ its addresses with the router's existing local-network rules. A LAN hostname
 can therefore serve extraction as well as the initial chat probe. Runtime calls
 continue to resolve and check that configured host when its address changes.
 
+## Preserve an explicit model configuration
+
+For a new instance, add `--model-config /private/path/models.json` to the setup
+command. This accepts the same JSON host-model configuration as the runtime:
+`models`, `modelPool`, `functionRoles`, `taskRoles`, local hosts and networks,
+capabilities, request extras, credentials, output limits and role deadlines.
+Setup validates it before model probes or instance writes and stores the complete
+object in the private instance's `.pacomind-llm-config.json` with mode `0600`.
+Keep the input file private too; never commit credentials.
+
+`--model-url` and `--model` still select the wizard's chat connectivity probe and
+the initial Hermes model when that home has none. An existing Hermes chat
+configuration stays selected. The supplied JSON configures PacoMind's cognition
+roles separately; setup does not map that chat model over the supplied roles.
+Without `--model-config`, the simple wizard configuration is unchanged.
+
+With `--local-work` or `--native-reviews`, supply an explicit tool-capable local
+`planning` role. Setup uses it for the native worker and checks its selected
+model's function calling. It preserves the rest of the model pool and role
+settings. `--native-goals` retains the selected Hermes profile's model. These
+connectivity checks do not qualify a model's memory, planning or answer quality;
+the installed instance remains `configured_not_behaviorally_verified`.
+
+The option is only for new instances. Existing instances retain their model
+configuration; edit that private runtime configuration through its normal update
+path. `--model-config` cannot be combined with `--preferences-only` or
+`--skills-only`.
+
 ## WhatsApp read receipts for a selected profile
 
 For an existing Hermes home, preview and then apply the supported channel

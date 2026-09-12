@@ -107,6 +107,179 @@ def args(tmp_path, monkeypatch):
         model='fixture-model', adapter_wheel=str(artifact(tmp_path)), port=8877, start=False)
 
 
+@pytest.fixture
+def supplied_model_config(args, tmp_path):
+    configuration = {
+        'provider': 'local', 'baseUrl': 'http://127.0.0.1:8124/v1',
+        'apiKey': 'fixture-default-private-key', 'localHosts': ['model-pool.lan'],
+        'localNetworks': ['127.0.0.0/8', '10.9.0.0/24'],
+        'models': {'small': {'model': 'extractor', 'maxTokens': 2048,
+                             'extraBody': {'temperature': 0.15}}},
+        'modelPool': {
+            'extract': {'model': 'extractor', 'apiKey': 'fixture-extraction-private-key',
+                        'supportsJsonSchema': True, 'supportsVision': False,
+                        'contextTokens': 65536, 'maxTokens': 2048, 'concurrency': 4,
+                        'tokensPerSecond': 70, 'extraBody': {'temperature': 0.15}},
+            'deliberate': {'model': 'planner', 'baseUrl': 'http://127.0.0.1:8125/v1',
+                          'apiKey': 'fixture-planning-private-key', 'supportsTools': True,
+                          'supportsJsonSchema': True, 'contextTokens': 131072,
+                          'maxTokens': 6144, 'concurrency': 2, 'weightRevision': 'weights-2',
+                          'extraBody': {'temperature': 0.4, 'top_p': 0.92}},
+        },
+        'functionRoles': {
+            'extraction': {'candidates': ['extract'], 'timeoutSeconds': 35, 'deadlineSeconds': 45},
+            'judging': {'candidates': ['deliberate'], 'timeoutSeconds': 85, 'deadlineSeconds': 95},
+            'planning': {'candidates': ['deliberate'], 'timeoutSeconds': 140,
+                         'deadlineSeconds': 540, 'minContextTokens': 65536},
+        },
+        'taskRoles': {'source_claim_extraction': 'judging'},
+    }
+    path = tmp_path/'private-models.json'
+    path.write_text(json.dumps(configuration))
+    args.model_config = str(path)
+    return configuration
+
+
+@pytest.mark.parametrize('background', ['none', 'native_goals', 'local_work_and_goals'])
+def test_wizard_preserves_full_model_configuration_and_existing_chat(
+        args, supplied_model_config, background, monkeypatch, capsys, caplog):
+    from pacomind import setup_local_work
+    from pacomind.router.router import LLMRouter
+    from pacomind.router.functions import candidates
+    caplog.set_level('INFO')
+    home = Path(args.hermes_home)
+    home.mkdir(mode=0o700)
+    original_config = {'model': {'provider': 'custom:existing', 'default': 'existing-chat'},
+        'providers': {'existing': {'base_url': 'http://127.0.0.1:8126/v1',
+                                  'api_key': 'fixture-existing-chat-key'}},
+        'agent': {'max_turns': 18}, 'terminal': {'backend': 'local'},
+        'whatsapp': {'enabled': False, 'send_read_receipts': True}}
+    (home/'config.yaml').write_text(yaml.safe_dump(original_config))
+    (home/'SOUL.md').write_text('Existing identity remains.\n')
+    (home/'.env').write_text('OPENAI_API_KEY=fixture-retained-chat-key\nKEEP_SETTING=yes\n')
+    tools = Mock()
+    monkeypatch.setattr(setup_local_work, 'verify_tools', tools)
+    args.native_goals = background != 'none'
+    args.local_work = background == 'local_work_and_goals'
+    def native_create(command, **kwargs):
+        assert 'create_profile' in command[-1] and 'kb.create_board' in command[-1]
+        worker = home/'profiles/pacomind-drafts'
+        worker.mkdir(parents=True)
+        (worker/'config.yaml').write_text('{}\n')
+        return SimpleNamespace(returncode=0)
+    native = Mock(side_effect=native_create)
+    monkeypatch.setattr(setup_local_work.subprocess, 'run', native)
+    assert setup.run_init(None, args) == 0
+    state = home/'pacomind'
+    stored = state/'.pacomind-llm-config.json'
+    assert json.loads(stored.read_text()) == supplied_model_config
+    assert stored.stat().st_mode & 0o777 == 0o600
+    assert json.loads((state/'instance.json').read_text())['status'] == 'configured_not_behaviorally_verified'
+    config = yaml.safe_load((home/'config.yaml').read_text())
+    for name, value in original_config.items():
+        assert config[name] == value
+    assert (home/'SOUL.md').read_text() == 'Existing identity remains.\n'
+    assert dotenv_values(home/'.env')['OPENAI_API_KEY'] == 'fixture-retained-chat-key'
+    assert dotenv_values(home/'.env')['KEEP_SETTING'] == 'yes'
+    router = LLMRouter(tiers={})
+    router.configure(json.loads(stored.read_text()))
+    assert [b.name for b in candidates(router._snapshot, 'extraction', {},
+        has_images=False, has_tools=False)] == ['extract']
+    assert router._snapshot.task_roles['source_claim_extraction'] == 'judging'
+    assert router._snapshot.bindings['extract'].supports_json_schema is True
+    assert router._snapshot.bindings['extract'].context_tokens == 65536
+    assert router._snapshot.bindings['extract'].concurrency == 4
+    assert router._snapshot.roles['extraction'].deadline_seconds == 45
+    if args.local_work:
+        native.assert_called_once()
+        tools.assert_any_call('http://127.0.0.1:8125/v1', 'planner', 'fixture-planning-private-key')
+        worker = yaml.safe_load((home/'profiles/pacomind-drafts/config.yaml').read_text())
+        assert worker['model']['default'] == 'planner'
+        assert worker['model']['max_tokens'] == 6144
+        assert worker['providers']['pacomind-planning-0']['extra_body'] == {'temperature': 0.4, 'top_p': 0.92}
+        assert worker['providers']['custom']['request_timeout_seconds'] == 140
+        assert worker['plugins']['pacomind']['native_local_work']['routing_policy']['run_deadline_seconds'] == 540
+    else:
+        native.assert_not_called()
+    if args.native_goals:
+        assert config['auxiliary']['goal_judge']['model'] == 'existing-chat'
+    captured = capsys.readouterr()
+    output = captured.out + captured.err + caplog.text
+    for key in ('fixture-default-private-key', 'fixture-extraction-private-key', 'fixture-planning-private-key'):
+        assert key not in output
+
+
+@pytest.mark.parametrize('invalid', ['json', 'object', 'candidate', 'pool', 'provider', 'capability'])
+def test_invalid_model_configuration_precedes_probe_and_any_wizard_write(
+        args, supplied_model_config, invalid, monkeypatch, capsys):
+    configuration = supplied_model_config
+    if invalid == 'object': configuration = []
+    elif invalid == 'candidate': configuration['functionRoles']['planning']['candidates'] = ['fixture-secret-invalid-candidate']
+    elif invalid == 'pool': configuration['modelPool']['deliberate'] = {'apiKey': 'fixture-secret-invalid-candidate'}
+    elif invalid == 'provider': configuration['provider'] = 42
+    elif invalid == 'capability': configuration['modelPool']['extract']['supportsJsonSchema'] = 'true'
+    Path(args.model_config).write_text('fixture-secret-invalid-candidate {' if invalid == 'json' else json.dumps(configuration))
+    home = Path(args.hermes_home); home.mkdir(mode=0o700)
+    (home/'config.yaml').write_text('model: {default: existing-chat}\n')
+    before = {p.relative_to(home): p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Invalid config reached inference'))
+    monkeypatch.setattr(httpx, 'get', lambda *a, **k: pytest.fail('Invalid config reached discovery'))
+    assert setup.run_init(None, args) == 1
+    assert {p.relative_to(home): p.read_bytes() for p in home.rglob('*') if p.is_file()} == before
+    assert not (home/'pacomind').exists()
+    result = capsys.readouterr()
+    assert 'Invalid --model-config' in result.out + result.err
+    assert 'fixture-secret-invalid-candidate' not in result.out + result.err
+
+
+@pytest.mark.parametrize('mode', ['local_work', 'native_reviews'])
+def test_supplied_configuration_requires_its_own_planning_role_before_attachment(
+        args, supplied_model_config, mode, monkeypatch):
+    from pacomind import setup_local_work
+    supplied_model_config['functionRoles'].pop('planning')
+    Path(args.model_config).write_text(json.dumps(supplied_model_config))
+    setattr(args, mode, True)
+    monkeypatch.setattr(setup_local_work, 'install', lambda *a: pytest.fail('Invalid planning attached worker'))
+    assert setup.run_init(None, args) == 1
+    assert not Path(args.hermes_home).exists()
+    assert json.loads(Path(args.model_config).read_text()) == supplied_model_config
+
+
+def test_model_config_cli_forwards_the_private_path_without_starting_identity(monkeypatch):
+    from pacomind import cli
+    wizard = Mock(return_value=1)
+    monkeypatch.setattr(setup, 'run_init', wizard)
+    monkeypatch.setattr(cli.sys, 'argv', ['pacomind', 'init', '--model-config', '/private/models.json'])
+    with pytest.raises(SystemExit) as stopped:
+        cli.main()
+    assert stopped.value.code == 1
+    assert wizard.call_args.kwargs['args'].model_config == '/private/models.json'
+
+
+def test_existing_instance_rejects_model_config_without_refresh_or_replacement(args, monkeypatch, tmp_path):
+    assert setup.run_init(None, args) == 0
+    home = Path(args.hermes_home)
+    before = {p.relative_to(home): p.read_bytes() for p in home.rglob('*') if p.is_file()}
+    args.model_config = str(tmp_path/'does-not-need-reading.json')
+    args.refresh_adapter = True
+    monkeypatch.setattr(setup_hermes, '_model_configuration', lambda *a: pytest.fail('Existing instance read import'))
+    monkeypatch.setattr(setup_hermes, 'refresh_adapter', lambda *a: pytest.fail('Existing instance changed adapter'))
+    monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Existing instance reached inference'))
+    assert setup.run_init(None, args) == 1
+    assert {p.relative_to(home): p.read_bytes() for p in home.rglob('*') if p.is_file()} == before
+
+
+@pytest.mark.parametrize('mode', ['skills_only', 'preferences_only'])
+def test_model_config_cannot_change_preferences_or_skills(args, mode, monkeypatch):
+    setattr(args, mode, True)
+    args.model_config = '/private/not-read.json'
+    args.whatsapp_read_receipts = 'on' if mode == 'preferences_only' else None
+    args.model_url = args.model = args.agent_name = args.contact_name = args.adapter_wheel = None
+    monkeypatch.setattr(setup_hermes, '_model_configuration', lambda *a: pytest.fail('Mode read model configuration'))
+    assert setup.run_init(None, args) == 1
+    assert not Path(args.hermes_home).exists()
+
+
 def test_new_instance_can_keep_channel_disabled_with_receipts_preselected(args):
     home = Path(args.hermes_home)
     home.mkdir(mode=0o700)

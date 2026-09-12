@@ -47,6 +47,21 @@ def _json(value):
     return json.dumps(value, indent=2, ensure_ascii=False) + '\n'
 
 
+def _model_configuration(path):
+    """Validate without discovery and retain the complete private host config."""
+    from .router.router import LLMRouter
+    try:
+        raw = Path(path).expanduser().read_bytes()
+        if len(raw) > 262144:  # Same bound as the runtime configuration reader.
+            raise ValueError('Host model configuration is too large')
+        configuration = json.loads(raw)
+        LLMRouter(tiers={}).configure(configuration)
+    except (ValueError, TypeError, AttributeError):
+        # Parser/schema errors can contain user-supplied values, including keys.
+        raise ValueError('Invalid --model-config: provide a valid JSON host-model configuration') from None
+    return configuration
+
+
 def _owner_handles(args, ask, noninteractive):
     """Local enrollment binds exact accounts; it does not configure channels."""
     from .contacts.identity_links import normalized_handle
@@ -563,7 +578,7 @@ def run(root_dir=None, args=None):
         if skills_only:
             if root_dir or receipt_choice or any(getattr(args, name, None) for name in (
                     'preferences_only', 'preview', 'start', 'refresh_adapter', 'replace_memory_provider',
-                    'local_work', 'native_goals', 'native_reviews', 'model_url', 'model', 'agent_name',
+                    'local_work', 'native_goals', 'native_reviews', 'model_url', 'model', 'model_config', 'agent_name',
                     'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'owner_handle', 'encrypt',
                     'passphrase', 'claim_genesis')):
                 raise ValueError('--skills-only cannot be combined with instance or preference changes')
@@ -575,7 +590,7 @@ def run(root_dir=None, args=None):
                 raise ValueError('--preferences-only requires --whatsapp-read-receipts on or off')
             if root_dir or any(getattr(args, name, None) for name in (
                     'start', 'refresh_adapter', 'replace_memory_provider', 'local_work',
-                    'native_goals', 'native_reviews', 'model_url', 'model', 'adapter_wheel', 'agent_name',
+                    'native_goals', 'native_reviews', 'model_url', 'model', 'model_config', 'adapter_wheel', 'agent_name',
                     'agent_values', 'timezone', 'quiet_hours', 'contact_name', 'owner_handle', 'encrypt',
                     'passphrase', 'claim_genesis')):
                 raise ValueError('--preferences-only cannot be combined with instance or setup options')
@@ -605,6 +620,8 @@ def run(root_dir=None, args=None):
         if any((home/name).exists() for name in ('pacomind-memory.json',)):
             raise ValueError('Existing native PacoMind settings need an explicit migration; select a new home')
         if (state/'instance.json').exists():
+            if getattr(args, 'model_config', None):
+                raise ValueError('--model-config is for a new private instance; existing model configuration is retained')
             if getattr(args, 'owner_handle', None):
                 raise ValueError('--owner-handle is for a new private instance; existing owner bindings are retained')
             manifest = json.loads((state/'instance.json').read_text())
@@ -650,6 +667,8 @@ def run(root_dir=None, args=None):
             raise ValueError('Adapter refresh requires an existing private instance')
         if state.exists() and any(state.iterdir()):
             raise ValueError('The selected directory has existing state; use its existing configuration or a new private directory')
+        supplied_models = (_model_configuration(args.model_config)
+                           if getattr(args, 'model_config', None) else None)
         if (home/'plugins').is_symlink():
             raise ValueError('Symlinked plugin directories require explicit migration')
         for name in ('pacomind', 'pacomind-memory'):
@@ -704,7 +723,15 @@ def run(root_dir=None, args=None):
         native_reviews = bool(getattr(args, 'native_reviews', False))
         if not noninteractive and not native_reviews:
             native_reviews = ask('Enable bounded read-only operational reviews? [y/N]', 'N').lower() in {'y','yes'}
-        if local_work or native_goals or native_reviews:
+        if supplied_models is not None and (local_work or native_reviews):
+            from .router.native_policy import planning
+            from .setup_local_work import verify_tools
+            try:
+                options, _ = asyncio.run(planning(supplied_models))
+            except ValueError:
+                raise ValueError('--model-config needs an eligible explicit planning role for local drafts or native reviews') from None
+            verify_tools(options['base_url'], options['model'], options['api_key'])
+        if native_goals or (supplied_models is None and (local_work or native_reviews)):
             from .setup_local_work import verify_tools
             verify_tools(endpoint, model, model_key)
         port = int(getattr(args, 'port', 7777))
@@ -775,10 +802,10 @@ def run(root_dir=None, args=None):
             if owner_handles:
                 principal['scopes'].append('turns:resolve-sender')
             _private_write(staged/'api-keyring.json', _json({'version': 1, 'principals': [principal]}))
-            model_configuration = {'provider': 'local', 'baseUrl': endpoint,
+            model_configuration = supplied_models if supplied_models is not None else {'provider': 'local', 'baseUrl': endpoint,
                 'apiKey': model_key, 'localHosts': local_hosts,
                 'models': {name: model for name in ('small', 'medium', 'large')}}
-            if local_work or native_reviews:
+            if supplied_models is None and (local_work or native_reviews):
                 from .setup_local_work import planning_configuration
                 planning_configuration(model_configuration)
             _private_write(staged/'.pacomind-llm-config.json', _json(model_configuration))
