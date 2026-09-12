@@ -41,97 +41,98 @@ def native(source_app, monkeypatch, tmp_path):
         _principal(principal='other', secret='other', viewer='other'),
         _principal(principal='reader', secret='reader', viewer='cid-owner', scopes=['context:read'])])
     source_app.add_middleware(ApiKeyMiddleware, keyring_path=str(keyring))
-    http = TestClient(source_app, headers={'Authorization':'Bearer writer'})
-    plugin = _load_plugin('apsimo_original_tool_observation_test')
-    class Client(plugin.ApsimoClient):
-        outage = False
-        erasure_unavailable = False
-        def _call(self, method, path, kwargs):
-            if self.outage and '/source-observation/' in path:
-                return httpx.Response(503, request=httpx.Request(method, 'http://fixture'+path))
-            if self.erasure_unavailable and path == '/v1/host/memory/sources/erasures':
-                return httpx.Response(403, request=httpx.Request(method, 'http://fixture'+path))
-            return http.request(method, path, **{k:v for k,v in kwargs.items() if k in {'json','params'}})
-        def get(self, path, **kwargs): return self._call('GET', path, kwargs)
-        def post(self, path, **kwargs): return self._call('POST', path, kwargs)
-        def put(self, path, **kwargs): return self._call('PUT', path, kwargs)
-    clients = []
-    def make_client(**kwargs):
-        value = Client(**kwargs)
-        clients.append(value)
-        return value
-    monkeypatch.setattr(plugin, 'ColonyClient', make_client)
-    context = _Context(tmp_path/'outbox.db')
-    context.config['plugins']['apsimo'] = context.config['plugins'].pop('colony')
-    plugin.register(context)
-    from hermes_cli import middleware as native_middleware, plugins as native_plugins
-    manager = SimpleNamespace(_middleware={key:[value] for key,value in context.middleware.items()})
-    monkeypatch.setattr(native_plugins, 'get_plugin_manager', lambda: manager)
-    monkeypatch.setattr(native_plugins, 'has_middleware', lambda kind: kind in manager._middleware)
-    monkeypatch.setattr(native_plugins, 'invoke_middleware',
-        lambda kind, **kwargs: [callback(**kwargs) for callback in manager._middleware.get(kind, [])])
-    call_context = {'session_id':'native-session', 'task_id':'native-task', 'turn_id':'native-turn'}
-    context.hooks['pre_llm_call'](**call_context, platform='cli', sender_id='owner', user_message=INSTRUCTION,
-        conversation_history=[{'role':'user','content':INSTRUCTION}])
-    messages = [{'role':'user','content':INSTRUCTION}]
-    def request(request_id='api-2', *, anthropic=False, responses=False, deferred=False, tools=True,
-                before_middleware=None):
-        payload = {'messages': copy.deepcopy(messages), 'tools':[{'type':'function','function':
-            context.tools['apsimo_memory_retain_observation']['schema']}]}
-        if deferred:
-            from tools.tool_search import assemble_tool_defs, ToolSearchConfig
-            payload['tools'] = assemble_tool_defs(payload['tools'], config=ToolSearchConfig.from_raw(
-                {'enabled': 'on', 'defer': ['apsimo_memory_retain_observation']})).tool_defs
-        if not tools:
-            payload['tools'] = []
-        if anthropic:
-            from agent.anthropic_message_convert import convert_messages_to_anthropic, convert_tools_to_anthropic
-            system, payload['messages'] = convert_messages_to_anthropic(payload['messages'])
-            if system is not None:
-                payload['system'] = system
-            payload['tools'] = convert_tools_to_anthropic(payload['tools'])
-        if responses:
-            from agent.codex_responses_adapter import _chat_messages_to_responses_input, _responses_tools
-            payload['input'] = _chat_messages_to_responses_input(payload.pop('messages'))
-            payload['tools'] = _responses_tools(payload['tools'])
-            payload['instructions'] = 'Stable identity.'
-        if before_middleware is not None:
-            before_middleware(payload)
-        return native_middleware.apply_llm_request_middleware(payload,
-            **call_context, api_request_id=request_id,
-            api_mode='anthropic_messages' if anthropic else 'chat_completions')
-    request('api-1')
-    def complete(call_id='call-1', result=RESULT, name='fixture_observe', arguments=None):
-        arguments = {} if arguments is None else copy.deepcopy(arguments)
-        call = {'id':call_id,'type':'function','function':{'name':name,'arguments':json.dumps(arguments)}}
-        messages.append({'role':'assistant','content':None,'tool_calls':[call]})
-        db.append_message('native-session','assistant',tool_calls=[call])
-        value = native_middleware.run_tool_execution_middleware(**call_context, api_request_id='api-1',
-            tool_name=name, tool_call_id=call_id, args=arguments, next_call=lambda args: subprocess.run(
-                [sys.executable, '-c', 'import sys; sys.stdout.write(sys.argv[1])', result],
-                check=True, capture_output=True, text=True, timeout=5).stdout)
-        assert value == result
-        message_id = db.append_message('native-session','tool',result,tool_name=name,tool_call_id=call_id,
-                                       timestamp=1789149600.0)
-        messages.append({'role':'tool','tool_call_id':call_id,'content':value})
-        return message_id
-    def retain(call_id='call-1', request_id='api-2', reason='Use the recorded synchronization outcome later.'):
-        args = {'call_id':call_id, 'reason':reason}
-        return json.loads(native_middleware.run_tool_execution_middleware(**call_context, api_request_id=request_id,
-            tool_name='apsimo_memory_retain_observation', tool_call_id='retention-call', args=args,
-            next_call=lambda selected: context.tools['apsimo_memory_retain_observation']['handler'](selected)))
+    # The serving process initializes its store before requests. Keep fixture
+    # schema/ASGI startup outside the unchanged native freshness deadline.
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
-    def recall(contact='cid-owner'):
-        response = http.post('/v1/host/context/assemble', json={'identity':{'host_id':'test'},
-            'context':{'contact_id':contact,'session_id':'other-channel-session'},
-            'incoming_message':{'role':'user','content':'copper synchronization outcome'}})
-        assert response.status_code == 200, response.text
-        return next((s for s in response.json()['sections'] if s['id']=='colony-memory'), {})
-    yield SimpleNamespace(plugin=plugin, context=context, db=db, http=http, clients=clients,
-        complete=complete, request=request, retain=retain, ledger=ledger, recall=recall,
-        messages=messages, scope=call_context, outbox=plugin.TurnOutbox(tmp_path/'outbox.db'))
-    db.close()
-    http.close()
+    with TestClient(source_app, headers={'Authorization':'Bearer writer'}) as http:
+        plugin = _load_plugin('apsimo_original_tool_observation_test')
+        class Client(plugin.ApsimoClient):
+            outage = False
+            erasure_unavailable = False
+            def _call(self, method, path, kwargs):
+                if self.outage and '/source-observation/' in path:
+                    return httpx.Response(503, request=httpx.Request(method, 'http://fixture'+path))
+                if self.erasure_unavailable and path == '/v1/host/memory/sources/erasures':
+                    return httpx.Response(403, request=httpx.Request(method, 'http://fixture'+path))
+                return http.request(method, path, **{k:v for k,v in kwargs.items() if k in {'json','params'}})
+            def get(self, path, **kwargs): return self._call('GET', path, kwargs)
+            def post(self, path, **kwargs): return self._call('POST', path, kwargs)
+            def put(self, path, **kwargs): return self._call('PUT', path, kwargs)
+        clients = []
+        def make_client(**kwargs):
+            value = Client(**kwargs)
+            clients.append(value)
+            return value
+        monkeypatch.setattr(plugin, 'ColonyClient', make_client)
+        context = _Context(tmp_path/'outbox.db')
+        context.config['plugins']['apsimo'] = context.config['plugins'].pop('colony')
+        plugin.register(context)
+        from hermes_cli import middleware as native_middleware, plugins as native_plugins
+        manager = SimpleNamespace(_middleware={key:[value] for key,value in context.middleware.items()})
+        monkeypatch.setattr(native_plugins, 'get_plugin_manager', lambda: manager)
+        monkeypatch.setattr(native_plugins, 'has_middleware', lambda kind: kind in manager._middleware)
+        monkeypatch.setattr(native_plugins, 'invoke_middleware',
+            lambda kind, **kwargs: [callback(**kwargs) for callback in manager._middleware.get(kind, [])])
+        call_context = {'session_id':'native-session', 'task_id':'native-task', 'turn_id':'native-turn'}
+        context.hooks['pre_llm_call'](**call_context, platform='cli', sender_id='owner', user_message=INSTRUCTION,
+            conversation_history=[{'role':'user','content':INSTRUCTION}])
+        messages = [{'role':'user','content':INSTRUCTION}]
+        def request(request_id='api-2', *, anthropic=False, responses=False, deferred=False, tools=True,
+                    before_middleware=None):
+            payload = {'messages': copy.deepcopy(messages), 'tools':[{'type':'function','function':
+                context.tools['apsimo_memory_retain_observation']['schema']}]}
+            if deferred:
+                from tools.tool_search import assemble_tool_defs, ToolSearchConfig
+                payload['tools'] = assemble_tool_defs(payload['tools'], config=ToolSearchConfig.from_raw(
+                    {'enabled': 'on', 'defer': ['apsimo_memory_retain_observation']})).tool_defs
+            if not tools:
+                payload['tools'] = []
+            if anthropic:
+                from agent.anthropic_message_convert import convert_messages_to_anthropic, convert_tools_to_anthropic
+                system, payload['messages'] = convert_messages_to_anthropic(payload['messages'])
+                if system is not None:
+                    payload['system'] = system
+                payload['tools'] = convert_tools_to_anthropic(payload['tools'])
+            if responses:
+                from agent.codex_responses_adapter import _chat_messages_to_responses_input, _responses_tools
+                payload['input'] = _chat_messages_to_responses_input(payload.pop('messages'))
+                payload['tools'] = _responses_tools(payload['tools'])
+                payload['instructions'] = 'Stable identity.'
+            if before_middleware is not None:
+                before_middleware(payload)
+            return native_middleware.apply_llm_request_middleware(payload,
+                **call_context, api_request_id=request_id,
+                api_mode='anthropic_messages' if anthropic else 'chat_completions')
+        request('api-1')
+        def complete(call_id='call-1', result=RESULT, name='fixture_observe', arguments=None):
+            arguments = {} if arguments is None else copy.deepcopy(arguments)
+            call = {'id':call_id,'type':'function','function':{'name':name,'arguments':json.dumps(arguments)}}
+            messages.append({'role':'assistant','content':None,'tool_calls':[call]})
+            db.append_message('native-session','assistant',tool_calls=[call])
+            value = native_middleware.run_tool_execution_middleware(**call_context, api_request_id='api-1',
+                tool_name=name, tool_call_id=call_id, args=arguments, next_call=lambda args: subprocess.run(
+                    [sys.executable, '-c', 'import sys; sys.stdout.write(sys.argv[1])', result],
+                    check=True, capture_output=True, text=True, timeout=5).stdout)
+            assert value == result
+            message_id = db.append_message('native-session','tool',result,tool_name=name,tool_call_id=call_id,
+                                           timestamp=1789149600.0)
+            messages.append({'role':'tool','tool_call_id':call_id,'content':value})
+            return message_id
+        def retain(call_id='call-1', request_id='api-2', reason='Use the recorded synchronization outcome later.'):
+            args = {'call_id':call_id, 'reason':reason}
+            return json.loads(native_middleware.run_tool_execution_middleware(**call_context, api_request_id=request_id,
+                tool_name='apsimo_memory_retain_observation', tool_call_id='retention-call', args=args,
+                next_call=lambda selected: context.tools['apsimo_memory_retain_observation']['handler'](selected)))
+        def recall(contact='cid-owner'):
+            response = http.post('/v1/host/context/assemble', json={'identity':{'host_id':'test'},
+                'context':{'contact_id':contact,'session_id':'other-channel-session'},
+                'incoming_message':{'role':'user','content':'copper synchronization outcome'}})
+            assert response.status_code == 200, response.text
+            return next((s for s in response.json()['sections'] if s['id']=='colony-memory'), {})
+        yield SimpleNamespace(plugin=plugin, context=context, db=db, http=http, clients=clients,
+            complete=complete, request=request, retain=retain, ledger=ledger, recall=recall,
+            messages=messages, scope=call_context, outbox=plugin.TurnOutbox(tmp_path/'outbox.db'))
+        db.close()
 
 
 def test_actual_native_original_roundtrips_into_automatic_recall(native):
