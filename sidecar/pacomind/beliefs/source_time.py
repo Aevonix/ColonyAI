@@ -17,7 +17,9 @@ _MONTH_DATE = (r"(?:" + _MONTH + r"\s+\d{1,2},?\s+\d{4}|"
                r"\d{1,2}\s+" + _MONTH + r"\s+\d{4})")
 _TIME_ON_DATE = re.compile(
     r"(?P<hour>\d{1,2}):(?P<minute>\d{2})(?::(?P<second>\d{2}))?"
-    r"(?:\s+(?P<utc>UTC))?\s+on\s+(?P<date>.+)", re.I)
+    r"(?:\s+(?P<utc>UTC))?\s+on\s+(?P<date>" + _MONTH_DATE + r")", re.I)
+# Consume the whole clock/date operand before its embedded calendar date.
+_EXPLICIT_DATE = _TIME_ON_DATE.pattern + "|" + _DATE + "|" + _MONTH_DATE
 _EVENT = re.compile(r"\b(footage|camera|observed|spotted|seen|saw|happened|recorded|arrived|visited)\b", re.I)
 
 
@@ -181,7 +183,7 @@ def _temporal_request_text(text: str) -> str:
 
     def quoted(match):
         value = match[0][1:-1].strip()
-        if (re.fullmatch(_DATE + "|" + _MONTH_DATE + "|today|yesterday|tomorrow", value, re.I)
+        if (re.fullmatch(_EXPLICIT_DATE + "|today|yesterday|tomorrow", value, re.I)
                 or re.fullmatch(r"last\s+\d{1,3}\s+(?:hours?|days?)|"
                     r"(?:last|next|previous)\s+(?:week|month|year)|"
                     r"\d+\s+(?:weeks?|months?|years?)\s+ago", value, re.I)):
@@ -209,10 +211,10 @@ def interpret_time_query(text: str, *, now: datetime, timezone_name="UTC") -> Me
     unsupported = re.search(
         r"\b(before|after|between|until|through|last (?:week|month|year)|next (?:week|month|year)|"
         r"previous (?:week|month|year)|\d+ (?:weeks?|months?|years?) ago)\b", text, re.I)
-    matches = list(re.finditer(_DATE + "|" + _MONTH_DATE + r"|\b(?:today|yesterday|tomorrow)\b", text, re.I))
+    matches = list(re.finditer(_EXPLICIT_DATE + r"|\b(?:today|yesterday|tomorrow)\b", text, re.I))
     if unsupported or len(matches) > 1:
         return MemoryTimeQuery("unresolved_time", expression=text)
-    match = re.search(_DATE + "|" + _MONTH_DATE + r"|\b(?:today|yesterday|tomorrow)\b", text, re.I)
+    match = matches[0] if matches else None
     if match:
         expression = match[0]
         if (mode == "valid_range" and expression.lower() in {"today", "tomorrow"}
@@ -224,13 +226,15 @@ def interpret_time_query(text: str, *, now: datetime, timezone_name="UTC") -> Me
         start = parse_source_date(expression, observed_at=now.isoformat(), timezone_name=timezone_name)
         if start:
             begin = utc_timestamp(start)
-            if "T" in expression:
+            if (_TIME_ON_DATE.fullmatch(expression)
+                    or (re.fullmatch(_DATE, expression, re.I) and "T" in expression.upper())):
                 end = (begin + timedelta(microseconds=1)).isoformat()
             else:
                 end = (begin.astimezone(zone) + timedelta(days=1)).astimezone(UTC).isoformat()
             if re.search(r"\bsince\s+" + re.escape(expression), text, re.I):
                 mode, end = "observed_range", now.astimezone(UTC).isoformat()
             return MemoryTimeQuery(mode, start, end, expression)
+        return MemoryTimeQuery("unresolved_time", expression=expression)
     return MemoryTimeQuery("current", now.astimezone(UTC).isoformat())
 
 

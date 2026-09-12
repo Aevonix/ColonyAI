@@ -75,6 +75,35 @@ def test_unsupported_request_time_remains_unresolved(query_text):
     assert interpret_time_query(query_text, now=NOW).mode == 'unresolved_time'
 
 
+@pytest.mark.parametrize('operand,zone,expected', [
+    ('16:45 UTC on 18 September 2026', 'America/New_York', '2026-09-18T16:45:00+00:00'),
+    ('"16:45 UTC on 18 September 2026"', 'America/New_York', '2026-09-18T16:45:00+00:00'),
+    ('12:45 on September 18, 2026', 'America/New_York', '2026-09-18T16:45:00+00:00'),
+    ('16:45:30 UTC on September 18, 2026', 'UTC', '2026-09-18T16:45:30+00:00'),
+])
+def test_clock_query_selects_one_side_of_same_day_correction(operand, zone, expected):
+    now = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    earlier = {'value': 'River', 'valid_from': '2026-09-18T12:00:00+00:00',
+               'valid_to': '2026-09-18T18:00:00+00:00'}
+    later = {'value': 'Lake', 'valid_from': '2026-09-18T18:00:00+00:00'}
+    query = interpret_time_query('Where was the probe as of ' + operand + '?',
+                                 now=now, timezone_name=zone)
+    assert query.mode == 'valid_range'
+    assert query.start == expected
+    assert (datetime.fromisoformat(query.end) - datetime.fromisoformat(query.start)).total_seconds() == 0.000001
+    assert [row['value'] for row in [earlier, later] if query.accepts_claim(row)] == ['River']
+    day = interpret_time_query('Where was the probe on 18 September 2026?',
+                               now=now, timezone_name=zone)
+    assert [row['value'] for row in [earlier, later] if day.accepts_claim(row)] == ['River', 'Lake']
+
+
+def test_ambiguous_clock_query_does_not_fall_back_to_current_memory():
+    query = interpret_time_query('Where was the probe as of 1:30 on 1 November 2026?',
+        now=NOW, timezone_name='America/New_York')
+    assert query.mode == 'unresolved_time'
+    assert not query.accepts_claim({'valid_from': '2026-01-01T00:00:00+00:00'})
+
+
 @pytest.mark.asyncio
 async def test_pasted_report_remains_recallable_at_its_actual_capture_time(source_app, tmp_path, monkeypatch):
     monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
