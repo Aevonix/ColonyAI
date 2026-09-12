@@ -166,3 +166,54 @@ additional actual observations and explicit treatment of any changed batching.
 The 6,000-character budget is unchanged. Existing expected-source labels measure
 coverage, validity, forbidden evidence, abstention and conflicts; extra eligible
 sources need separate relevance assessment before they can be called junk.
+
+
+## Source-only evidence quality cohorts
+
+`--source-only` reuses the same source ledger, LanceDB index, embedding provider,
+annotation expansion and `SelectionCapture` for one `canonical_hybrid` arm.
+It merges ten lexical and fifteen semantic hits before the existing twenty-document
+reranker bound and five-record/6,000-character packet. It skips extraction, graph
+rows and caption extras. No production default changes. This boundary tests
+retrieval of imported evidence, not native memory formation or final answer quality.
+
+In this mode each fixture record may set `role` to `user`, `assistant` or `tool`
+(default `user`). Its `content` string is stored exactly, including raw tool JSON;
+tools are not recast as human statements. Optional fixture `annotations` contain
+`id`, `target`, `excerpt`, `correction` and `author_principal`. These go through the
+real source-annotation API and preserve original revision and annotation ancestry.
+All sources belong to one synthetic owner; this is not an authority test.
+
+Optional per-query `relevance` maps source IDs to `answer_useful`, `context_only`
+or `irrelevant`. `required_evidence` lists exact necessary spans. These labels
+are consumed only after selection. `useful_packet_pass` requires the existing
+strict result, required evidence and no irrelevant or unlabeled selected source.
+Annotation bundles are scored against their corrected original source; exact
+annotation IDs and versions remain in the replay artifact. Eligible extra sources
+are therefore no longer silently called useful. A complete packet can still be
+misinterpreted by a model.
+
+Use `--split development` to measure only calibration questions, freeze one
+candidate decision, then use `--split holdout` with the same marked state.
+New held-out questions and labels must be authored before viewing their scores;
+previously inspected questions are regression cases. Keep private evidence and
+locally authored held-out fixtures outside the public repository.
+
+```sh
+python benchmarks/source_recall/run.py --source-only --split development   --fixture /private/frozen-evidence.json --state-dir /tmp/source-quality   --output /private/development-first.json --threshold "$TRIAL_CUTOFF"
+python benchmarks/source_recall/run.py --source-only --split holdout   --fixture /private/frozen-evidence.json --state-dir /tmp/source-quality   --output /private/holdout-first.json --threshold "$TRIAL_CUTOFF"
+```
+
+Only the explicit benchmark embedding and reranker environment variables are
+required here. `COLONY_BENCH_RERANKER_REVISION` and
+`COLONY_BENCH_RECALL_INDEX_GENERATION` optionally declare known revisions;
+otherwise they remain `unverified`. The calibration metadata uses the serving
+correction-first candidate format and records embedding dimensions. The explicit
+trial cutoff and matching stamp are not a new qualification of that cutoff.
+Declare the trial cutoff before examining held-out results. A new query
+instruction or embedding identity requires a new disposable state. A reranker
+change can reuse the same prepared corpus, with new scores and calibration metadata. Preserve
+first failures, exact candidate order, returned scores and selected evidence.
+Changing cutoff can reuse a captured score set only if the actual outgoing query,
+ordered documents and top-k remain identical. Changing representation or expanding
+the candidate cap requires new measurements.

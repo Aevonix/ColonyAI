@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from assessment import assess
 import pytest
-from run import SelectionCapture
+from run import SelectionCapture, prepare_sources, environment
 from apsimo.intelligence.graph.recall import calibration_fingerprint
 from apsimo.intelligence.graph.selection import RecallSelector
 
@@ -70,6 +70,30 @@ def test_http_run_reuses_extraction_and_rejects_unmarked_state(tmp_path):
                 assert row['replay']['query']
                 assert 'selected' in row['replay'] and 'rerank_calls' in row['replay']
         assert calls.count('/v1/chat/completions') == 1
+        # The new boundary uses the same real SQLite/Lance/selector pipeline,
+        # but no extraction, graph embedding or caption extras. This local
+        # fixture HTTP server is a transport stub, never a real model.
+        fixture['records'][0]['role'] = 'tool'
+        fixture['records'][0]['content'] = json.dumps({'output': '1: Carton limit: 12'})
+        fixture['annotations'] = [{'id':'correction', 'target':fixture['records'][0]['id'],
+            'excerpt':'Carton limit: 12', 'correction':'The carton limit is 9.', 'author_principal':'owner'}]
+        fixture['queries'][0].update(query='What is the carton limit?', split='holdout')
+        source_only_fixture = tmp_path / 'source-only.json'
+        source_only_fixture.write_text(json.dumps(fixture))
+        source_only_output = tmp_path / 'source-only-result.json'
+        source_only_env = {key:value for key,value in env.items() if not key.startswith('COLONY_BENCH_CHAT_')}
+        completed = subprocess.run([sys.executable, str(ROOT / 'run.py'), '--source-only', '--split','holdout',
+            '--fixture', str(source_only_fixture), '--state-dir', str(tmp_path / 'source-only-state'),
+            '--output', str(source_only_output), '--threshold','.95'], env=source_only_env,
+            capture_output=True, text=True, timeout=60)
+        assert completed.returncode == 0, completed.stderr
+        result = json.loads(source_only_output.read_text())
+        assert len(result['results']) == 1 and result['caption_results'] == []
+        assert result['source_claim_job_status'] == {} and result['extraction_model'] is None
+        assert result['source_only'] and result['split'] == 'holdout'
+        assert result['calibration']['candidate_format'] == 'grounded-quotation-bundles-v2-corrections-first'
+        assert 'The carton limit is 9.' in result['results'][0]['context']
+        assert calls.count('/v1/chat/completions') == 1
         # Prevent the harness's disposable graph-table reset from ever opening
         # an unmarked existing state directory, even with valid model settings.
         (state / 'benchmark-state.json').unlink()
@@ -88,6 +112,67 @@ def test_assessment_rejects_missing_conflict_and_erased_derived_evidence():
     assert not assess(query, [{'source_uri': 'turn:derived'}], records)['strict_pass']
     query.update(expected=['derived'], abstain=False, conflict=True)
     assert not assess(query, [{'source_uri': 'turn:derived'}], records)['strict_pass']
+
+
+def test_source_only_preparation_keeps_tool_role_and_owner_correction(tmp_path):
+    from apsimo.turns import TurnIdempotencyLedger
+    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from apsimo.beliefs.source_time import MemoryTimeQuery
+    from apsimo.turns.source_annotations import expand
+    ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
+    raw = json.dumps({'output': '1: Carton limit: 12\n2: Applies to the narrow rack.'})
+    fixture = {'records': [{'id': 'original', 'role': 'tool', 'at': '2026-01-01', 'content': raw}],
+               'annotations': [{'id': 'limit-correction', 'target': 'original',
+                   'excerpt': 'Carton limit: 12', 'correction': 'The narrow rack limit is 9 cartons.',
+                   'author_principal': 'owner'}]}
+    prepare_sources(ledger, fixture)
+    prepare_sources(ledger, fixture)  # An exact marked-state resume adds no second note.
+    with ledger._connect() as db:
+        source = db.execute("SELECT messages_json FROM turn_sources WHERE turn_id='original'").fetchone()[0]
+        assert json.loads(source) == [{'role': 'tool', 'content': raw}]
+        assert db.execute('SELECT count(*) FROM source_claim_jobs').fetchone()[0] == 0
+        assert db.execute('SELECT count(*) FROM source_annotations').fetchone()[0] == 1
+    hits = ledger.search_sources('Carton limit', contact_id='owner', session_id='later')
+    _, rows = SourceClaimProjection(ledger).prepare_context([], hits,
+        contact_id='owner', session_id='later', time_query=MemoryTimeQuery())
+    rows = expand(ledger, rows, contact_id='owner', session_id='later')
+    assert any('The narrow rack limit is 9 cartons.' in row['content'] for row in rows)
+    assert any('attributed_correction' in row['content'] for row in rows)
+    references = {ref['source_id']:ref for row in rows for ref in row['_annotation_source_refs']}
+    assert 'original' in references and len(references) == 2
+    assert set(references) == {ref['source_id'] for ref in ledger.source_references(
+        list(references), contact_id='owner', session_id='later')}
+    result = assess({'principal':'owner', 'as_of':'2026-12-01', 'expected':['original'],
+        'relevance':{'original':'answer_useful'}, 'required_evidence':['limit is 9 cartons']}, rows,
+        [dict(fixture['records'][0], scope='private')])
+    assert result['useful_packet_pass']
+
+
+def test_usefulness_labels_distinguish_eligible_junk_and_missing_condition():
+    records = [dict(id=sid, scope='private', at='2026-01-01') for sid in ('result','request','scratch')]
+    query = dict(principal='owner', as_of='2026-01-02', expected=['result'],
+        relevance={'result':'answer_useful','request':'context_only','scratch':'irrelevant'},
+        required_evidence=['only when dry'])
+    answer = {'source_uri':'turn:result','content':'Use six clips only when dry.'}
+    request = {'source_uri':'turn:request','content':'Find the clip count.'}
+    scratch = {'source_uri':'turn:scratch','content':'Progress 20 percent.'}
+    assert assess(query, [answer,request], records)['useful_packet_pass']
+    junk = assess(query, [answer,scratch], records)
+    assert junk['strict_pass'] and not junk['useful_packet_pass']
+    assert junk['relevance']['irrelevant'] == ['scratch']
+    assert not assess(query, [dict(answer, content='Use six clips.')], records)['required_evidence_present']
+
+
+def test_source_only_environment_does_not_require_extraction(monkeypatch):
+    for key in list(os.environ):
+        if key.startswith('COLONY_BENCH_'):
+            monkeypatch.delenv(key)
+    for key, value in {'EMBED_BASE_URL':'http://fixture', 'EMBED_MODEL':'embed', 'EMBED_DIMS':'4',
+                       'RERANKER_BASE_URL':'http://fixture', 'RERANKER_MODEL':'rerank'}.items():
+        monkeypatch.setenv('COLONY_BENCH_' + key, value)
+    assert 'COLONY_CHAT_MODEL' not in environment(source_only=True)
+    with pytest.raises(ValueError, match='CHAT_BASE_URL'):
+        environment()
 
 
 async def replay_observation(capture, monkeypatch, *, limit=None):
