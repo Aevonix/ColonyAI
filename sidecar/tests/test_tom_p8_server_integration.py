@@ -1435,7 +1435,7 @@ async def test_context_renders_only_authenticated_enveloped_facts(
     included = facts.create_fact(
         contact_id="alice", fact="allowed alice context",
         confidence=0.9, source_lineage=current_fact_source(
-            facts, tmp_path, 'alice', 'allowed alice context'))
+            facts, tmp_path / 'state', 'alice', 'allowed alice context'))
     runtime.append_shared_fact(included, producer=alice, origin="server")
     facts.create_fact(
         contact_id="alice", fact="legacy row must not render",
