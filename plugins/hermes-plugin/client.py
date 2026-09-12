@@ -1711,6 +1711,7 @@ class ApsimoClient:
         sender: Mapping[str, str] | None = None,
         channel_id: str = "",
         checkpoint_messages: Sequence[Mapping[str, Any]] | None = None,
+        observation: Mapping[str, Any] | None = None,
         assistant_source_refs: Sequence[Mapping[str, str]] | None = None,
         assistant_input_refs: Sequence[Mapping[str, str]] | None = None,
         source_only: bool | None = None,
@@ -1786,6 +1787,12 @@ class ApsimoClient:
             if checkpoint_messages is not None:
                 payload["checkpoint_messages"] = list(checkpoint_messages)
 
+            if observation is not None:
+                if not turn_id:
+                    return False
+                payload = {key: payload[key] for key in ('identity', 'context')}
+                payload['observation'] = dict(observation)
+
             video_source = any(isinstance(message, dict) and isinstance(message.get('content'), list)
                 and any(isinstance(block, dict) and block.get('type') == 'input_video' for block in message['content'])
                 for message in [payload.get('user_message'), payload.get('assistant_message'),
@@ -1802,7 +1809,8 @@ class ApsimoClient:
                     for message in [payload.get('user_message'), payload.get('assistant_message'),
                                     *(payload.get('checkpoint_messages') or [])])
                 # Mixed sources must also require a video-aware receiver.
-                route = ('turns/source-media/video' if video_source else
+                route = ('turns/source-observation' if observation is not None else
+                         'turns/source-media/video' if video_source else
                          'turns/source-media/document' if document_source else
                          'turns/source-media/audio' if audio_source else
                          'turns/source-linked/input-parent' if assistant_input_refs else

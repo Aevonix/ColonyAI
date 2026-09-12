@@ -32,7 +32,10 @@ from apsimo.api.authority import (
     resolve_turn_person,
 )
 
+from apsimo.turns.tool_observations import ToolObservation
 from apsimo.api.schemas.host import (
+    HostIdentity,
+    HostTurnContext,
     HostConfigureRequest,
     HostConfigureResponse,
     ModelInfo,
@@ -4175,6 +4178,37 @@ async def task_instruction_sync(turn_id: str, body: TurnSyncRequest, response: R
         raise HTTPException(422, detail='direct_owner_instruction_required')
     request.state.task_instruction_only = True
     return await turns_sync_v2(turn_id, body, response, request)
+
+
+class ToolObservationEnvelope(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    identity: HostIdentity
+    context: HostTurnContext
+    observation: ToolObservation
+
+
+@v2_router.put('/turns/source-observation/{turn_id:path}', response_model=TurnSyncResponse)
+def source_observation_sync(turn_id: str, body: ToolObservationEnvelope, response: Response, request: Request):
+    from apsimo.api.routers.executions import authorized_viewer
+    from apsimo.turns import get_turn_idempotency_ledger
+    from apsimo.turns.idempotency import SourceErased
+    from apsimo.turns.tool_observations import record
+    person, owner = authorized_viewer(request, body.context.contact_id, scope='turns:write')
+    if not owner:
+        raise HTTPException(403, detail='owner_observation_required')
+    if body.context.turn_id != turn_id:
+        raise HTTPException(422, detail='observation_identity_mismatch')
+    try:
+        created = record(get_turn_idempotency_ledger(get_state_dir()), body.observation,
+            contact_id=person, session_id=body.context.session_id, source_id=turn_id)
+    except SourceErased:
+        return TurnSyncResponse(accepted=False, source_recorded=False, continuity_updated=False,
+                                skipped_reason='source_erased')
+    except ValueError as exc:
+        raise HTTPException(409, detail=str(exc)) from exc
+    response.status_code = 201 if created else 200
+    return TurnSyncResponse(accepted=True, source_recorded=True, continuity_updated=False,
+                            skipped_reason='tool_observation_only')
 
 
 @v2_router.put("/turns/{turn_id:path}", response_model=TurnSyncResponse)
