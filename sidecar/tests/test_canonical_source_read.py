@@ -8,7 +8,7 @@ import pytest
 from apsimo.api.middleware import ApiKeyMiddleware
 from apsimo.beliefs.source_projection import SourceClaimProjection
 from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.intelligence.graph.recall import pack_memory_context
+from apsimo.memory.recall import pack_memory_context
 from apsimo.turns import TurnIdempotencyLedger
 from apsimo.turns.source_read import read
 from test_scoped_api_authority import _principal, _write_keyring

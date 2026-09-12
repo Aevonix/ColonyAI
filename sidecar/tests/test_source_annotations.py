@@ -92,7 +92,7 @@ def add(ledger, **changes):
 
 
 def test_correction_ranking_preserves_complete_attributed_output_and_all_notes(annotated_app):
-    from apsimo.intelligence.graph.recall import source_candidates
+    from apsimo.memory.recall import source_candidates
     from apsimo.turns.source_annotations import expand
     _, ledger = annotated_app
     first = add(ledger)
@@ -119,8 +119,8 @@ def test_correction_ranking_preserves_complete_attributed_output_and_all_notes(a
 
 @pytest.mark.asyncio
 async def test_correction_representation_invalidates_previous_cutoff(monkeypatch):
-    from apsimo.intelligence.graph.recall import calibration_fingerprint, provider_calibration_metadata
-    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.memory.recall import calibration_fingerprint, provider_calibration_metadata
+    from apsimo.memory.selection import RecallSelector
     class Provider:
         def calibration_metadata(self):
             return {'provider': 'fixture', 'model': 'fixture', 'weights_revision': 'fixed'}
@@ -267,7 +267,7 @@ async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_publish
     app, ledger = annotated_app
     result = add(ledger)
     from apsimo.api.routers import host
-    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.memory.selection import RecallSelector
     from apsimo.turns.source_annotations import expand
     original = {'id': 'belief-bundle', 'content': REPORT, 'source_turn_ids': ['report'],
                 'kind': 'source_quote', 'atomic_evidence': True, 'relevance': 1}
@@ -297,7 +297,7 @@ async def test_correction_is_not_split_by_rerank_and_stale_packet_is_not_publish
 async def test_first_annotation_during_selection_cannot_publish_uncorrected_evidence(annotated_app, monkeypatch, same_message):
     app, ledger = annotated_app
     from apsimo.api.routers import host
-    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.memory.selection import RecallSelector
     sibling = 'The independent compass is green.'
     report = 'Quartz ledger report: ' + REPORT
     ledger.record_source('mixed-report', contact_id='person', session_id='work', messages=[

@@ -1260,7 +1260,7 @@ class ColonyGraph:
                             memories.append(mem)
 
                 if hybrid:
-                    from .recall import fuse_candidates
+                    from apsimo.memory.recall import fuse_candidates
                     candidate_limit = min(max(limit * 5, limit), max(100, limit))
                     lexical = await self._recall_lexical(
                         query, candidate_limit, min_strength, min_confidence,
@@ -1394,7 +1394,7 @@ class ColonyGraph:
         content reaches Python/reranking. A missing/populating index degrades
         to the existing vector/keyword path.
         """
-        from .recall import FULLTEXT_INDEX, lexical_query
+        from .queries import FULLTEXT_INDEX, lexical_query
         search_text = lexical_query(query)
         if not search_text:
             return []
@@ -1468,7 +1468,7 @@ class ColonyGraph:
         self, query, memories, limit, *, strength_ranking=False,
     ):
         # The same selector is used for mixed source/belief turn context.
-        from .selection import RecallSelector
+        from apsimo.memory.selection import RecallSelector
         selector = getattr(self, "_recall_selector", None)
         if selector is None:
             selector = self._recall_selector = RecallSelector(

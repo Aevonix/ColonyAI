@@ -9,7 +9,7 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from apsimo.intelligence.graph.recall import pack_memory_context, render_memory_context
+from apsimo.memory.recall import pack_memory_context, render_memory_context
 from apsimo.turns import TurnIdempotencyLedger
 from apsimo.turns.media import SourceMedia
 from apsimo.turns.source_annotations import expand, current_candidates

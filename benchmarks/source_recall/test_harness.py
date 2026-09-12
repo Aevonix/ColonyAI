@@ -12,8 +12,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from assessment import assess
 import pytest
 from run import SelectionCapture, prepare_sources, environment
-from apsimo.intelligence.graph.recall import calibration_fingerprint
-from apsimo.intelligence.graph.selection import RecallSelector
+from apsimo.memory.recall import calibration_fingerprint
+from apsimo.memory.selection import RecallSelector
 
 ROOT = Path(__file__).resolve().parent
 

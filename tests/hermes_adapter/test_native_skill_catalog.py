@@ -34,6 +34,22 @@ context=ApsimoMemoryProvider.__new__(ApsimoMemoryProvider)._format_sections(sect
 assert 'behavioral_correction' not in context and 'Available Skills' not in context,context
 from agent.prompt_builder import build_skills_system_prompt
 from tools.skills_tool import skills_list,skill_view
+# Derive availability from native selected schemas, including an explicit
+# deferral override. A bridge or a group summary alone grants no skill tool.
+from apsimo_hermes.skill_context import SkillContext, _tool_names
+from model_tools import get_tool_definitions
+from tools.tool_search import ToolSearchConfig, assemble_tool_defs, bridge_tool_schemas
+definitions=get_tool_definitions(enabled_toolsets=['skills'],quiet_mode=True,skip_tool_search_assembly=True)
+deferred=assemble_tool_defs(definitions,config=ToolSearchConfig.from_raw({
+    'enabled':'on','defer':['skills_list','skill_view','skill_manage']})).tool_defs
+assert 'skill_view' not in {row['function']['name'] for row in deferred}
+assert 'skill_view' in _tool_names({'tools':deferred})
+disabled=get_tool_definitions(enabled_toolsets=['skills'],disabled_toolsets=['skills'],
+    quiet_mode=True,skip_tool_search_assembly=True)
+for unavailable in ({'tools':None},{'tools':disabled},{'tools':bridge_tool_schemas(3)},
+        {'tools':deferred,'tool_choice':'none'},
+        {'tools':[row for row in definitions if row['function']['name']!='skill_view']}):
+    assert SkillContext()(unavailable) is None,unavailable
 catalog=build_skills_system_prompt(available_tools={'skills_list','skill_view'},
     skills_dir_override=home/'skills')
 assert 'manual-index' in catalog and 'Organize printed manuals with colored tabs.' in catalog,catalog
@@ -44,8 +60,72 @@ assert viewed.get('success') and 'Use one color for each manual category.' in vi
 assert 'behavioral_correction' not in catalog
 missing=json.loads(skill_view('behavioral_correction',preprocess=False))
 assert not missing.get('success'),missing
+
+# Install from the built wheel through the same no-model setup used by an
+# existing profile. Exercise discovery and real native tool-result delivery.
+from types import SimpleNamespace as NS
+from unittest.mock import MagicMock, patch
+from apsimo import setup
+from apsimo.setup_skills import BUNDLE_PREFIX
+from apsimo.setup_hermes import _adapter_resources
+from agent.skill_utils import parse_frontmatter
+assert setup.run_init(None, NS(skills_only=True, hermes_home=str(home), adapter_wheel=sys.argv[4])) == 0
+bundled={name[len(BUNDLE_PREFIX):-len('/SKILL.md')]:content.decode()
+    for name,content in _adapter_resources(sys.argv[4]).items()
+    if name.startswith(BUNDLE_PREFIX) and name.endswith('/SKILL.md')}
+assert 'apsimo-deep-research' in bundled
+from agent.prompt_builder import clear_skills_system_prompt_cache
+# This process already built a catalog above. An ordinary fresh process has
+# an empty cache; installation intentionally does not mutate a live gateway.
+clear_skills_system_prompt_cache(clear_snapshot=True)
+catalog=build_skills_system_prompt(available_tools={'skills_list','skill_view'},
+    skills_dir_override=home/'skills')
+listed=json.loads(skills_list())
+for name,source in bundled.items():
+    frontmatter,body=parse_frontmatter(source)
+    assert frontmatter['name']==name
+    assert name in catalog and frontmatter['description'][:40] in catalog,catalog
+    assert body.strip() not in catalog
+    assert any(row['name']==name for row in listed['skills']),listed
+    viewed=json.loads(skill_view(name,preprocess=False))
+    assert viewed.get('success') and viewed['content']==source,viewed
+from run_agent import AIAgent
+import run_agent
+target='run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
+total_requests=0
+for name,source in sorted(bundled.items()):
+    frontmatter,body=parse_frontmatter(source)
+    requests=[]
+    def completion(**kwargs):
+        requests.append(json.loads(json.dumps(kwargs['messages'])))
+        if len(requests)==1:
+            system='\n'.join(str(row.get('content','')) for row in requests[-1] if row['role']=='system')
+            assert name in system and frontmatter['description'][:40] in system,system
+            assert body.strip() not in system
+            tool=NS(id='load-research-skill',type='function',function=NS(name='skill_view',
+                arguments=json.dumps({'name':name})))
+            message=NS(content=None,tool_calls=[tool]); reason='tool_calls'
+        else:
+            assert len(requests)==2, 'Unexpected extra completion'
+            result=next(row['content'] for row in requests[-1] if row.get('tool_call_id')=='load-research-skill')
+            loaded=json.loads(result)
+            assert loaded['success'] and loaded['content']==source,loaded
+            message=NS(content='RESEARCH_SKILL_LOADED',tool_calls=None); reason='stop'
+        return NS(choices=[NS(message=message,finish_reason=reason)],model='fixture/model',usage=None)
+    client=MagicMock(); client.chat.completions.create.side_effect=completion
+    with patch(target,return_value=client):
+        agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',
+            model='fixture/model',max_iterations=3,quiet_mode=True,skip_context_files=True,
+            skip_memory=True,platform='cli',enabled_toolsets=['skills'])
+        agent._use_prompt_caching=False; agent.compression_enabled=False; agent.save_trajectories=False
+        outcome=agent.run_conversation('Load the workflow '+name+'.',task_id='bundled-skill-fixture-'+name)
+        assert outcome['final_response']=='RESEARCH_SKILL_LOADED',outcome
+        agent.close()
+    assert len(requests)==2
+    total_requests+=len(requests)
 print(json.dumps({'sidecar_internal_catalog_absent':True,'actual_native_skill_index_preserved':True,
-    'actual_native_skill_list_and_view':True,'model_calls':0,'network':0}))
+    'actual_native_skill_list_and_view':True,'bundled_skill_delivered_to_native_request':True,
+    'bundled_skills':sorted(bundled),'controlled_sdk_completions':total_requests,'model_calls':0,'network':0}))
 '''
 
 
@@ -55,5 +135,6 @@ def test_native_skill_index_and_view_remain_authoritative(artifacts, tmp_path):
         pytest.skip('Install qualified Hermes for native skill catalog integration')
     env = environment(tmp_path)
     env.update(COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result = run_python('-I', '-B', '-c', PROBE, artifacts[3], ROOT/'sidecar', native, cwd=tmp_path, env=env)
+    result = run_python('-I', '-B', '-c', PROBE, artifacts[3], ROOT/'sidecar', native, artifacts[1], cwd=tmp_path, env=env)
     assert '"actual_native_skill_list_and_view": true' in result.stdout
+    assert '"bundled_skill_delivered_to_native_request": true' in result.stdout

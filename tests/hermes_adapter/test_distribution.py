@@ -25,6 +25,9 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
         "apsimo_hermes/apsimo_hostworker/catalog.py": "hostworker/apsimo_hostworker/catalog.py",
         "apsimo_hermes/apsimo_hostworker/contract.py": "hostworker/apsimo_hostworker/contract.py",
     }
+    for skill in (ROOT/'plugins/hermes-plugin/bundled_skills').glob('*/SKILL.md'):
+        expected['apsimo_hermes/bundled_skills/'+str(skill.relative_to(ROOT/'plugins/hermes-plugin/bundled_skills'))] = str(skill.relative_to(ROOT))
+    assert 'apsimo_hermes/bundled_skills/apsimo-deep-research/SKILL.md' in expected
     with zipfile.ZipFile(wheel) as archive:
         names = archive.namelist()
         for destination, canonical in expected.items():

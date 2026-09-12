@@ -2727,11 +2727,28 @@ def register(ctx: Any) -> None:
             'revalidate_input': check_supplied_input})
     ctx.register_middleware("tool_execution", observe_tool)
 
+    from .skill_context import SkillContext
+    skill_context = SkillContext()
+
+    def finish_request(result, **kwargs):
+        # Native callbacks receive the original request independently. Apply
+        # skill changes here so they cannot replace checked memory or tools.
+        try:
+            refreshed = skill_context(result['request'], **kwargs)
+        except Exception as error:
+            # Preserve native callback isolation without discarding the
+            # source checks already completed by this callback.
+            logger.warning("Skill context refresh failed: %s", type(error).__name__)
+        else:
+            if refreshed is not None:
+                result['request'] = refreshed['request']
+        return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
+
     def reconcile_request(request, **kwargs):
         from .request_capabilities import describe
         if native_drafts is not None and native_drafts.worker:
             result = {'request': describe(request)}
-            return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
+            return finish_request(result, **kwargs)
         _TRANSPORT_SCOPES.bind_current_session(**kwargs)
         scope = _TRANSPORT_SCOPES.for_execution(
             session_id=str(kwargs.get('session_id') or ''),
@@ -2752,7 +2769,7 @@ def register(ctx: Any) -> None:
         result['request'] = tool_observations.checked(result['request'], scope, kwargs.get('api_request_id'),
             api_mode=str(kwargs.get('api_mode') or ''))
         native_memory.checked(result['request'], scope)
-        return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
+        return finish_request(result, **kwargs)
 
     def commitment_work_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}

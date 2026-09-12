@@ -224,15 +224,63 @@ response=api.post('/v1/host/memory/sources/forget',json={'contact_id':'contact-a
 assert response.status_code==200
 from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import apply_llm_request_middleware
+from agent.prompt_builder import build_skills_system_prompt
+from model_tools import get_tool_definitions
+# Hermes invokes every registered callback with the original request, then
+# uses the last returned payload. A skill update must therefore transform the
+# already checked request, never replace it with an earlier evidence copy.
+skill=home/'skills'/'apsimo-erasure-fixture'/'SKILL.md'
+skill.parent.mkdir(parents=True)
+def write_skill(revision):
+    skill.write_text('---\nname: apsimo-erasure-fixture\ndescription: Index manuals using '+revision+'.\n---\n'
+                     'Use the '+revision+' tab.\n')
+write_skill('amber')
+frozen_skills=build_skills_system_prompt(available_tools={'skills_list','skill_view'},
+    skills_dir_override=home/'skills')
+assert 'Index manuals using amber.' in frozen_skills,frozen_skills
+write_skill('cobalt')
+skill_tools=get_tool_definitions(enabled_toolsets=['skills'],quiet_mode=True)
+assert 'skill_view' in {row['function']['name'] for row in skill_tools}
 invoke_hook('pre_llm_call', session_id='image-resume', task_id='image-task', turn_id='image-turn', platform='cli',
     sender_id='', user_message='Continue after image forget', conversation_history=[])
-filtered=apply_llm_request_middleware({'messages':[{'role':'user','content':enriched}]},
-    session_id='image-resume',task_id='image-task',turn_id='image-turn').payload
+checked=apply_llm_request_middleware({'messages':[{'role':'system','content':frozen_skills},
+    {'role':'user','content':enriched}],'tools':skill_tools},
+    session_id='image-resume',task_id='image-task',turn_id='image-turn',platform='cli')
+filtered=checked.payload
 assert 'neutral-fixture' not in json.dumps(filtered) and 'Neutral original pixels' not in json.dumps(filtered)
+assert 'Index manuals using cobalt.' in json.dumps(filtered),filtered
+assert 'Use the cobalt tab.' not in json.dumps(filtered),filtered
+assert any(row.get('reason')=='source_erasure_checked' for row in checked.trace),checked.trace
+# A failed optional refresh retains the checked payload, matching native
+# callback isolation without letting its exception discard source filtering.
+with patch('apsimo_hermes.skill_context.SkillContext.__call__',side_effect=OSError('fixture skill read failed')) as refresh_failure:
+    refresh_failed=apply_llm_request_middleware({'messages':[{'role':'system','content':frozen_skills},
+        {'role':'user','content':enriched}],'tools':skill_tools},
+        session_id='image-resume',task_id='image-task',turn_id='image-turn',platform='cli')
+refresh_failure.assert_called_once()
+assert 'neutral-fixture' not in json.dumps(refresh_failed.payload),refresh_failed.payload
+assert any(row.get('reason')=='source_erasure_checked' for row in refresh_failed.trace),refresh_failed.trace
+# A native worker whose supplied task input was erased must withhold tools.
+# Skill refresh sees that reduced payload and cannot reopen the old toolset.
+from apsimo_hermes.input_provenance import supplied_input
+from apsimo_hermes.client import source_message_hash
+with supplied_input(contact_id='contact-a',session_id='blocked-input',
+        input_refs=[{'source_id':'native-erasure-source',
+            'input_message_hash':source_message_hash('original',{'role':'user','content':fact})}],
+        source_refs=[original_ref]):
+    invoke_hook('pre_llm_call',session_id='blocked-input',task_id='blocked-task',turn_id='blocked-turn',
+        platform='cli',sender_id='',user_message='Act on the supplied task input.',conversation_history=[])
+    unavailable=apply_llm_request_middleware({'messages':[{'role':'system','content':frozen_skills},
+        {'role':'user','content':'Act on the supplied task input.'}],'tools':skill_tools},
+        session_id='blocked-input',task_id='blocked-task',turn_id='blocked-turn',platform='cli')
+assert not unavailable.payload.get('tools'),unavailable.payload
+assert 'neutral-fixture' not in json.dumps(unavailable.payload),unavailable.payload
+assert any(row.get('reason')=='source_input_unavailable' for row in unavailable.trace),unavailable.trace
 print(json.dumps({'native_compressor':True,'native_persist_resume':True,'before_present':True,
     'current_automatic_recall_consumed':True,'full_native_identity_and_deployment_prompt':True,'exact_answer_lineage_erased':True,
     'standard_forget':True,'resumed_request_absent':True,'native_storage_gap_explicit':True,
-    'multimodal_whole_source_erased':True,'explicit_retelling_preserved':True,'controlled_inference':True}))
+    'multimodal_whole_source_erased':True,'skill_update_preserves_checked_erasure':True,
+    'skill_update_preserves_source_withholding':True,'explicit_retelling_preserved':True,'controlled_inference':True}))
 '''
 
 

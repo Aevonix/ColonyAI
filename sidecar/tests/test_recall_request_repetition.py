@@ -5,8 +5,8 @@ import json
 
 import pytest
 
-from apsimo.intelligence.graph.recall import source_candidates
-from apsimo.intelligence.graph.selection import RecallSelector
+from apsimo.memory.recall import source_candidates
+from apsimo.memory.selection import RecallSelector
 from apsimo.beliefs.source_projection import SourceClaimProjection
 from apsimo.beliefs.source_time import interpret_time_query
 from apsimo.turns.idempotency import TurnIdempotencyLedger, source_message_hash

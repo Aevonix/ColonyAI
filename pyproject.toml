@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apsimo-hermes"
-version = "1.4.4"
+version = "1.4.5"
 description = "Native Hermes general and memory adapters for Apsimo"
 readme = "docs/HERMES-ADAPTER.md"
 requires-python = ">=3.11,<3.14"
@@ -32,7 +32,7 @@ apsimo_hermes = "plugins/hermes-plugin"
 apsimo_memory = "plugins/apsimo-memory"
 
 [tool.setuptools.package-data]
-apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md"]
+apsimo_hermes = ["plugin.yaml", "SUPPLIED-INPUT.md", "bundled_skills/*/SKILL.md"]
 apsimo_memory = ["plugin.yaml", "SKILL.md"]
 
 [tool.pytest.ini_options]

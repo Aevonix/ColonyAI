@@ -48,7 +48,73 @@ through `hermes_agent.memory_providers`. Only the canonical `apsimo_hermes` and
 `apsimo_memory` packages are shipped. It maps the source files in
 `plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
 Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
-included in the adapter's private catalog package. The legacy source installer forwards to the guided, profile-aware installer.
+included in the adapter's private catalog package. The source installer forwards
+to the guided, profile-aware installer.
+
+## Bundled skills
+
+The adapter wheel includes `apsimo-deep-research` for cited investigations and
+decision reports, and `apsimo-skill-creator` for creating useful, concise Hermes
+skills. Both use the deployment's available tools without selecting a model or
+provider. New guided `apsimo init` attachments install them into the selected
+profile's native skill catalog.
+
+For an existing Hermes profile, install or explicitly refresh the bundled copy
+without instance setup, inference or configuration changes:
+
+```sh
+apsimo init --skills-only --hermes-home /path/to/selected/hermes-home
+```
+
+The command reads the installed `apsimo-hermes` distribution. Use
+`--adapter-wheel /path/to/apsimo_hermes-VERSION-py3-none-any.whl` to select an
+exact built artifact instead. For each packaged `apsimo-*` skill it writes
+`skills/<name>/SKILL.md` and its local `.apsimo-owned.json` hash record,
+retaining previous bytes in local backups on refresh. An unowned
+destination or modified bundled copy is preserved and reported as a conflict.
+Move a customized skill directory aside and give it a different name/path before
+installing the bundled revision. Other skills are untouched. An adapter refresh alone does
+not replace the profile's skill; run `--skills-only` explicitly for that update.
+
+Hermes advertises the name and short description in its compact skill index;
+`skills_list` discovers it and `skill_view(name="apsimo-deep-research")` loads
+the full instructions on demand. The installer does not inject the body into
+every prompt or enable otherwise disabled skill tools.
+
+With this adapter version active, Apsimo refreshes skill discovery in ongoing
+conversations. Before a model request it checks the current native skill
+locations and disabled state, hashes changed files including instruction bodies,
+and invalidates the native index/list caches when their inputs change. This
+covers ordinary profile skills created with Hermes tools as well as bundles.
+Unchanged skills retain their caches. A compact request-only notice supplies
+changed descriptions, identifies removed or disabled skills, and asks for a new
+`skill_view` before using stale loaded instructions. A current complete native
+tool result clears that skill's reload notice. Full bodies still arrive only
+through native skill loading.
+
+Native loading can preprocess templates, so returned instructions need not
+equal the raw file bytes. A new successful native load after Apsimo observed
+the same unchanged file version also settles the notice. A restored transformed
+copy without that observation requires one reload; Apsimo does not execute
+template commands to compare it.
+
+Refresh requires `skill_view` to be available directly or named in Hermes'
+current deferred-tool catalog. The default native configuration exposes skill
+tools directly. Explicit deferral works with full or names-only catalogs; a
+group-only or omitted catalog cannot establish an individual tool's availability,
+so Apsimo does not infer access or announce reloads from those summaries.
+
+Hermes' original session prompt and historical tool results remain stored
+unchanged. Current discovery notices explicitly supersede their stale skill
+information; no global conversation rewrite or new chat is required. Selecting
+this adapter code initially still uses the normal runtime activation lifecycle.
+Afterward, skill file changes require no process restart. Installing skills alone
+does not enable Apsimo in an otherwise native-only profile; that profile retains
+Hermes' own cache behavior. The installer never restarts a process.
+
+Built-artifact tests exercise native discovery and deliver the loaded skill
+through the real Hermes tool loop into a controlled SDK request. This proves
+instruction delivery, not research quality on a particular model.
 
 ## Activation and current limits
 

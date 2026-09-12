@@ -163,7 +163,7 @@ Install matching packages in a private environment:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.4.4" "apsimo-hermes[native-memory]==1.4.4"
+python -m pip install "apsimo[hermes]==1.4.5" "apsimo-hermes[native-memory]==1.4.5"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -171,6 +171,10 @@ The wizard selects a Hermes profile and creates private state outside Git. It
 asks for the agent identity, owner details, model and operating preferences,
 while preserving existing identity, channels and model settings. Replacing an
 existing memory provider is an explicit choice.
+
+The bundled Deep Research and Skill Creator skills provide reusable research and
+skill-authoring workflows. Hermes lists their short descriptions and loads the
+instructions when needed. They use the deployment's configured tools and models.
 
 Accept the startup option or run:
 

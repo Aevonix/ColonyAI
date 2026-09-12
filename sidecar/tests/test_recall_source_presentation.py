@@ -6,7 +6,7 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 
 from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.intelligence.graph.recall import pack_memory_context, render_memory_context
+from apsimo.memory.recall import pack_memory_context, render_memory_context
 from apsimo.turns import TurnIdempotencyLedger
 from test_procedure_source_context import ProcedureModel, candidates
 from test_source_claim_projection import claim

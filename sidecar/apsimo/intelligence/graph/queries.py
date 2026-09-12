@@ -7,6 +7,16 @@ and makes it easy to test / review / optimise in one place.
 Parameters are referenced with ``$param`` syntax for Neo4j driver binding.
 """
 
+FULLTEXT_INDEX = "memory_content_fulltext"
+
+
+def lexical_query(text: str, max_terms: int = 16) -> str:
+    """Literal words/identifiers, not caller-supplied Lucene operators."""
+    from apsimo.memory.recall import lexical_terms
+
+    return " OR ".join(f'"{word}"' for word in lexical_terms(text, max_terms))
+
+
 # ──────────────────────────────────────────────────────────────────────
 # Memory operations
 # ──────────────────────────────────────────────────────────────────────
