@@ -240,6 +240,8 @@ class ToolObservations:
                 or not isinstance(args['reason'], str) or not args['reason'].strip() or len(args['reason']) > 512):
             return json.dumps({'accepted': False, 'error': 'Nominate one completed current owner-turn call and a bounded future-use reason'})
         try:
+            if self.request_memory.supplied_snapshot(scope) is None:
+                raise ValueError('Current request source admission is unavailable; check memory/source readiness before retrying')
             with self._lock:
                 record = copy.deepcopy(self._turns.get(key, {}).get(args['call_id']))
             if (not record or context.get('api_request_id') not in record['visible']

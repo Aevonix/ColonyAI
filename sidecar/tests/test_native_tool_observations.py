@@ -45,9 +45,12 @@ def native(source_app, monkeypatch, tmp_path):
     plugin = _load_plugin('apsimo_original_tool_observation_test')
     class Client(plugin.ApsimoClient):
         outage = False
+        erasure_unavailable = False
         def _call(self, method, path, kwargs):
             if self.outage and '/source-observation/' in path:
                 return httpx.Response(503, request=httpx.Request(method, 'http://fixture'+path))
+            if self.erasure_unavailable and path == '/v1/host/memory/sources/erasures':
+                return httpx.Response(403, request=httpx.Request(method, 'http://fixture'+path))
             return http.request(method, path, **{k:v for k,v in kwargs.items() if k in {'json','params'}})
         def get(self, path, **kwargs): return self._call('GET', path, kwargs)
         def post(self, path, **kwargs): return self._call('POST', path, kwargs)
@@ -170,6 +173,26 @@ def test_failed_delivery_is_pending_and_same_outbox_retries_without_native_reexe
     assert n.retain()['source_recorded']
     assert 'files_written' in n.recall()['body']
     assert n.db._conn.execute("SELECT count(*) FROM messages WHERE role='tool'").fetchone()[0] == 1
+
+
+def test_native_unavailable_source_admission_reports_readiness_before_call_lookup(native):
+    n = native
+    n.scope['turn_id'] = 'source-unavailable-turn'
+    n.context.hooks['pre_llm_call'](**n.scope, platform='cli', sender_id='owner',
+        user_message=INSTRUCTION, conversation_history=n.messages)
+    n.clients[0].erasure_unavailable = True
+    first = n.request('api-1').payload
+    assert 'memory erasure freshness is unavailable' in str(first)
+    n.complete()
+    request = n.request(deferred=True).payload
+    assert RESULT in str(request)  # The read itself succeeded.
+    assert 'apsimo-observation-candidates-v1' not in str(request)
+    for call_id in ('invented-id', 'call-1'):
+        receipt = n.retain(call_id)
+        assert not receipt['accepted'] and not receipt['source_recorded']
+        assert receipt['error'] == ('Current request source admission is unavailable; '
+                                    'check memory/source readiness before retrying')
+    assert not [item for item in n.outbox.snapshot() if item['turn_id'].startswith('native-observation:')]
 
 
 def test_actual_native_anthropic_conversion_preserves_original_tool_nomination(native):
