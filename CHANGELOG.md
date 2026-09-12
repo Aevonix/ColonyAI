@@ -1,5 +1,27 @@
 # Changelog
 
+## v1.4.6 - source navigation and independent contacts
+
+The existing memory reader can list recorded tool observations belonging to a
+recalled request. The directory returns references that the agent can open
+through the existing source view. It does not add every related result to
+automatic recall. Pagination, participant scope, source revisions and correction
+or erasure checks apply to both the directory and opened originals. Model-authored
+selection explanations are labelled as navigation hints.
+
+One native model conversation recovered an authentic retained result omitted by
+the original recall selection and answered the requested repository facts. The
+full answer still failed quality review because it also inferred current
+compatibility from historical documentation. Other actual cases opened genuine
+sources but overstated completion status. These observations qualify bounded
+source access; ordinary recollection and reliable interpretation remain open.
+
+Contacts now initialize directly from their canonical SQLite store. Startup no
+longer backfills or prunes contacts using Neo4j Person nodes. Contact updates and
+imports no longer mirror scores or absorb contacts through the removed graph
+bridge. Existing identity, handle and correction records remain intact. Other
+graph consumers remain pending retirement.
+
 ## v1.4.5 - bundled skills and current instructions
 
 The adapter includes Deep Research and Skill Creator workflows. Guided setup
