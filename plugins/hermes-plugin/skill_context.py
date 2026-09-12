@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import OrderedDict
 import hashlib
+import json
 from pathlib import Path
 import re
 from threading import RLock
@@ -48,6 +49,34 @@ def _frozen_catalog(request):
         if isinstance(row, dict) and row.get('role') in {'system', 'developer'}:
             texts.extend(_texts(row.get('content')))
     return _catalog('\n'.join(texts))
+
+
+def _loaded_skills(request, files):
+    """Compare actual native skill_view results, including single wrappers.
+
+    Reuse the adapter's native call/result parser; prose in user messages is
+    never evidence that a skill was loaded. No historical rows are changed.
+    """
+    from .tool_observations import _request_results
+    calls, results = _request_results(request)
+    loaded = {}
+    for call_id, result in results.items():
+        identity = calls.get(call_id)
+        if not identity or identity[0] != 'skill_view':
+            continue
+        try:
+            row = json.loads(result if isinstance(result, str) else ''.join(_texts(result)))
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(row, dict) or row.get('success') is not True or not isinstance(row.get('name'), str):
+            continue
+        if row.get('dedup'):
+            continue  # The earlier complete result remains the comparison.
+        source = files.get(str(row.get('_source_path') or ''))
+        if isinstance(row.get('content'), str):
+            loaded[row['name']] = bool(source and source['name'] == row['name']
+                and source['sha256'] == hashlib.sha256(row['content'].encode()).hexdigest())
+    return loaded
 
 
 def _request_note(request, text):
@@ -103,12 +132,13 @@ class SkillContext:
         from agent.prompt_builder import build_skills_system_prompt
 
         home = Path(get_hermes_home())
-        key = str(home.resolve())
+        roots = [*get_project_skills_dirs(), *get_all_skills_dirs()]
+        key = (str(home.resolve()), str(context.get('platform') or ''),
+               tuple(str(path.resolve()) for path in roots))
         with self._lock:
             previous = self._snapshots.get(key)
             prior_files = previous['files'] if previous else {}
             files = {}
-            roots = [*get_project_skills_dirs(), *get_all_skills_dirs()]
             for directory in roots:
                 for filename in ('SKILL.md', 'DESCRIPTION.md'):
                     for path in iter_skill_index_files(directory, filename):
@@ -137,11 +167,15 @@ class SkillContext:
             rendered = build_skills_system_prompt(available_tools=tools, skills_dir_override=home/'skills')
             current = _catalog(rendered)
             updated = {row['name'] for path, row in files.items() if row['name'] in current
-                       and (not previous or seen is None or prior_files.get(path, {}).get('sha256') != row['sha256'])}
+                       and previous and prior_files.get(path, {}).get('sha256') != row['sha256']}
             # Keep the instruction-change notice for all calls in this task.
-            # Cold restoration cannot attest that an old loaded body is current.
+            # A complete current native tool result clears the reload notice,
+            # including when a cold process restored an old saved conversation.
             if seen is not None and seen['fingerprint'] == fingerprint:
                 updated.update(seen['updated'])
+            loaded = _loaded_skills(request, files)
+            updated.update(name for name, fresh in loaded.items() if name in current and not fresh)
+            updated.difference_update(name for name, fresh in loaded.items() if fresh)
             self._sessions[session] = {'fingerprint': fingerprint, 'updated': updated}
             self._sessions.move_to_end(session)
             while len(self._sessions) > 128:
@@ -161,7 +195,7 @@ class SkillContext:
                  'This current discovery information supersedes earlier skill descriptions and availability.']
         lines += [f'- {name}: {description}' for name, description in sorted(different.items())]
         if updated:
-            lines.append('Added, updated or not yet verified in this task: '+', '.join(sorted(updated))+'. '
+            lines.append('Added, updated or previously loaded instructions needing refresh: '+', '.join(sorted(updated))+'. '
                          'Before using these skills, reload them with skill_view and follow its current result; '
                          'prior loaded instructions may be superseded.')
         if removed:
