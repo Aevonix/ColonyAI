@@ -729,8 +729,8 @@ class TestContextAssembly:
         section_ids = [s["id"] for s in data.get("sections", [])]
         assert "colony-goals" in section_ids, f"Goals section missing. Got: {section_ids}"
 
-    def test_assemble_includes_skills(self, client):
-        """Context assembly includes available skills."""
+    def test_assemble_does_not_advertise_internal_executor_skills(self, client):
+        """The host's installed skill catalog is separate from sidecar executors."""
         data = _post(client, "/context/assemble", {
             "identity": {"host_id": "test"},
             "context": {"session_id": "s1", "contact_id": "c1"},
@@ -738,7 +738,7 @@ class TestContextAssembly:
             "limit": 10,
         })
         section_ids = [s["id"] for s in data.get("sections", [])]
-        assert "colony-skills" in section_ids, f"Skills section missing. Got: {section_ids}"
+        assert "colony-skills" not in section_ids, f"Internal executor catalog leaked into context: {section_ids}"
 
 
 # ===========================================================================
