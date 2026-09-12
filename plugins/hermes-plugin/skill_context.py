@@ -148,6 +148,7 @@ class SkillContext:
         from agent.skill_utils import (get_all_skills_dirs, get_project_skills_dirs,
             get_disabled_skill_names, iter_skill_index_files, parse_frontmatter)
         from agent.prompt_builder import build_skills_system_prompt
+        from model_tools import get_toolset_for_tool
 
         home = Path(get_hermes_home())
         roots = [*get_project_skills_dirs(), *get_all_skills_dirs()]
@@ -182,7 +183,9 @@ class SkillContext:
             seen = self._sessions.get(session)
             if changed or seen is None or seen['fingerprint'] != fingerprint:
                 _invalidate_native_caches(context.get('task_id'), catalog=changed)
-            rendered = build_skills_system_prompt(available_tools=tools, skills_dir_override=home/'skills')
+            toolsets = {get_toolset_for_tool(name) for name in tools} - {None, ''}
+            rendered = build_skills_system_prompt(available_tools=tools, available_toolsets=toolsets,
+                                                  skills_dir_override=home/'skills')
             current = _catalog(rendered)
             updated = {row['name'] for path, row in files.items() if row['name'] in current
                        and previous and prior_files.get(path, {}).get('sha256') != row['sha256']}
