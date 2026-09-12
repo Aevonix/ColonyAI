@@ -17,7 +17,7 @@ BASE = dict(entity_id='we-service', property_key='model', kind='observed', produ
 
 @pytest.fixture
 async def store(tmp_path):
-    value = WorldModelStore(WorldModelConfig(backend='sqlite', sqlite_path=str(tmp_path / 'world.db')))
+    value = WorldModelStore(WorldModelConfig(sqlite_path=str(tmp_path / 'world.db')))
     await value.connect()
     await value.upsert_entity(BaseEntity(id='we-service', name='Local inference', entity_type='product',
                                         properties={'model': 'unqualified-legacy', '_conf_model': .99}))
@@ -169,7 +169,7 @@ async def test_existing_batch_job_writes_only_quoted_canonical_reports_and_reche
     assert (await store.property_state(entity_id, 'model', **new_scope, source_ledger=ledger))['state'] == 'unknown'
 
 
-async def test_legacy_text_batch_has_no_typed_attribution_and_optional_backends_are_explicit(store, monkeypatch):
+async def test_unattributed_text_batch_does_not_create_typed_observations(store, monkeypatch):
     from apsimo.world_model.llm_extract import WorldLLMExtractor
     monkeypatch.setenv('COLONY_WORLD_LLM_EXTRACT', 'live')
     async def extract(texts):
@@ -180,13 +180,6 @@ async def test_legacy_text_batch_has_no_typed_attribution_and_optional_backends_
     worker._llm_batch = extract
     report = await worker.run(texts=['Nimbus Router runs blue.'])
     assert not report.get('property_observations')
-    saved = store._backend
-    try:
-        store._backend = object()
-        with pytest.raises(NotImplementedError, match='require_sqlite'):
-            await state(store)
-    finally:
-        store._backend = saved
 
 
 @pytest.mark.parametrize('text', [

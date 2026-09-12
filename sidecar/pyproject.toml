@@ -32,7 +32,6 @@ vectors = ["sentence-transformers>=3.0", "pandas>=2.0", "pyarrow>=15.0", "lanced
 hermes = ["apsimo-hermes>=1.4.4,<2"]
 mcp = ["mcp[cli]>=1.0,<2"]
 lancedb = ["lancedb>=0.6", "pyarrow>=14.0", "pandas>=2.0"]
-postgres = ["asyncpg>=0.29"]
 extraction = ["PyMuPDF>=1.24", "beautifulsoup4>=4.12"]
 video = ["av==18.1.0"]
 dev = [

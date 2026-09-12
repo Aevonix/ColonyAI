@@ -2378,7 +2378,6 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         "NEO4J_USER": existing.get("NEO4J_USER", "neo4j"),
         "NEO4J_PASSWORD": neo4j_password or existing.get("NEO4J_PASSWORD", ""),
         "NEO4J_DATABASE": existing.get("NEO4J_DATABASE", "neo4j"),
-        "WORLD_MODEL_BACKEND": existing.get("WORLD_MODEL_BACKEND", "neo4j" if neo4j_password else "sqlite"),
         "COLONY_API_KEY": existing.get("COLONY_API_KEY", secrets.token_urlsafe(32)),
         "COLONY_CONTACTS_DB": existing.get("COLONY_CONTACTS_DB", str(colony_home / "data" / "contacts.db")),
         "COLONY_EMBED_PROVIDER": embed_provider,

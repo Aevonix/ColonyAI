@@ -2592,11 +2592,10 @@ async def lifespan(app: FastAPI):
     try:
         from apsimo.world_model.store import WorldModelStore
         from apsimo.world_model.config import WorldModelConfig
-        _wm_backend = os.environ.get("WORLD_MODEL_BACKEND", "sqlite")
-        world_store = WorldModelStore(WorldModelConfig(backend=_wm_backend))
+        world_store = WorldModelStore(WorldModelConfig())
         await world_store.connect()
         set_world_store(world_store)
-        logger.info("WorldModelStore initialized and connected (backend=%s)", _wm_backend)
+        logger.info("WorldModelStore connected to SQLite")
 
         # World-model population from conversation (shadow-first). Boundary-checked
         # via the directive manager. Mode from COLONY_WORLD_POPULATE_MODE
@@ -2689,7 +2688,7 @@ async def lifespan(app: FastAPI):
         logger.warning("WorldModelStore init failed: %s", exc)
         # Try without connect() — some operations work without it
         try:
-            world_store = WorldModelStore(WorldModelConfig(backend=_wm_backend))
+            world_store = WorldModelStore(WorldModelConfig())
             set_world_store(world_store)
             logger.info("WorldModelStore initialized (without connect)")
         except Exception as exc2:

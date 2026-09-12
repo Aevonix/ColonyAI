@@ -16,7 +16,7 @@ from apsimo.world_model.store import WorldModelStore
 
 @asynccontextmanager
 async def _seeded_store():
-    s = WorldModelStore(WorldModelConfig(backend="sqlite", sqlite_path=":memory:"))
+    s = WorldModelStore(WorldModelConfig(sqlite_path=":memory:"))
     await s.connect()
     try:
         for eid, name in (("we-a", "Alpha"), ("we-b", "Beta"), ("we-c", "Gamma")):

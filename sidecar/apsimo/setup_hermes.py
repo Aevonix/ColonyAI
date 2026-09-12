@@ -771,7 +771,7 @@ def run(root_dir=None, args=None):
                 'COLONY_PERSONA_NAME': agent_name, 'COLONY_CONTACTS_DB': str(state/'contacts.db'),
                 'COLONY_API_KEYRING_PATH': str(state/'api-keyring.json'), 'COLONY_API_KEY': '',
                 'COLONY_CLIENT_API_KEY': key, 'COLONY_GRAPH_ENABLED': 'false',
-                'COLONY_EMBED_PROVIDER': 'skip', 'WORLD_MODEL_BACKEND': 'sqlite',
+                'COLONY_EMBED_PROVIDER': 'skip',
                 'COLONY_AUTONOMY_PRESET': 'passive', 'COLONY_EMBEDDED_WORKER_ENABLED': 'false',
                 'COLONY_SOURCE_CLAIMS': 'on'}
             values.update({

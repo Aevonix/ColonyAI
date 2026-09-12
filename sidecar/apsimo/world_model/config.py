@@ -29,11 +29,7 @@ class WorldModelConfig:
     entity_resolution_enabled: bool = True
 
     # ── Backend ────────────────────────────────────────────────────────
-    # SQLite supports canonical typed observations. Alternate backends retain
-    # only the legacy entity/relationship graph, not observation parity.
-    backend: str = "sqlite"         # "sqlite" | "neo4j" | "postgres"
-    neo4j_uri: str = "bolt://localhost:7687"
-    neo4j_database: str = "neo4j"
+    # Entities, relationships and source-backed observations share one store.
     sqlite_path: str = field(default_factory=_default_sqlite_path)
 
     # ── Confidence thresholds ──────────────────────────────────────────

@@ -22,8 +22,7 @@ from apsimo.world_model.store import WorldModelStore
 
 
 async def _store_with(*rels):
-    s = WorldModelStore(WorldModelConfig(backend="sqlite",
-                                         sqlite_path=":memory:"))
+    s = WorldModelStore(WorldModelConfig(sqlite_path=":memory:"))
     await s.connect()
     for eid in ("we-a", "we-b"):
         await s.upsert_entity(BaseEntity(id=eid, name=eid,

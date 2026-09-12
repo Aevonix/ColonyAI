@@ -13068,7 +13068,7 @@ async def create_world_entity(body: WorldEntityCreateRequest) -> WorldEntityDeta
         raise HTTPException(status_code=501, detail="World model not initialized")
     try:
         from apsimo.world_model.entities import BaseEntity, ENTITY_CLASS_MAP
-        from apsimo.world_model.neo4j.backend import _generate_id
+        from apsimo.world_model.sqlite.backend import _generate_id
         cls = ENTITY_CLASS_MAP.get(body.entity_type, BaseEntity)
         import dataclasses
         valid = {f.name for f in dataclasses.fields(cls)}
@@ -13161,7 +13161,7 @@ async def create_world_relationship(body: WorldRelationshipCreateRequest) -> Wor
         raise HTTPException(status_code=501, detail="World model not initialized")
     try:
         from apsimo.world_model.relationships import WorldRelationship
-        from apsimo.world_model.neo4j.backend import _generate_id
+        from apsimo.world_model.sqlite.backend import _generate_id
         now = datetime.now(timezone.utc).isoformat()
         rel = WorldRelationship(
             id=_generate_id("wr"),

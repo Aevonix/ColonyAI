@@ -69,7 +69,7 @@ async def test_backend_prune_deletes_stale_low_confidence(tmp_path):
 @pytest.mark.asyncio
 async def test_store_prune_uses_config_and_reports(tmp_path, monkeypatch):
     monkeypatch.setenv("WORLD_MODEL_SQLITE_PATH", str(tmp_path / "wm.db"))
-    cfg = WorldModelConfig(backend="sqlite")
+    cfg = WorldModelConfig()
     store = WorldModelStore(cfg)
     await store.connect()
     try:
@@ -81,15 +81,3 @@ async def test_store_prune_uses_config_and_reports(tmp_path, monkeypatch):
         assert stats.total_entities == 2
     finally:
         await store.close()
-
-
-@pytest.mark.asyncio
-async def test_store_prune_skips_backends_without_primitive(tmp_path):
-    class _NoPrune:
-        pass
-
-    store = WorldModelStore.__new__(WorldModelStore)
-    store._backend = _NoPrune()
-    store._config = WorldModelConfig(backend="sqlite")
-    out = await store.prune()
-    assert out["status"] == "skipped"
