@@ -9,7 +9,6 @@ Guides the user through first-time configuration:
 6. Write .env
 7. Database setup
 8. Autonomy & approvals (owner contact, approval policy, gates, home channel)
-9. Self-knowledge seeding
 10. Start sidecar + verify (10e: schedule agent workers via crontab)
 11. Summary
 12. Health check (colony doctor)
@@ -1685,14 +1684,14 @@ def run_autonomy_step(
 #: (for the `python -m` fallback) and cron schedule.
 WORKER_SPECS = (
     {
-        "name": "colony-queue-worker",
+        "name": "apsimo-queue-worker",
         "module": "apsimo.workers.queue_worker",
         "schedule": "*/5 * * * *",
         "blurb": "claims approved agent_action jobs every 5 minutes and hands "
                  "them to your agent (without it, auto-approved jobs sit QUEUED forever)",
     },
     {
-        "name": "colony-skills-sync",
+        "name": "apsimo-skills-sync",
         "module": "apsimo.workers.skills_sync",
         "schedule": "0 9 * * *",
         "blurb": "reports your agent's installed skill index to Apsimo once a "
@@ -2378,7 +2377,6 @@ def run_init(root_dir: str | None = None, args=None) -> int:
         "NEO4J_USER": existing.get("NEO4J_USER", "neo4j"),
         "NEO4J_PASSWORD": neo4j_password or existing.get("NEO4J_PASSWORD", ""),
         "NEO4J_DATABASE": existing.get("NEO4J_DATABASE", "neo4j"),
-        "WORLD_MODEL_BACKEND": existing.get("WORLD_MODEL_BACKEND", "neo4j" if neo4j_password else "sqlite"),
         "COLONY_API_KEY": existing.get("COLONY_API_KEY", secrets.token_urlsafe(32)),
         "COLONY_CONTACTS_DB": existing.get("COLONY_CONTACTS_DB", str(colony_home / "data" / "contacts.db")),
         "COLONY_EMBED_PROVIDER": embed_provider,

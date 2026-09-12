@@ -67,15 +67,5 @@ completion notification and retained artifact delivery to that origin. CLI
 acceptances have no fabricated chat destination. Native crash/block notices can
 precede completion; this is not a guarantee of one total message after a failure.
 
-## Upgrade from the cron lane
-
-Existing in-flight cron assignments retain their original result/recovery path.
-Unassigned pending drafts move to native Kanban under the existing acceptance
-transaction. The native dispatch hook pauses only the configured legacy draft
-job after those assignments drain. Historical executions and reports remain.
-The old runner is retained solely for this compatibility window; fresh installs
-create no polling job. Rerun setup with `--local-work` after installing the matching
-adapter, then restart the selected sidecar and gateway to load the binding.
-
 This class covers selected local text evidence. It does not establish semantic
 accuracy, arbitrary goal completion, or authorization for unrelated effects.

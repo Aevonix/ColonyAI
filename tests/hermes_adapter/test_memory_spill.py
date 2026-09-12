@@ -19,14 +19,14 @@ def no_network(*a,**k):raise AssertionError('Memory transfer regression is offli
 socket.socket.connect=no_network;socket.create_connection=no_network
 from agent.memory_manager import MemoryManager
 from agent.memory_provider import MemoryProvider
-from colony_sidecar.setup import _prepare_hermes_config
+from apsimo.setup import _prepare_hermes_config
 home=Path(os.environ['HERMES_HOME']);home.mkdir(parents=True,exist_ok=True)
 path=home/'config.yaml';path.write_text('{}\n')
 refs=[{'source_id':'source:'+str(i)+'a'*64,'source_version':'b'*64} for i in range(8)]
 payload='[colony-recall-v1 '+json.dumps({'contact_id':'fixture-owner','watermark':0,'sources':refs})+']\n'+json.dumps({'original':'original evidence '*800,'correction':'attributed correction '*600})+'\n[/colony-recall-v1]'
 assert 24000<len(payload)<65536
 class Provider(MemoryProvider):
-    name='colony-memory'
+    name='apsimo-memory'
     def initialize(self,**kwargs):pass
     def is_available(self):return True
     def get_tool_schemas(self):return []

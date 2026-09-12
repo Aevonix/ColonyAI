@@ -19,10 +19,10 @@ socket.socket.connect = no_network
 from hermes_cli import kanban_db as kb
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.turns.hermes_kanban import kanban_view
-from colony_sidecar.turns.executions import format_view
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions, host
+from apsimo.turns.hermes_kanban import kanban_view
+from apsimo.turns.executions import format_view
 root = Path(os.environ['HERMES_HOME']); root.mkdir()
 (root/'config.yaml').write_text('plugins: {enabled: []}\n')
 state = Path(os.environ['COLONY_STATE_DIR']); state.mkdir()

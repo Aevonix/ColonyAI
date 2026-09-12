@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apsimo-hostworker"
-version = "0.2.0"
+version = "0.2.1"
 description = "Stateless, stdlib-only core for governed Apsimo host workers"
 requires-python = ">=3.11"
 readme = "README.md"
@@ -19,7 +19,7 @@ dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo_hostworker*", "colony_hostworker*"]
+include = ["apsimo_hostworker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

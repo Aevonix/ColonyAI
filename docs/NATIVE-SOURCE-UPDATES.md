@@ -105,5 +105,5 @@ fixture responses are not measurements of model quality.
 This API does not physically delete native transcripts, remove unknown
 paraphrases, enable detached-child steering or change foreground busy policy.
 It does not make an ordinary foreground conversation share a build's execution
-session. The supported native request boundary remains Hermes 0.21.1 with
-NeMo Relay 0.8.3 or later compatible 0.8.x.
+session. Use the [current Hermes qualification target](HERMES-HOOK-COMPATIBILITY.md)
+and the `apsimo-hermes[native-memory]` extra for the native request boundary.

@@ -1,4 +1,4 @@
-"""The rename keeps one stateful implementation and explicit environment scope."""
+"""Canonical package entry points and explicit environment scope."""
 import json
 import os
 from pathlib import Path
@@ -20,25 +20,15 @@ def child(tmp_path, code, *arguments):
         cwd=tmp_path, capture_output=True, text=True, timeout=20)
 
 
-@pytest.mark.parametrize('first', ['apsimo', 'colony_sidecar'])
-def test_import_aliases_share_real_ledger_cache_and_classes(tmp_path, first):
-    result = child(tmp_path, '''
-import importlib,sys
-first=importlib.import_module(sys.argv[1])
-old=importlib.import_module('colony_sidecar.turns.idempotency')
-new=importlib.import_module('apsimo.turns.idempotency')
-assert old is new
-assert old.TurnIdempotencyLedger is new.TurnIdempotencyLedger
-assert old.__spec__.name == 'apsimo.turns.idempotency'
-assert old.get_turn_idempotency_ledger(sys.argv[2]) is new.get_turn_idempotency_ledger(sys.argv[2])
-assert importlib.import_module('colony_sidecar') is importlib.import_module('apsimo')
-for suffix in ('catalog','contract','gate','store','sqlite_store'):
-    assert importlib.import_module('colony_hostworker.'+suffix) is importlib.import_module('apsimo_hostworker.'+suffix)
-assert importlib.import_module('colony_hostworker') is importlib.import_module('apsimo_hostworker')
-print('same objects, same ledger')
-''', first, str(tmp_path/'state'))
+def test_canonical_imports_share_ledger_cache(tmp_path):
+    result = child(tmp_path, """
+from apsimo.turns.idempotency import get_turn_idempotency_ledger
+import sys
+assert get_turn_idempotency_ledger(sys.argv[1]) is get_turn_idempotency_ledger(sys.argv[1])
+print('same ledger')
+""", str(tmp_path/'state'))
     assert result.returncode == 0, result.stdout + result.stderr
-    assert result.stdout.strip() == 'same objects, same ledger'
+    assert result.stdout.strip() == 'same ledger'
 
 
 def test_environment_copy_and_conflicts_do_not_expose_values():
@@ -81,7 +71,7 @@ print('reselection preserved')
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-@pytest.mark.parametrize('module', ['apsimo', 'colony_sidecar', 'apsimo.cli', 'colony_sidecar.cli'])
+@pytest.mark.parametrize('module', ['apsimo', 'apsimo.cli'])
 def test_module_entrypoints_have_canonical_help_without_contacting_services(tmp_path, module):
     result = child(tmp_path, '''
 import runpy,socket,sys

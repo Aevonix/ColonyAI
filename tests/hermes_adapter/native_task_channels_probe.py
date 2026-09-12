@@ -52,11 +52,11 @@ keyring.chmod(0o600)
 (home/'config.yaml').write_text(json.dumps({
     'model': {'provider': 'custom', 'default': 'fixture-model', 'base_url': 'http://model.fixture/v1'},
     'auxiliary': {'title_generation': {'enabled': False}},
-    'terminal': {'cwd': str(home)}, 'agent': {'max_turns': 4}, 'toolsets': ['colony'],
+    'terminal': {'cwd': str(home)}, 'agent': {'max_turns': 4}, 'toolsets': ['apsimo'],
     'display': {'platforms': {'colony_task': {'streaming': False, 'tool_progress': 'off'}}},
-    'memory': {'provider': 'colony-memory', 'config': {
+    'memory': {'provider': 'apsimo-memory', 'config': {
         'contact_id': owner, 'url': 'http://fixture', 'api_key': secret}},
-    'plugins': {'enabled': ['colony'], 'colony': {
+    'plugins': {'enabled': ['apsimo'], 'apsimo': {
         'owner_contact_id': owner, 'url': 'http://fixture', 'api_key': secret,
         'turn_outbox_path': str(home/'outbox.db'), 'execution_registry_enabled': True,
         'native_tasks': {'enabled': True, 'state_path': str(home/'native-tasks.db')}}}}))
@@ -152,7 +152,7 @@ def respond(request):
             held[name].set()
             assert release[name].wait(35), 'Held ' + name + ' request was never released'
             if name == 'alpha':
-                return tool(body, 'colony_memory_read_source', row['source']['source_refs'][0])
+                return tool(body, 'apsimo_memory_read_source', row['source']['source_refs'][0])
             return answer(body, 'TASK_BETA completed with its own retained source.')
         text = json.dumps(body['messages'])
         assert update_text in text and 'colony-task-update-v1' in text, text
@@ -187,9 +187,9 @@ def respond(request):
     if step == 1:
         if tag.startswith('SUBMIT_'):
             name = tag.removeprefix('SUBMIT_')
-            return tool(body, 'colony_task', {'operation': 'submit',
+            return tool(body, 'apsimo_task', {'operation': 'submit',
                 'request': 'TASK_' + name + ': Compare my violet calibration notes and retain the result.'})
-        return tool(body, 'colony_task', {'operation': 'steer' if tag == 'STEER_ALPHA' else 'stop',
+        return tool(body, 'apsimo_task', {'operation': 'steer' if tag == 'STEER_ALPHA' else 'stop',
             'task_id': task_ids['alpha'], **({'request': update_text} if tag == 'STEER_ALPHA' else {})})
     results = [row['content'] for row in body['messages'] if row.get('role') == 'tool']
     tool_results[tag] = results
@@ -224,7 +224,7 @@ socket.create_connection = no_network
 from hermes_cli.plugins import get_plugin_manager
 manager = get_plugin_manager()
 manager.discover_and_load()
-assert manager._plugins['colony'].enabled, manager._plugins['colony'].error
+assert manager._plugins['apsimo'].enabled, manager._plugins['apsimo'].error
 from gateway.config import GatewayConfig, PlatformConfig, Platform
 from gateway.platform_registry import platform_registry
 from gateway.run import GatewayRunner

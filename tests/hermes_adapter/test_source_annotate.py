@@ -16,9 +16,9 @@ if sys.argv[3]: sys.path.append(sys.argv[3])
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.turns import get_turn_idempotency_ledger
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 keyring=home/'keys.json'
@@ -29,9 +29,9 @@ keyring.write_text(json.dumps({'version':1,'principals':[{
     'audiences':['viewer'],'credentials':[{'id':'test','secret':'fixture-key','status':'active'}]}]}))
 keyring.chmod(0o600)
 home.joinpath('config.yaml').write_text(json.dumps({
-    'plugins':{'enabled':['colony'],'colony':{'url':'http://fixture','api_key':'fixture-key',
+    'plugins':{'enabled':['apsimo'],'apsimo':{'url':'http://fixture','api_key':'fixture-key',
         'owner_contact_id':'person','turn_writer_platforms':[]}},
-    'memory':{'provider':'colony-memory','config':{'url':'http://fixture',
+    'memory':{'provider':'apsimo-memory','config':{'url':'http://fixture',
         'api_key':'fixture-key','contact_id':'person'}}}))
 app=FastAPI(); app.include_router(host.router); app.include_router(host.v2_router)
 app.add_middleware(ApiKeyMiddleware, keyring_path=str(keyring))
@@ -62,9 +62,9 @@ def no_network(*a,**kw): raise AssertionError('No model or external network is a
 socket.socket.connect=no_network; socket.create_connection=no_network
 from hermes_cli.plugins import get_plugin_manager
 plugins=get_plugin_manager(); plugins.discover_and_load()
-assert plugins._plugins['colony'].enabled
-import colony_hermes
-schema=next(s for s in colony_hermes._TOOL_SCHEMAS if s['name']=='colony_memory_annotate')
+assert plugins._plugins['apsimo'].enabled
+import apsimo_hermes
+schema=next(s for s in apsimo_hermes._TOOL_SCHEMAS if s['name']=='colony_memory_annotate')
 assert set(schema['parameters']['properties'])=={'source_id','source_version','excerpt','correction'}
 assert schema['parameters']['additionalProperties'] is False
 from plugins.memory import load_memory_provider
@@ -78,7 +78,7 @@ import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
 OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
 TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
-provider=load_memory_provider('colony-memory'); manager=MemoryManager(); manager.add_provider(provider)
+provider=load_memory_provider('apsimo-memory'); manager=MemoryManager(); manager.add_provider(provider)
 manager.initialize_all('later',hermes_home=str(home))
 recalled=provider.prefetch('archive digest',session_id='later')
 assert report in recalled and ref['source_version'] in recalled,recalled
@@ -103,7 +103,7 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
         agent.session_id=session; agent._current_turn_id=turn
         results=[]
         explicit_call=NS(tool_calls=[NS(id=call,function=NS(
-            name='colony_memory_annotate',arguments=json.dumps(args)))])
+            name='apsimo_memory_annotate',arguments=json.dumps(args)))])
         agent._execute_tool_calls_sequential(explicit_call,results,effective_task_id=task)
         assert len(results)==1,results
         # Hermes may append its existing repeated-error guidance to tool text.
@@ -115,12 +115,12 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
         assert 'error' in dispatch(bad)
     assert 'error' in dispatch(args,turn='stale-turn')
     assert not posts,posts
-    missing=json.loads(handle_function_call('colony_memory_annotate',args))
+    missing=json.loads(handle_function_call('apsimo_memory_annotate',args))
     assert 'error' in missing and not posts,missing
     prime('empty','empty','empty',supplied=False)
     assert 'error' in dispatch(args,session='empty',task='empty',turn='empty')
     prime('guest','guest','guest',platform='sms',sender='guest-fixture')
-    scope=colony_hermes._TRANSPORT_SCOPES.for_execution(session_id='guest',task_id='guest',turn_id='guest')
+    scope=apsimo_hermes._TRANSPORT_SCOPES.for_execution(session_id='guest',task_id='guest',turn_id='guest')
     assert scope.valid_participant and scope.authority_lane=='guest',scope
     assert 'error' in dispatch(args,session='guest',task='guest',turn='guest')
     assert not posts,posts

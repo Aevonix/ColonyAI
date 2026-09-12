@@ -16,7 +16,7 @@ from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import run_tool_execution_middleware
 from model_tools import handle_function_call
 manager=get_plugin_manager();manager.discover_and_load()
-assert manager._plugins['colony'].enabled,manager._plugins['colony'].error
+assert manager._plugins['apsimo'].enabled,manager._plugins['apsimo'].error
 args=json.loads(sys.argv[2]);phase=sys.argv[3]
 sessions=('normal-session-a','normal-session-b')
 for session in sessions:
@@ -29,32 +29,32 @@ def tool(session,name,arguments):
     return value
 if phase=='accept':
     claim={'operation':'claim','commitment_id':args['commitment_id']}
-    assert tool(sessions[0],'colony_commitment_work',claim)['accepted'] is True
-    assert tool(sessions[1],'colony_commitment_work',claim)['accepted'] is False
+    assert tool(sessions[0],'apsimo_commitment_work',claim)['accepted'] is True
+    assert tool(sessions[1],'apsimo_commitment_work',claim)['accepted'] is False
     barrier=Barrier(2)
     def accept(session):
         barrier.wait()
-        return tool(session,'colony_accept_local_draft',args)
+        return tool(session,'apsimo_accept_local_draft',args)
     with ThreadPoolExecutor(max_workers=2) as pool:values=list(pool.map(accept,sessions))
     assert 'id' in values[0],values
     # A's committed handoff releases shared ownership. B's rejected local
     # attempt remains fenced until B explicitly stops it, even after status.
     for session in sessions:
-        status=tool(session,'colony_commitment_work',{'operation':'status','commitment_id':args['commitment_id']})
+        status=tool(session,'apsimo_commitment_work',{'operation':'status','commitment_id':args['commitment_id']})
         assert status['work_state']=='released',status
-    fenced=tool(sessions[1],'colony_accept_local_draft',args)
+    fenced=tool(sessions[1],'apsimo_accept_local_draft',args)
     assert 'error' in fenced and 'id' not in fenced,fenced
-    stopped=tool(sessions[1],'colony_commitment_work',{'operation':'release','commitment_id':args['commitment_id']})
+    stopped=tool(sessions[1],'apsimo_commitment_work',{'operation':'release','commitment_id':args['commitment_id']})
     assert stopped['detached'] is True and stopped['accepted'] is False,stopped
     assert stopped['reason']=='no_confirmed_undertaking' and stopped['effect_authorized'] is False,stopped
-    joined=tool(sessions[1],'colony_accept_local_draft',args)
+    joined=tool(sessions[1],'apsimo_accept_local_draft',args)
     assert joined['id']==values[0]['id'],(values,joined)
     assert 'error' in values[1] and 'id' not in values[1],values
     assert run_tool_execution_middleware('read_file',{},lambda args:'detached',
         session_id=sessions[0],task_id=sessions[0],turn_id=sessions[0])=='detached'
     values=[values[0],joined]
 else:
-    values=[tool(session,'colony_accept_local_draft',args) for session in sessions]
+    values=[tool(session,'apsimo_accept_local_draft',args) for session in sessions]
     assert all(value['status']=='completed' for value in values),values
     assert values[0]['result']==values[1]['result']
 assert values[0]['id']==values[1]['id']
@@ -74,12 +74,12 @@ if sys.argv[3]:sys.path.append(sys.argv[3])
 mode=sys.argv[4]
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import commitment_work,host,executions
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_hermes.native_drafts import NativeDrafts
-from colony_hermes import _TransportScope
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import commitment_work,host,executions
+from apsimo.commitments.store import CommitmentStore
+from apsimo.initiatives.store import InitiativeStore
+from apsimo_hermes.native_drafts import NativeDrafts
+from apsimo_hermes import _TransportScope
 from hermes_cli import kanban_db as kb
 from tools import kanban_tools
 root=Path(os.environ['HERMES_HOME']);root.mkdir(exist_ok=True)
@@ -102,8 +102,8 @@ app.include_router(commitment_work.router);app.include_router(executions.router)
 client=TestClient(app)
 # Production sidecar and named worker have separate environment variables.
 # Keep the sidecar's selected root fixed in this in-process API fixture.
-selected=patch('colony_sidecar.turns.hermes_work.selected_home',return_value=root);selected.start()
-selected_board=patch('colony_sidecar.turns.hermes_kanban.selected_home',return_value=root);selected_board.start()
+selected=patch('apsimo.turns.hermes_work.selected_home',return_value=root);selected.start()
+selected_board=patch('apsimo.turns.hermes_kanban.selected_home',return_value=root);selected_board.start()
 config={'board':'colony-drafts','worker_profile':'colony-drafts','destination':str(state/'drafts'),'worker':False}
 gateway=NativeDrafts(config,client,'owner')
 body={'contact_id':'owner','session_id':'origin-session','turn_id':'origin-turn','question':'Compare both selected notes',
@@ -118,7 +118,7 @@ if mode=='shared_undertaking':
     deadline=time.monotonic()+10
     while not server.started and time.monotonic()<deadline:time.sleep(.01)
     assert server.started
-    (root/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'], 'colony':{
+    (root/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'], 'apsimo':{
         'url':url,'owner_contact_id':'owner','attested_system_platforms':['cli'],
         'turn_writer_platforms':[],'native_local_work':config}}}))
     normal_env=dict(os.environ)
@@ -134,7 +134,7 @@ else:
     assert response.status_code==200,response.text
     accepted=response.json()
 if mode.startswith('association_'):
-    from colony_hermes import native_drafts
+    from apsimo_hermes import native_drafts
     original_request=native_drafts.request
     association_calls=[]
     def interrupted_association(http,path,payload=None):
@@ -153,7 +153,7 @@ if mode.startswith('association_'):
         if mode=='association_lost_ack':original_request(http,path,payload)
         if mode!='association_delayed':raise ConnectionError('Controlled association interruption')
         return original_request(http,path,payload)
-    with patch('colony_hermes.native_drafts.request',side_effect=interrupted_association):
+    with patch('apsimo_hermes.native_drafts.request',side_effect=interrupted_association):
         if mode=='association_delayed':associated=gateway.ensure_task(accepted)
         else:
             try:gateway.ensure_task(accepted)
@@ -206,11 +206,11 @@ os.environ.update(HERMES_PROFILE='colony-drafts',HERMES_HOME=str(worker_home),HE
  HERMES_KANBAN_BOARD=config['board'],HERMES_KANBAN_TASK=tid,HERMES_KANBAN_RUN_ID=str(claimed.current_run_id),
  HERMES_KANBAN_CLAIM_LOCK=claimed.claim_lock,HERMES_KANBAN_WORKSPACE=str(workspace),HERMES_SESSION_SOURCE='kanban')
 config['worker']=True
-work_config={'plugins':{'enabled':['colony'],'entries':{'colony':{'allow_tool_override':True}},'colony':{
+work_config={'plugins':{'enabled':['apsimo'],'entries':{'apsimo':{'allow_tool_override':True}},'apsimo':{
  'owner_contact_id':'owner','attested_system_platforms':['cli'],'turn_writer_platforms':[],
  'native_local_work':config}},'model':{'default':'fixture/local'},'tools':{'tool_search':{'enabled':'off'}}}
 if mode=='native_agent':
-    work_config['memory']={'provider':'colony-memory','config':{'turn_writer':'disabled'}}
+    work_config['memory']={'provider':'apsimo-memory','config':{'turn_writer':'disabled'}}
     for key in ('COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'):
         os.environ.pop(key,None)
 (worker_home/'config.yaml').write_text(json.dumps(work_config))
@@ -219,7 +219,7 @@ if mode in {'native_agent','shared_undertaking'}:
     calls=[]
     if mode=='native_agent':
         listener=socket.socket();listener.bind(('127.0.0.1',0))
-    work_config['plugins']['colony']['url']='http://127.0.0.1:'+str(listener.getsockname()[1])
+    work_config['plugins']['apsimo']['url']='http://127.0.0.1:'+str(listener.getsockname()[1])
     (worker_home/'config.yaml').write_text(json.dumps(work_config))
     if mode=='native_agent':
         server=uvicorn.Server(uvicorn.Config(app,log_level='error',lifespan='off'))
@@ -233,7 +233,7 @@ if mode in {'native_agent','shared_undertaking'}:
     from hermes_state import SessionDB
     def completion(**kwargs):
         rows=[r for r in kwargs['messages'] if r.get('role')=='tool'];calls.append(len(rows))
-        if len(rows)<2:name,args='colony_read_work_source',{'source':len(rows)}
+        if len(rows)<2:name,args='apsimo_read_work_source',{'source':len(rows)}
         elif len(rows)==2:
             assert all('native_read' in json.loads(row['content']) for row in rows),rows
             name,args='kanban_complete',{'summary':'Retain local source draft',
@@ -248,12 +248,12 @@ if mode in {'native_agent','shared_undertaking'}:
     with patch(OPENAI_TARGET,return_value=model):
         get_plugin_manager().discover_and_load()
         from tools.registry import registry
-        assert registry.get_entry('colony_read_work_source') is not None, 'Native plugin did not register'
+        assert registry.get_entry('apsimo_read_work_source') is not None, 'Native plugin did not register'
         import inspect
         adapter=inspect.getclosurevars(registry.get_entry('kanban_complete').handler).nonlocals['native_drafts']
         session_db=SessionDB()
         agent=AIAgent(api_key='fixture',base_url='http://127.0.0.1:1/v1',provider='openai',model='fixture/local',
-            enabled_toolsets=['colony_local_work'],platform='cli',session_db=session_db,max_iterations=6,
+            enabled_toolsets=['apsimo_local_work'],platform='cli',session_db=session_db,max_iterations=6,
             skip_context_files=True,skip_memory=True,skip_background_review=True,quiet_mode=True)
         agent._build_system_prompt=lambda *a,**k:'Controlled native accepted source worker.'
         agent._use_prompt_caching=False;agent.compression_enabled=False
@@ -272,7 +272,7 @@ if mode in {'native_agent','shared_undertaking'}:
             assert ledger.execute('SELECT count(*) FROM initiatives').fetchone()[0]==1
     server.should_exit=True;thread.join(5)
 else:
-    from colony_hermes.commitment_work import CommitmentCoordinator
+    from apsimo_hermes.commitment_work import CommitmentCoordinator
     coordinator=CommitmentCoordinator(client)
     scope=_TransportScope('worker-session','worker-task','worker-turn','cli','','owner','system','attested_system')
     context={'session_id':scope.session_id,'task_id':scope.task_id,'turn_id':scope.turn_id,'model':'fixture/local'}
@@ -300,7 +300,7 @@ else:
             # A durable receipt exists, but the report and sidecar completion
             # have not been published. The next native attempt restores bytes
             # without reading changed sources or generating another draft.
-            with patch('colony_hermes.draft_artifacts.restore_report',side_effect=OSError('Controlled publication interruption')):
+            with patch('apsimo_hermes.draft_artifacts.restore_report',side_effect=OSError('Controlled publication interruption')):
                 result=json.loads(worker.complete(args,context,kanban_tools._handle_complete))
             assert result['saved_receipt'] is True and not report.exists(),result
             retained=json.loads(receipt.read_text())

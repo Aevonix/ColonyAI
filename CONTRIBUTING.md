@@ -1,11 +1,10 @@
 # Contributing to Apsimo
 
-Thanks for your interest in Apsimo! This guide covers how to contribute.
+Develop against the current Apsimo baseline and its declared Hermes target.
 
 ## Development setup
 
-Apsimo is Python-only (the former TypeScript/npm plugin was removed along with
-OpenClaw support in v0.21.14).
+Apsimo is Python-only.
 
 ```bash
 git clone https://github.com/Aevonix/ApsimoAGI.git
@@ -13,8 +12,8 @@ cd ApsimoAGI/sidecar
 pip install -e ".[dev]"
 ```
 
-You need Python 3.11+. The lightweight profile uses local storage and one
-OpenAI-compatible model endpoint; Neo4j is optional. Tests use local fixtures
+Use Python 3.12 for the current qualification target. The lightweight profile
+uses SQLite and one OpenAI-compatible model endpoint. Tests use local fixtures
 unless a selected qualification explicitly requires a real model or service.
 
 ## Repository layout
@@ -22,20 +21,20 @@ unless a selected qualification explicitly requires a real model or service.
 | Path | Purpose |
 |---|---|
 | `sidecar/apsimo/` | The Python package: FastAPI sidecar, CLI, all subsystems |
-| `sidecar/apsimo/api/` | Pydantic schemas and routers — the single source of truth for the HTTP contract |
+| `sidecar/apsimo/api/` | Pydantic schemas and routers: the single source of truth for the HTTP contract |
 | `sidecar/apsimo/intelligence/` | Graph memory, mind model, cognition components |
-| `sidecar/apsimo/workers/` | Worker daemons (`colony-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
+| `sidecar/apsimo/workers/` | Worker daemons (`apsimo-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
 | `sidecar/tests/` | Sidecar test suite, kept out of the installed product package |
 | `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `apsimo-memory` (memory provider), `feeds-manage` |
 | `docs/` | Public docs (harness integration, channel framework, feeds, prompts) |
 
 ## Making changes
 
-1. **Fork and branch** — create a feature branch from `main`
-2. **Write code** — follow existing patterns in the codebase
-3. **Test** — the full suite must pass before submitting
-4. **Commit** — see commit conventions below
-5. **PR** — open a pull request against `main`
+1. **Fork and branch**: create a feature branch from `main`
+2. **Write code**: follow existing patterns in the codebase
+3. **Test**: the full suite must pass before submitting
+4. **Commit**: see commit conventions below
+5. **PR**: open a pull request against `main`
 
 ### Running the tests
 
@@ -67,7 +66,7 @@ Subjects follow a conventional-commit-ish style, matching the git history:
 feat(autonomy): COLONY_AUTONOMY_PRESET - one knob for the agency posture
 fix(trust): durable graduation/demotion notices
 docs(prompts): record adoption status, eval harness, version attribution
-refactor(plugins): ONE canonical memory provider at plugins/colony-memory
+refactor(plugins): share the native adapter client
 chore(generic): genericize remaining identity strings in two test fixtures
 ```
 
@@ -97,38 +96,47 @@ document it in `.env.example` instead of hardcoding it.
 Apsimo uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
 features, PATCH for fixes and documentation, and MAJOR for incompatible public
 contracts. The `apsimo` sidecar and `apsimo-hermes` integration are published together
-on PyPI with the same version. `apsimo-hostworker` has its own package version. The former npm package is retired.
+on PyPI with the same version. `apsimo-hostworker` has its own package version.
+
+Phase 1 establishes the first supported baseline; validation is still in
+progress. Older ColonyAI releases and migration paths are not supported public
+contracts. Remove unused compatibility code when changing an area, while
+accounting for current callers and retained state. Do not add compatibility
+layers solely to preserve historical names.
 
 ## Release flow
 
-1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the four adapter manifests under `plugins/hermes-plugin`, `plugins/apsimo-memory`, `compat/colony_hermes` and `compat/colony_memory`. Bump `hostworker/pyproject.toml` only for an independent hostworker release.
-2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z — title`, prose + bullets)
+1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the two adapter manifests under `plugins/hermes-plugin` and `plugins/apsimo-memory`. The release workflow also builds and publishes `apsimo-hostworker`; if its packaged contents changed, bump `hostworker/pyproject.toml` and the source version fallback in `hostworker/apsimo_hostworker/__init__.py` before tagging. Do not publish changed hostworker bytes under an existing version.
+2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z: title`, prose + bullets)
 3. Commit and tag: `git tag vX.Y.Z && git push --tags`
 4. CI (`.github/workflows/release.yml`) publishes to PyPI, pushes the Docker
    image to GHCR (`ghcr.io/aevonix/apsimo`), and creates the GitHub release
-   from the changelog entry — all automatically on the tag push
+   from the changelog entry: all automatically on the tag push
 
 ## Architecture notes
 
-The target ownership boundaries and migration rules are in
+The target ownership boundaries and remaining implementation work are in
 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Keep deployment-specific hardware
 and identity in private integrations. The notes below describe the existing
-implementation, not a completed migration to that target.
+implementation, not a claim that every planned boundary is complete.
 
-- **The sidecar owns all state** — Neo4j for the graph, LanceDB for vectors,
-  SQLite for records (contacts, commitments, initiatives, action journal, ...)
-- **Plugins are thin** — HTTP client + type mappings, no business logic
-- **LLM credentials come from the host** — pushed at runtime via
-  `POST /v1/host/configure`; Colony never requires model keys of its own
-- **Autonomy is earned** — new agentic subsystems must default to `off` or
-  `shadow`, resolve their mode through `util/autonomy_preset.py`, and route
-  actions through the trust engine and directive boundaries
+- **SQLite owns canonical source memory and typed world observations.** Other
+  domains retain separate SQLite stores. Lance is an optional search index;
+  the separate Neo4j memory graph still has executable callers. Hermes owns
+  its transcripts and native work execution. Adapters own delivery outboxes.
+- **Native adapters prepare context and capture turns.** They share the
+  sidecar client and durable ingestion path rather than duplicating cognition.
+- **Models are configured per instance.** Credentials stay in private
+  configuration; the host configuration API is `POST /v1/host/configure`.
+- **Enable new autonomy through measured behavior.** Start an unqualified
+  loop in `off` or `shadow`, use its existing mode resolver, and require the
+  applicable authority before consequential effects.
 
 ## Reporting issues
 
 - **Bugs:** open an issue with reproduction steps, logs, and environment info
 - **Features:** open an issue describing the use case and proposed approach
-- **Security:** email security@aevonix.ai — do not open public issues
+- **Security:** email security@aevonix.ai: do not open public issues
 
 ## License
 

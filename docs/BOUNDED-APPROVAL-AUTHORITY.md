@@ -113,7 +113,7 @@ lifecycle, or attestation authority. The canonical endpoints are:
 requests that still own a canonical queue job. It must not be used for bridge
 discovery because other Colony subsystems can share the authority store.
 
-Blocked discovery remains a JSON list for backward compatibility. Results are
+Blocked discovery returns a JSON list. Results are
 filtered to approval-held jobs, emit only canonical IDs, and are ordered by
 canonical `job_id`. A bridge may
 request up to 200 items and pass the last observed ID as `after`; the next page

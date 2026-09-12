@@ -1,12 +1,10 @@
 """World Model primary store interface.
 
-SQLite is the canonical typed-observation backend. Neo4j and PostgreSQL are
-legacy entity/relationship adapters without typed-observation support.
+SQLite stores entities, relationships and source-backed typed observations.
 All callers must use this interface and never access the backend directly.
 """
 
 import logging
-import os
 from datetime import datetime, timedelta, timezone
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
@@ -58,10 +56,8 @@ class WorldModelStats:
 class WorldModelStore:
     """Primary interface to the Colony World Model entity graph.
 
-    SQLite is selected by default. Explicit legacy Neo4j/Postgres configurations
-    may fall back to SQLite when credentials or drivers are missing. Typed
-    observation methods reject an actual legacy backend rather than claiming
-    equivalent provenance, correction, temporal-view or erasure behavior.
+    SQLite provides provenance, correction, temporal views and erasure for
+    typed observations alongside the entity and relationship graph.
     All methods are async. Callers MUST NOT access the backing store directly.
     """
 
@@ -70,44 +66,8 @@ class WorldModelStore:
         self._backend: Optional[SQLiteBackend] = None
 
     async def connect(self) -> None:
-        """Initialize and connect to the storage backend."""
-        if self._config.backend == "neo4j":
-            try:
-                from apsimo.world_model.neo4j.backend import Neo4jBackend
-                neo4j_uri = self._config.neo4j_uri
-                neo4j_db = self._config.neo4j_database
-                neo4j_user = os.environ.get("NEO4J_USER", "neo4j")
-                neo4j_pass = os.environ.get("NEO4J_PASSWORD", "")
-                if neo4j_uri and neo4j_pass:
-                    self._backend = Neo4jBackend(
-                        uri=neo4j_uri,
-                        database=neo4j_db,
-                        username=neo4j_user,
-                        password=neo4j_pass,
-                    )
-                else:
-                    logger.warning("NEO4J_URI or NEO4J_PASSWORD not set — falling back to sqlite")
-                    self._backend = SQLiteBackend(self._config.sqlite_path)
-            except ImportError:
-                logger.warning("neo4j driver not installed — falling back to sqlite")
-                self._backend = SQLiteBackend(self._config.sqlite_path)
-        elif self._config.backend == "postgres":
-            try:
-                from apsimo.world_model.postgres.backend import PostgresBackend
-                pg_conn = os.environ.get("WORLD_MODEL_PG_CONNECTION", "")
-                if pg_conn:
-                    self._backend = PostgresBackend(pg_conn)
-                else:
-                    logger.warning("WORLD_MODEL_PG_CONNECTION not set — falling back to sqlite")
-                    self._backend = SQLiteBackend(self._config.sqlite_path)
-            except ImportError:
-                logger.warning("asyncpg not installed — falling back to sqlite")
-                self._backend = SQLiteBackend(self._config.sqlite_path)
-        elif self._config.backend == "sqlite":
-            self._backend = SQLiteBackend(self._config.sqlite_path)
-        else:
-            logger.warning("WorldModel backend '%s' not supported — defaulting to sqlite", self._config.backend)
-            self._backend = SQLiteBackend(self._config.sqlite_path)
+        """Open the canonical SQLite world-model store."""
+        self._backend = SQLiteBackend(self._config.sqlite_path)
         await self._backend.connect()
 
     async def close(self) -> None:
@@ -381,14 +341,9 @@ class WorldModelStore:
     async def reinforce_entity(self, entity_id: str) -> None:
         """Record a repeat mention without raising evidential confidence.
 
-        Familiarity updates last_seen/count. No-op on unsupported backends.
+        Familiarity updates last_seen/count.
         """
-        fn = getattr(self._backend, "reinforce_entity", None)
-        if fn is None:
-            logger.debug("reinforce_entity unsupported by %s backend",
-                         type(self._backend).__name__)
-            return
-        await fn(entity_id)
+        await self._backend.reinforce_entity(entity_id)
 
     async def add_entity_alias(self, entity_id: str, alias: str) -> None:
         """Add an alias to an entity's alias list if not already present."""
@@ -432,31 +387,20 @@ class WorldModelStore:
     # ── Observations ─────────────────────────────────────────────────────────
 
     async def record_property_observation(self, **kwargs):
-        """Append one scoped assertion; producers must supply canonical evidence.
-
-        SQLite is the qualified observation backend in this release. Other
-        adapters remain valid for legacy entities/edges and report unsupported
-        rather than substituting old unqualified property values.
-        """
+        """Append one scoped assertion; producers must supply canonical evidence."""
         from .observations import observation
-        put = getattr(self._backend, 'put_property_observation', None)
-        if put is None:
-            raise NotImplementedError('typed_world_observations_require_sqlite')
         data = observation(**kwargs)
         if await self.get_entity(data['entity_id'], min_confidence=0) is None:
             raise ValueError('world_observation_entity_not_found')
-        result = await put(data)
+        result = await self._backend.put_property_observation(data)
         self._emit_change('property_observed', entity_id=data['entity_id'], observation_id=data['observation_id'])
         return result
 
     async def property_state(self, entity_id, property_key, *, subject_person_id,
                              viewer_scope, shareability, as_of=None, source_ledger=None):
         from .observations import project, iso
-        reader = getattr(self._backend, 'current_property_observations', None)
-        if reader is None:
-            raise NotImplementedError('typed_world_observations_require_sqlite')
         moment = iso(as_of if as_of is not None else datetime.now(timezone.utc).isoformat())
-        rows = await reader(entity_id, property_key, subject_person_id=subject_person_id,
+        rows = await self._backend.current_property_observations(entity_id, property_key, subject_person_id=subject_person_id,
                             viewer_scope=viewer_scope, shareability=shareability, as_of=moment)
         from .source_reports import validate_reports
         rows = validate_reports(rows, source_ledger)
@@ -465,10 +409,7 @@ class WorldModelStore:
             as_of=moment, coverage_limited=len(rows) >= 2001)
 
     async def erase_property_evidence(self, evidence_refs, *, subject_person_id):
-        eraser = getattr(self._backend, 'erase_property_evidence', None)
-        if eraser is None:
-            raise NotImplementedError('typed_world_observations_require_sqlite')
-        removed = await eraser(evidence_refs, subject_person_id=subject_person_id)
+        removed = await self._backend.erase_property_evidence(evidence_refs, subject_person_id=subject_person_id)
         if removed:
             self._emit_change('property_evidence_invalidated', observation_ids=removed)
         return removed
@@ -476,13 +417,10 @@ class WorldModelStore:
     async def property_views(self, entity_ids, *, subject_person_id, viewer_scope, shareability,
                              as_of=None, source_ledger=None, limit=8):
         """Bounded scoped facts about already-relevant entities for turn context."""
-        keys = getattr(self._backend, 'property_keys', None)
-        if keys is None:
-            raise NotImplementedError('typed_world_observations_require_sqlite')
         limit = max(1, min(int(limit), 32))
         result = []
         for entity_id in list(dict.fromkeys(entity_ids))[:8]:
-            properties = await keys(entity_id, subject_person_id=subject_person_id, viewer_scope=viewer_scope,
+            properties = await self._backend.property_keys(entity_id, subject_person_id=subject_person_id, viewer_scope=viewer_scope,
                                     shareability=shareability, limit=limit)
             for key in properties:
                 result.append(await self.property_state(entity_id, key, subject_person_id=subject_person_id,
@@ -510,19 +448,14 @@ class WorldModelStore:
         """Remove low-confidence entities that haven't been seen within the
         TTL (config: low_confidence_entity_ttl_days / min_confidence_for_query
         by default). High-confidence entities are never pruned regardless of
-        age. Returns {"status", "pruned", "cutoff", "max_confidence"};
-        backends without a prune primitive report skipped instead of lying."""
-        backend_prune = getattr(self._backend, "prune_entities", None)
-        if backend_prune is None:
-            return {"status": "skipped",
-                    "reason": f"{type(self._backend).__name__} has no prune"}
+        age. Returns {"status", "pruned", "cutoff", "max_confidence"}."""
         ttl = int(ttl_days if ttl_days is not None
                   else self._config.low_confidence_entity_ttl_days)
         ceiling = float(max_confidence if max_confidence is not None
                         else self._config.min_confidence_for_query)
         cutoff = (datetime.now(timezone.utc) - timedelta(days=ttl)
                   ).strftime("%Y-%m-%dT%H:%M:%SZ")
-        pruned = await backend_prune(cutoff, ceiling)
+        pruned = await self._backend.prune_entities(cutoff, ceiling)
         if pruned:
             logger.info("world model pruned %d stale low-confidence entities "
                         "(last_seen < %s, confidence < %.2f)",

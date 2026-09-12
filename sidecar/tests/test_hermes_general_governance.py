@@ -1570,24 +1570,8 @@ def test_no_direct_mutation_cron_or_process_global_event_paths_remain():
         assert forbidden not in sources
 
 
-def test_legacy_effect_pollers_are_inert_and_installer_cannot_enable_them():
-    """A cron that survives upgrade must land on an inert compatibility path."""
-
-    for relative in (
-        "poller/colony-initiative-poller.py",
-        "poller/colony-queue-worker.py",
-    ):
-        script = PLUGIN_DIR / relative
-        source = script.read_text(encoding="utf-8")
-        assert "LEGACY_EFFECT_WORKER_DISABLED = True" in source
-        assert "urlopen(" not in source
-        assert "apsimo.workers.queue_worker" not in source
-        result = subprocess.run(
-            [sys.executable, str(script)], text=True, capture_output=True,
-            timeout=5, check=False,
-        )
-        assert result.returncode == 78
-        assert "disabled" in (result.stdout + result.stderr).lower()
+def test_installer_only_uses_packaged_setup():
+    """The adapter installer uses the package rather than loose worker scripts."""
 
     installer = (PLUGIN_DIR / "install.sh").read_text(encoding="utf-8")
     assert "--poller" not in installer
@@ -1921,7 +1905,7 @@ def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    # The copied layout need not have an installed colony_memory wheel, and
+    # The copied layout need not have an installed apsimo_memory wheel, and
     # cannot accidentally read one instead of its own sibling implementation.
     monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "apsimo")
     for name in ("COLONY_GENERAL_PLUGIN_ACTIVE", "COLONY_MEMORY_WORKER_TOOLS", "COLONY_MEMORY_TURN_WRITER"):

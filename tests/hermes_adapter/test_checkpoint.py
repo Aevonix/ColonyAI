@@ -23,8 +23,8 @@ home = Path(os.environ["HERMES_HOME"])
 home.mkdir(mode=0o700)
 Path(os.environ["HERMES_BUNDLED_PLUGINS"]).mkdir()
 config = {
-    "plugins": {"enabled": ["colony"], "colony": {"owner_contact_id": "test-owner"}},
-    "memory": {"provider": "colony-memory", "config": {"contact_id": "test-owner"}},
+    "plugins": {"enabled": ["apsimo"], "apsimo": {"owner_contact_id": "test-owner"}},
+    "memory": {"provider": "apsimo-memory", "config": {"contact_id": "test-owner"}},
 }
 (home / "config.yaml").write_text(json.dumps(config))
 def offline(*args, **kwargs):
@@ -39,13 +39,13 @@ from agent.conversation_compression import (
     compress_context, CompressionCheckpointUnavailable,
     _direct_messages_for_pre_compress_memory,
 )
-from colony_hermes.client import TurnOutbox
-from colony_hermes import evidence
+from apsimo_hermes.client import TurnOutbox
+from apsimo_hermes import evidence
 
 plugins = get_plugin_manager()
 plugins.discover_and_load()
-assert plugins._plugins["colony"].enabled
-provider = load_memory_provider("colony-memory")
+assert plugins._plugins["apsimo"].enabled
+provider = load_memory_provider("apsimo-memory")
 manager = MemoryManager()
 manager.add_provider(provider)
 manager.initialize_all("session-a", hermes_home=str(home))
@@ -202,7 +202,7 @@ assert any(body.get("user_message", {}).get("content") == parts for _, body in w
 # A repeated erased question must not strand its new safe assistant answer.
 # Exercise real native plugin hooks and the actual source-survivor serializer;
 # only HTTP responses are controlled, with no model or external service.
-from colony_hermes.client import source_message_hash
+from apsimo_hermes.client import source_message_hash
 from urllib.parse import quote
 question = "Can you recover the workshop details I asked you to forget?"
 safe_reply = "Those details are unavailable. Please provide them again."

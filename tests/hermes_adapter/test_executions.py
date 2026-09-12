@@ -14,11 +14,11 @@ sys.path.insert(0, sys.argv[1])
 home = Path(os.environ["HERMES_HOME"])
 home.mkdir(mode=0o700)
 Path(os.environ["HERMES_BUNDLED_PLUGINS"]).mkdir()
-(home / "config.yaml").write_text(json.dumps({"plugins": {"enabled": ["colony"], "colony": {
+(home / "config.yaml").write_text(json.dumps({"plugins": {"enabled": ["apsimo"], "apsimo": {
     "owner_contact_id": "test-owner", "attested_system_platforms": ["cli", "cron"],
     "execution_registry_enabled": True,
     "turn_outbox_path": str(home / "turns.sqlite3")}}}))
-import colony_hermes
+import apsimo_hermes
 calls = []
 class Reply:
     def raise_for_status(self): pass
@@ -27,12 +27,12 @@ def post(self, path, **kwargs):
     assert path == "/v1/host/executions/observe", path
     calls.append(kwargs["json"])
     return Reply()
-colony_hermes.ColonyClient.post = post
+apsimo_hermes.ColonyClient.post = post
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
 manager = get_plugin_manager()
 manager.discover_and_load()
-plugin = manager._plugins["colony"]
+plugin = manager._plugins["apsimo"]
 assert plugin.enabled, plugin.error
 assert Path(plugin.module.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 for event in ("pre_api_request", "post_api_request", "post_tool_call", "subagent_start", "on_session_end"):

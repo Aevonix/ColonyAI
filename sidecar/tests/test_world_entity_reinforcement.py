@@ -20,7 +20,7 @@ from apsimo.world_model.store import WorldModelStore
 
 
 async def _store():
-    s = WorldModelStore(WorldModelConfig(backend="sqlite", sqlite_path=":memory:"))
+    s = WorldModelStore(WorldModelConfig(sqlite_path=":memory:"))
     await s.connect()
     return s
 

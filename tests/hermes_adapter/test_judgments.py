@@ -19,17 +19,19 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, sys.argv[1])
 home = Path(os.environ['HERMES_HOME']); home.mkdir(mode=0o700)
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home / 'config.yaml').write_text(json.dumps({'plugins': {'enabled': ['colony'], 'colony': {
+(home / 'config.yaml').write_text(json.dumps({'plugins': {'enabled': ['apsimo'], 'apsimo': {
     'url': sys.argv[2], 'owner_contact_id': 'owner', 'attested_system_platforms': ['cli', 'cron'],
     'turn_outbox_path': str(home / 'turns.sqlite3')}}}))
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
 from model_tools import handle_function_call
 manager = get_plugin_manager(); manager.discover_and_load()
-assert manager._plugins['colony'].enabled, manager._plugins['colony'].error
-assert 'colony_judgments' in manager._plugins['colony'].tools_registered
-import colony_hermes
-schema = next(s for s in colony_hermes._TOOL_SCHEMAS if s['name'] == 'colony_judgments')
+assert manager._plugins['apsimo'].enabled, manager._plugins['apsimo'].error
+assert 'apsimo_judgments' in manager._plugins['apsimo'].tools_registered
+import apsimo_hermes
+schema = next(s for s in apsimo_hermes._TOOL_SCHEMAS if s['name'] == 'colony_judgments')
+from apsimo_hermes.naming import preferred_schema
+schema = preferred_schema(schema)
 assert set(schema['parameters']['properties']) == {'operation', 'judgment_id', 'source_id', 'subject_contact_id', 'appraisal_id'}
 from run_agent import AIAgent
 import run_agent
@@ -38,7 +40,7 @@ OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.pr
 TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 def response(content='', args=None, ordinal=0):
     calls = None if args is None else [NS(id='c'+str(ordinal), type='function',
-        function=NS(name='colony_judgments', arguments=json.dumps(args)))]
+        function=NS(name='apsimo_judgments', arguments=json.dumps(args)))]
     return NS(choices=[NS(message=NS(content=content, tool_calls=calls),
         finish_reason='tool_calls' if calls else 'stop')], model='controlled/model', usage=None)
 def conversation(text, calls):
@@ -65,7 +67,7 @@ for platform, sender in [('sms','guest'), ('cron','')]:
     turn = 'denied-'+platform
     invoke_hook('pre_llm_call', session_id=turn, task_id=turn, turn_id=turn,
                 platform=platform, sender_id=sender, user_message='Withdraw it')
-    denied = json.loads(handle_function_call('colony_judgments', {'operation':'withdraw','judgment_id':second[0]['judgment']['revision_id']},
+    denied = json.loads(handle_function_call('apsimo_judgments', {'operation':'withdraw','judgment_id':second[0]['judgment']['revision_id']},
         session_id=turn, task_id=turn, turn_id=turn))
     assert 'error' in denied, denied
 print(json.dumps({'native_owner_controls':True,'guest_and_cron_denied':True}))

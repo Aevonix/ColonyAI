@@ -1,10 +1,16 @@
 # Architecture and ownership
 
-Status: current ownership decisions and remaining migration rules. Built-artifact
+Status: current ownership decisions and remaining implementation work. Built-artifact
 qualifications cover the native attachment, canonical source memory and shared
 work. Individual deployments still need to verify their active loops. Current
 defaults and remaining limitations are documented in the README and the linked
 capability guides.
+
+Phase 1 establishes the first supported Apsimo baseline. Support targets the
+current installation and its declared Hermes qualification build. Older
+ColonyAI releases, aliases and database layouts carry no public compatibility
+promise. Retained implementation paths still need their current consumers and
+data accounted for before removal; this document does not claim they are gone.
 
 Apsimo supplies persistent cognition to a host runtime. A private deployment
 supplies one agent's identity, integrations and operating environment. Build on
@@ -50,10 +56,11 @@ database transactions. Privileged workers, real-time media and the deterministic
 recovery supervisor remain separate processes because their failure modes and
 access differ. Add other process boundaries only for measured operational needs.
 
-Keep existing package names while moving actual callers. Do not create empty
-facades, a service per cognitive faculty or another scheduler for tasks the host
-already executes. Delete a predecessor only after its consumers, persisted
-state, recovery behavior and relevant tests have migrated.
+Use one implementation for each responsibility. Do not create empty facades,
+a service per cognitive faculty or another scheduler for tasks the host already
+executes. Retire unused paths and aliases. Where current callers or retained
+state still depend on a predecessor, resolve those dependencies before deleting
+it; historical compatibility alone is not a reason to keep it.
 
 ## Integration contract
 
@@ -138,9 +145,11 @@ for durable delivery outboxes.
 Lance is an optional, replaceable semantic index. A deployment can start with
 lexical source recall and add embeddings later. Original image bytes retain
 content hashes and source-ledger ownership independently of generated captions.
-Neo4j remains the extended profile's legacy graph store. Historical graph
-records without canonical provenance are not yet reconstructible from source
-memory and must be preserved separately.
+A separate optional Neo4j memory graph remains in the implementation and is
+outside the supported lightweight setup. It is distinct from the canonical
+SQLite source ledger and typed world observations. Graph records without
+canonical provenance cannot be reconstructed from source memory; retiring
+their store requires an explicit disposition of those records.
 
 Do not make PostgreSQL a prerequisite or migrate databases to obtain a more
 impressive architecture. Revisit it when measured write contention, operations

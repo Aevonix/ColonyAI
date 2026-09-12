@@ -19,9 +19,9 @@ Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 def no_network(*a,**kw): raise AssertionError('Contract fixture must stay offline')
 socket.socket.connect=no_network; socket.create_connection=no_network
 from tools import skill_manager_tool as manager,skill_provenance as provenance,skill_ledger as ledger,write_approval as approval
-from colony_hermes.review import stage_skill_change
-from colony_hermes.review_evaluation import evaluate_pending,audit_evaluation
-from colony_hermes.review_evidence import capture,current
+from apsimo_hermes.review import stage_skill_change
+from apsimo_hermes.review_evaluation import evaluate_pending,audit_evaluation
+from apsimo_hermes.review_evidence import capture,current
 capture(NS(valid_participant=True,authority_lane='owner',platform='cli',session_id='native-parent',turn_id='native-turn'),
     {'messages':[{'role':'assistant','tool_calls':[{'id':'failed-read','function':{'name':'read_file'}}]},
         {'role':'tool','tool_call_id':'failed-read','content':json.dumps({'error':'Selected fixture path is absent'})}]})
@@ -147,7 +147,7 @@ Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 def no_network(*a,**kw): raise AssertionError('Contract fixture must stay offline')
 socket.socket.connect=no_network; socket.create_connection=no_network
 from tools import skill_manager_tool as manager,skill_provenance as provenance,skill_ledger as ledger,write_approval as approval
-from colony_hermes.review import stage_skill_change
+from apsimo_hermes.review import stage_skill_change
 name='neutral-batch-shape'
 old='---\nname: '+name+'\ndescription: Use for neutral batch shape checks.\n---\nOriginal guidance.\n'
 new=old.replace('Original guidance.','Updated guidance.')

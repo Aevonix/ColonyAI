@@ -15,19 +15,19 @@ from concurrent.futures import ThreadPoolExecutor
 sys.path.insert(0,sys.argv[1])
 if sys.argv[3]:sys.path.append(sys.argv[3])
 if len(sys.argv)>4 and sys.argv[4]:sys.path.insert(0,sys.argv[4])
-package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
+package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[2]];sys.modules['apsimo_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native followup qualification')
 socket.socket.connect=no_network
 from hermes_cli import kanban_db as kb
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import temporal_followups,host
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.commitments.work import CommitmentWork
-from colony_sidecar.initiatives.temporal_followup import TemporalFollowups
-from colony_sidecar.turns import get_turn_idempotency_ledger
-from colony_hermes.initiative_work import NativeFollowups
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import temporal_followups,host
+from apsimo.commitments.store import CommitmentStore
+from apsimo.commitments.work import CommitmentWork
+from apsimo.initiatives.temporal_followup import TemporalFollowups
+from apsimo.turns import get_turn_idempotency_ledger
+from apsimo_hermes.initiative_work import NativeFollowups
 root=Path(os.environ['HERMES_HOME']);root.mkdir()
 (root/'config.yaml').write_text('plugins: {enabled: []}\n')
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()

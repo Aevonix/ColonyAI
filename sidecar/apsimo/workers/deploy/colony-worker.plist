@@ -17,7 +17,7 @@
   <string>colony-worker</string>
   <key>ProgramArguments</key>
   <array>
-    <string>%VENV_BIN%/colony-worker</string>
+    <string>%VENV_BIN%/apsimo-worker</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>

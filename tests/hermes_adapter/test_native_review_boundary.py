@@ -11,7 +11,7 @@ import hashlib,importlib.util,json,os,socket,sys,types
 from datetime import datetime
 from pathlib import Path
 sys.path.insert(0,sys.argv[1]);sys.path.insert(0,sys.argv[2])
-package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[3]];sys.modules['colony_hermes']=package
+package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[3]];sys.modules['apsimo_hermes']=package
 def no_network(*a,**kw):raise AssertionError('No network in native review boundary qualification')
 socket.socket.connect=no_network
 import yaml
@@ -47,7 +47,7 @@ with connect(board='default') as db:
  task=kb.claim_task(db,task_id)
 os.environ.update(HERMES_KANBAN_TASK=task_id,HERMES_KANBAN_RUN_ID=str(task.current_run_id),
  HERMES_KANBAN_CLAIM_LOCK=task.claim_lock,HERMES_KANBAN_BOARD='default')
-from colony_hermes.review_worker import register_worker,ReviewWorker
+from apsimo_hermes.review_worker import register_worker,ReviewWorker
 from hermes_cli.plugins import PluginContext,PluginManifest,get_plugin_manager
 manager=get_plugin_manager();register_worker(PluginContext(PluginManifest(name='colony'),manager),config['plugins']['colony']['native_reviews'])
 from hermes_cli.kanban_db_dispatch import _worker_argv
@@ -149,7 +149,6 @@ def test_native_executor_read_only_review(tmp_path, canonical):
         COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     probe = PROBE
     if canonical:
-        probe = probe.replace("'colony_hermes'", "'apsimo_hermes'").replace('from colony_hermes.', 'from apsimo_hermes.')
         probe = probe.replace("'colony'", "'apsimo'").replace("'colony_review'", "'apsimo_review'")
         for name in ('colony_read_work_source', 'colony_review_report'):
             probe = probe.replace(name, name.replace('colony_', 'apsimo_'))

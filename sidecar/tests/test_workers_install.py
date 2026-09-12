@@ -8,13 +8,13 @@ Covers:
   ``python -m`` fallback), cron line construction (env-file prefix, log
   redirection), crontab merge idempotency, and the install path with an
   injected ``run``
-- the back-compat wrapper scripts under plugins/hermes-plugin/poller/
 """
 
 from __future__ import annotations
 
-import subprocess
 import sys
+import plistlib
+import tomllib
 import urllib.request
 from pathlib import Path
 from types import SimpleNamespace
@@ -260,27 +260,42 @@ def _which_none(name):
 
 
 def _which_console(name):
-    return f"/usr/local/bin/{name}" if name.startswith("colony-") else None
+    return f"/usr/local/bin/{name}" if name.startswith("apsimo-") else None
+
+
+def test_worker_install_commands_are_published():
+    sidecar = Path(__file__).resolve().parents[1]
+    scripts = tomllib.loads((sidecar / "pyproject.toml").read_text())["project"]["scripts"]
+    for spec in WORKER_SPECS:
+        assert scripts[spec["name"]] == spec["module"] + ":main"
+    deploy = sidecar / "apsimo/workers/deploy"
+    plist = plistlib.loads((deploy / "colony-worker.plist").read_bytes())
+    executable = plist["ProgramArguments"][0].split("/")[-1]
+    assert scripts[executable] == "apsimo.workers.colony_worker:main"
+    service = (deploy / "colony-worker.service").read_text()
+    command = next(line.split("=", 1)[1] for line in service.splitlines()
+                   if line.startswith("ExecStart="))
+    assert scripts[command.split("/")[-1]] == "apsimo.workers.colony_worker:main"
 
 
 def test_build_worker_command_prefers_console_script():
     cmd = build_worker_command(
-        "colony-queue-worker", "apsimo.workers.queue_worker",
+        "apsimo-queue-worker", "apsimo.workers.queue_worker",
         which=_which_console,
     )
-    assert cmd == "/usr/local/bin/colony-queue-worker"
+    assert cmd == "/usr/local/bin/apsimo-queue-worker"
 
 
 def test_build_worker_command_falls_back_to_module():
     cmd = build_worker_command(
-        "colony-queue-worker", "apsimo.workers.queue_worker",
+        "apsimo-queue-worker", "apsimo.workers.queue_worker",
         which=_which_none, python="/opt/venv/bin/python",
     )
     assert cmd == "/opt/venv/bin/python -m apsimo.workers.queue_worker"
 
 
 def test_build_worker_command_default_python_is_current_interpreter():
-    cmd = build_worker_command("colony-skills-sync",
+    cmd = build_worker_command("apsimo-skills-sync",
                                "apsimo.workers.skills_sync",
                                which=_which_none)
     assert cmd.startswith(sys.executable + " -m ")
@@ -301,10 +316,10 @@ def test_build_cron_lines_console_script(tmp_path):
     for line in lines:
         assert "cd /home/me/.colony && set -a; . /home/me/colony/.env; set +a;" in line
     # commands + per-worker log redirection
-    assert "/usr/local/bin/colony-queue-worker" in qw
-    assert qw.endswith(">> /home/me/.colony/logs/cron-colony-queue-worker.log 2>&1")
-    assert "/usr/local/bin/colony-skills-sync" in sync
-    assert sync.endswith(">> /home/me/.colony/logs/cron-colony-skills-sync.log 2>&1")
+    assert "/usr/local/bin/apsimo-queue-worker" in qw
+    assert qw.endswith(">> /home/me/.colony/logs/cron-apsimo-queue-worker.log 2>&1")
+    assert "/usr/local/bin/apsimo-skills-sync" in sync
+    assert sync.endswith(">> /home/me/.colony/logs/cron-apsimo-skills-sync.log 2>&1")
 
 
 def test_build_cron_lines_module_fallback():
@@ -353,15 +368,15 @@ def test_merge_skips_worker_already_referenced_in_other_form():
     existing = "*/2 * * * * /opt/venv/bin/python -m apsimo.workers.queue_worker\n"
     merged, added = merge_crontab(existing, _lines(which=_which_console))
     assert len(added) == 1
-    assert "colony-skills-sync" in added[0]
-    assert merged.count("queue_worker") + merged.count("colony-queue-worker") == 1
+    assert "apsimo-skills-sync" in added[0]
+    assert merged.count("queue_worker") + merged.count("apsimo-queue-worker") == 1
 
 
 def test_merge_skips_each_worker_independently():
-    existing = "0 9 * * * /usr/local/bin/colony-skills-sync >> /l/x.log 2>&1\n"
+    existing = "0 9 * * * /usr/local/bin/apsimo-skills-sync >> /l/x.log 2>&1\n"
     merged, added = merge_crontab(existing, _lines())
     assert len(added) == 1
-    assert "colony-queue-worker" in added[0]
+    assert "apsimo-queue-worker" in added[0]
 
 
 # ---------------------------------------------------------------------------
@@ -395,8 +410,8 @@ def test_install_cron_jobs_writes_merged_crontab():
     added = install_cron_jobs(_lines(), run=fake)
     assert len(added) == 2
     assert fake.written.startswith("0 3 * * * /usr/local/bin/backup.sh\n")
-    assert "colony-queue-worker" in fake.written
-    assert "colony-skills-sync" in fake.written
+    assert "apsimo-queue-worker" in fake.written
+    assert "apsimo-skills-sync" in fake.written
 
 
 def test_install_cron_jobs_no_crontab_yet_treated_as_empty():
@@ -458,7 +473,7 @@ def test_workers_step_installs_cron_on_yes(step_env, tmp_path, capsys):
     assert f". {step_env.resolve()}; set +a;" in fake.written
     assert f"cd {tmp_path / 'colony-home'} && set -a" in fake.written
     # logs land under $COLONY_HOME/logs and the dir was created
-    assert f"{tmp_path}/colony-home/logs/cron-colony-queue-worker.log" in fake.written
+    assert f"{tmp_path}/colony-home/logs/cron-apsimo-queue-worker.log" in fake.written
     assert (tmp_path / "colony-home" / "logs").is_dir()
 
 
@@ -513,40 +528,4 @@ def test_workers_step_non_interactive_defaults_to_install(step_env, capsys):
     fake = FakeRun()
     run_workers_step(step_env, non_interactive=True, run=fake, which=_step_which)
     assert fake.written is not None
-    assert "colony-queue-worker" in capsys.readouterr().out
-
-
-# ---------------------------------------------------------------------------
-# Back-compat wrapper scripts
-# ---------------------------------------------------------------------------
-
-_POLLER_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin" / "poller"
-
-
-@pytest.mark.skipif(not _POLLER_DIR.is_dir(), reason="repo poller dir not present")
-def test_legacy_queue_wrapper_is_inert(tmp_path):
-    env = {
-        "PATH": "/usr/bin:/bin",
-        "HOME": str(tmp_path),
-        "HERMES_SKILLS_DIR": str(tmp_path / "no-skills"),
-    }
-    proc = subprocess.run(
-        [sys.executable, str(_POLLER_DIR / "colony-queue-worker.py"), "--dry-run"],
-        capture_output=True, text=True, timeout=30, env=env,
-    )
-    assert proc.returncode == 78
-    assert "disabled" in proc.stderr.lower()
-
-
-def test_skills_sync_wrapper_still_delegates_to_package(tmp_path):
-    env = {
-        "PATH": "/usr/bin:/bin",
-        "HOME": str(tmp_path),
-        "HERMES_SKILLS_DIR": str(tmp_path / "no-skills"),
-    }
-    proc = subprocess.run(
-        [sys.executable, str(_POLLER_DIR / "colony-skills-sync.py")],
-        capture_output=True, text=True, timeout=30, env=env,
-    )
-    assert proc.returncode == 0, proc.stderr
-    assert "No skills found" in proc.stdout
+    assert "apsimo-queue-worker" in capsys.readouterr().out

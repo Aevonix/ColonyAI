@@ -282,7 +282,7 @@ def _select_home(args, ask):
 
 
 def _adapter_resources(wheel=None):
-    packages = ('apsimo_hermes/', 'apsimo_memory/', 'colony_hermes/', 'colony_memory/')
+    packages = ('apsimo_hermes/', 'apsimo_memory/')
     if wheel:
         with zipfile.ZipFile(wheel) as archive:
             resources = {name: archive.read(name) for name in archive.namelist()
@@ -344,13 +344,6 @@ import hashlib, importlib.metadata, importlib.util, json, sys
 from pathlib import Path
 expected = json.load(sys.stdin)
 entries = importlib.metadata.entry_points()
-aliases = []
-for group, name, target in [('hermes_agent.plugins', 'colony', 'apsimo_hermes'),
-                            ('hermes_agent.memory_providers', 'colony-memory', 'apsimo_memory')]:
-    matches = [ep for ep in entries.select(group=group) if ep.name == name]
-    if len(matches) > 1 or any(ep.value != target for ep in matches):
-        raise ValueError('Conflicting legacy adapter distribution or target')
-    aliases.extend(matches)
 selected = []
 for group, name, module in [('hermes_agent.plugins', 'apsimo', 'apsimo_hermes'),
                             ('hermes_agent.memory_providers', 'apsimo-memory', 'apsimo_memory')]:
@@ -358,14 +351,14 @@ for group, name, module in [('hermes_agent.plugins', 'apsimo', 'apsimo_hermes'),
     if len(matches) > 1 or (matches and matches[0].value != module):
         raise ValueError('Conflicting Apsimo entry point')
     selected.append(matches[0] if matches else None)
-if not any(selected) and not aliases:
+if not any(selected):
     print(json.dumps({'mode': 'private-directory'}))
     sys.exit(0)
 if not all(selected):
     raise ValueError('Both canonical native Apsimo entry points are required')
-identities = {(ep.dist.metadata['Name'].lower().replace('_', '-'), ep.dist.version) for ep in [*selected, *aliases]}
+identities = {(ep.dist.metadata['Name'].lower().replace('_', '-'), ep.dist.version) for ep in selected}
 if len(identities) != 1:
-    raise ValueError('Canonical and legacy adapter registrations come from different distributions')
+    raise ValueError('Canonical adapter registrations come from different distributions')
 sources, external_modules, versions = {}, {}, set()
 for ep in selected:
     module = ep.value
@@ -473,14 +466,14 @@ def refresh_adapter(state, args):
                 raise ValueError('Expected one managed adapter directory; reconcile duplicate or missing bindings')
             directory = directories[0]
             forwarder = directory/'__init__.py'
-            modules = ('apsimo_memory','colony_memory') if memory else ('apsimo_hermes','colony_hermes')
+            modules = ('apsimo_memory',) if memory else ('apsimo_hermes',)
             matches = [module for module in modules if not forwarder.is_symlink()
                        and forwarder.read_text() == _forwarder(adapter, module, memory)]
             if len(matches) != 1:
                 raise ValueError('The selected profile adapter forwarder changed; reconcile it before refreshing')
             module = matches[0]
             if module+'/__init__.py' not in resources:
-                raise ValueError('New adapter lacks the compatibility module required by this forwarder')
+                raise ValueError('New adapter lacks the canonical module required by this forwarder')
             target = directory/'plugin.yaml'
             if target.is_symlink() or target.read_bytes() != old_resources[module+'/plugin.yaml']:
                 raise ValueError('The selected profile adapter manifest changed; reconcile it before refreshing')
@@ -771,7 +764,7 @@ def run(root_dir=None, args=None):
                 'COLONY_PERSONA_NAME': agent_name, 'COLONY_CONTACTS_DB': str(state/'contacts.db'),
                 'COLONY_API_KEYRING_PATH': str(state/'api-keyring.json'), 'COLONY_API_KEY': '',
                 'COLONY_CLIENT_API_KEY': key, 'COLONY_GRAPH_ENABLED': 'false',
-                'COLONY_EMBED_PROVIDER': 'skip', 'WORLD_MODEL_BACKEND': 'sqlite',
+                'COLONY_EMBED_PROVIDER': 'skip',
                 'COLONY_AUTONOMY_PRESET': 'passive', 'COLONY_EMBEDDED_WORKER_ENABLED': 'false',
                 'COLONY_SOURCE_CLAIMS': 'on'}
             values.update({

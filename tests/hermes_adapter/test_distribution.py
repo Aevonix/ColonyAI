@@ -20,8 +20,6 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
     _, wheel, source, _ = artifacts
     expected = {
         "apsimo_hermes/__init__.py": "plugins/hermes-plugin/__init__.py",
-        "colony_hermes/__init__.py": "compat/colony_hermes/__init__.py",
-        "colony_memory/__init__.py": "compat/colony_memory/__init__.py",
         "apsimo_memory/provider.py": "plugins/apsimo-memory/provider.py",
         "apsimo_memory/cli.py": "plugins/apsimo-memory/cli.py",
         "apsimo_hermes/apsimo_hostworker/catalog.py": "hostworker/apsimo_hostworker/catalog.py",
@@ -34,12 +32,11 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
         metadata = BytesParser().parsebytes(archive.read(next(
             name for name in names if name.endswith(".dist-info/METADATA")
         )))
-        for package in ("apsimo_hermes", "apsimo_memory", "colony_hermes", "colony_memory"):
+        for package in ("apsimo_hermes", "apsimo_memory"):
             manifest = yaml.safe_load(archive.read(f"{package}/plugin.yaml"))
             assert manifest["version"] == metadata["Version"], package
         assert "apsimo_memory/SKILL.md" in names
-        assert "colony_memory/provider.py" not in names
-        assert "colony_hermes/client.py" not in names
+        assert not any(name.startswith(("colony_hermes/", "colony_memory/")) for name in names)
         assert not any(
             "colony_sidecar" in name or name.startswith("apsimo/") or "/worker.py" in name or "/ops/" in name
             or "hermes-context" in name for name in names
@@ -48,9 +45,9 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
         entries.read_string(archive.read(next(
             name for name in names if name.endswith("/entry_points.txt")
         )).decode())
-        assert dict(entries["hermes_agent.plugins"]) == {"apsimo": "apsimo_hermes", "colony": "apsimo_hermes"}
+        assert dict(entries["hermes_agent.plugins"]) == {"apsimo": "apsimo_hermes"}
         assert dict(entries["hermes_agent.memory_providers"]) == {
-            "apsimo-memory": "apsimo_memory", "colony-memory": "apsimo_memory"
+            "apsimo-memory": "apsimo_memory"
         }
     # python -m build builds this wheel from the sdist by default. The source
     # archive must therefore carry both canonical catalog inputs as well.
@@ -177,6 +174,9 @@ else:
     else:
         raise AssertionError("Native CLI reported success for an offline sidecar")
 
+assert not any(name.split('.')[0] in {'colony_hermes', 'colony_memory', 'colony_hostworker'}
+               for name in sys.modules), 'Native loading imported an obsolete public package'
+
 for module in tuple(sys.modules.values()):
     filename = getattr(module, "__file__", None)
     if filename:
@@ -187,7 +187,7 @@ print(json.dumps({"hermes": importlib.metadata.version("hermes-agent"), "active"
 '''
 
 
-@pytest.mark.parametrize("selected", ["apsimo", "colony"])
+@pytest.mark.parametrize("selected", ["apsimo"])
 @pytest.mark.parametrize("state", ["active", "inactive"])
 def test_wheel_uses_native_hermes_discovery_and_loaders(artifacts, tmp_path, state, selected):
     if importlib.util.find_spec("hermes_cli") is None:

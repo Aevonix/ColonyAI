@@ -16,7 +16,7 @@ _TEXT = "I met Alice Chen who works at Acme Corp about the launch. Bob Smith joi
 
 @asynccontextmanager
 async def _store():
-    s = WorldModelStore(WorldModelConfig(backend="sqlite", sqlite_path=":memory:"))
+    s = WorldModelStore(WorldModelConfig(sqlite_path=":memory:"))
     await s.connect()
     try:
         yield s

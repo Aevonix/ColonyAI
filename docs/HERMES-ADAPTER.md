@@ -44,9 +44,8 @@ python -m pip install dist/apsimo_hermes-1.4.0-py3-none-any.whl
 ```
 
 The wheel exposes `apsimo` through `hermes_agent.plugins` and `apsimo-memory`
-through `hermes_agent.memory_providers`. Exact legacy aliases `colony` and
-`colony-memory` target the same canonical modules; only the selected general
-adapter registers tools and hooks. It maps the canonical source files in
+through `hermes_agent.memory_providers`. Only the canonical `apsimo_hermes` and
+`apsimo_memory` packages are shipped. It maps the source files in
 `plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
 Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
 included in the adapter's private catalog package. The legacy source installer forwards to the guided, profile-aware installer.
@@ -267,9 +266,8 @@ establish production readiness or automatically upgrade a running agent.
 
 The qualification target is the [Hermes 0.21.2 compatibility build](HERMES-HOOK-COMPATIBILITY.md),
 based on tag `v2026.9.11`, commit `939e45c91d751fadd94dcd1b873ac3cb44846213`,
-tested on Python 3.12. Hermes 0.21.0 and 0.21.1 attachment remain supported. The adapter uses canonical 0.21.1 task and skill
-modules, with a narrow fallback when those modules are absent on 0.21.0.
-It does not depend on upstream's temporary deprecated-import shims. The package
+tested on Python 3.12. The adapter uses Hermes' native task and skill modules.
+Retained older-runtime fallbacks are outside this qualification target. The package
 allows Python 3.11 through 3.13; those other interpreters are not yet qualified.
 Other Hermes
 releases are unqualified until the native-loader checks pass against them.
@@ -281,7 +279,6 @@ with NeMo Relay 0.8.4. Upstream frozen environments can select another version;
 qualify that actual interpreter before switching a deployment. Install it with
 `python -m pip install 'apsimo-hermes[native-memory]'`; the supported Hermes
 release also declares this Relay dependency. CI installs that extra explicitly.
-Older Hermes attachment support does not imply this additional erasure coverage.
 Missing scope-local Relay capabilities leave the ordinary adapter active and
 emit a warning when the native boundary cannot be registered.
 
@@ -347,10 +344,10 @@ production profile, or channel is contacted.
 
 ## Shared execution observations
 
-On the supported Hermes 0.21.0 and 0.21.1 releases, set
-`plugins.colony.execution_registry_enabled: true` to
+On the [current qualification build](HERMES-HOOK-COMPATIBILITY.md), set
+`plugins.apsimo.execution_registry_enabled: true` to
 publish native turn, API, tool and delegated-child lifecycle observations.
-This is opt-in for existing installations. The adapter credential must already
+This is opt-in for a current attachment. The adapter credential must already
 have scoped `turns:write` and exact person grants; `context:read` grants access
 to the corresponding view. The legacy global bearer does not attest identities
 for this new surface. To observe trusted agent cron fires, include `cron` in

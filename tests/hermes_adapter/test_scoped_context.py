@@ -16,10 +16,10 @@ if sys.argv[3]: sys.path.append(sys.argv[3])
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.contacts.config import ContactsConfig
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.contacts.config import ContactsConfig
 from plugins.memory import load_memory_provider
 from agent.memory_manager import MemoryManager, build_memory_context_block
 from gateway.session_context import set_session_vars
@@ -27,7 +27,7 @@ from gateway.session_context import set_session_vars
 home = Path(os.environ['HERMES_HOME']); home.mkdir(exist_ok=True)
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 state = Path(os.environ['COLONY_STATE_DIR']); state.mkdir()
-(home/'config.yaml').write_text(json.dumps({'memory': {'provider': 'colony-memory'}}))
+(home/'config.yaml').write_text(json.dumps({'memory': {'provider': 'apsimo-memory'}}))
 (home/'colony-memory.json').write_text(json.dumps({
     'url': 'http://test', 'contact_id': 'fixture-owner', 'turn_writer': 'disabled'}))
 contacts = SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db')))
@@ -63,7 +63,7 @@ try:
             observed.append((request.url.path, response.status_code, response.json()))
             return httpx.Response(response.status_code, json=response.json())
         httpx.Client = lambda **kwargs: original_client(transport=httpx.MockTransport(respond), **kwargs)
-        provider = load_memory_provider('colony-memory')
+        provider = load_memory_provider('apsimo-memory')
         assert provider is not None
         assert Path(sys.modules[type(provider).__module__].__file__).resolve().is_relative_to(Path(sys.argv[1]))
         manager = MemoryManager(); manager.add_provider(provider)

@@ -1,9 +1,14 @@
 # Create or attach a private Hermes agent
 
-The supported lightweight path uses Hermes **0.21.2** ([qualification build](HERMES-HOOK-COMPATIBILITY.md)), **0.21.1** or **0.21.0**, Python 3.11 to 3.13, and one local
+The current qualification target uses Hermes **0.21.2**
+([qualification build](HERMES-HOOK-COMPATIBILITY.md)), Python 3.12, and one local
 OpenAI-compatible chat endpoint. Install Hermes separately using its
 [native installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
 Apsimo does not patch or download Hermes, models, containers or machine services.
+
+Phase 1 is the first supported Apsimo baseline and is still being validated.
+This guide covers current installations. It does not provide an upgrade path
+from older ColonyAI releases or promise support for their aliases and layouts.
 
 Install the matching published packages in a private Python environment. This
 path needs no Apsimo checkout or source edits. The environment may be shared
@@ -12,7 +17,7 @@ with Hermes, but the commands below keep an existing Hermes installation intact:
 ```bash
 python3 -m venv "$HOME/.local/share/apsimo/venv"
 source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.3.1" "apsimo-hermes[native-memory]==1.3.1"
+python -m pip install "apsimo[hermes]==1.4.4" "apsimo-hermes[native-memory]==1.4.4"
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -44,9 +49,9 @@ apsimo init --non-interactive \
 lists live profiles through the selected Hermes runtime and asks which home to
 attach. Listing reads profile names and paths, not their private configuration.
 Noninteractive setup retains the `~/.hermes` default. Only the selected home's
-configuration is inspected or changed. `--dir` selects private Apsimo state, otherwise an existing selected instance or `APSIMO_STATE_DIR`
-(legacy `COLONY_STATE_DIR`) is used. New instances default to
-`<selected Hermes home>/apsimo`; existing `colony` directories keep their state. Both the selected Hermes home and Apsimo
+configuration is inspected or changed. `--dir` selects private Apsimo state,
+otherwise the selected instance or `APSIMO_STATE_DIR` is used. New instances
+default to `<selected Hermes home>/apsimo`. Both the selected Hermes home and Apsimo
 state must stay outside Git checkouts, including when `--dir` is separate.
 Select that same Hermes home when launching Hermes:
 
@@ -82,7 +87,7 @@ apsimo init --hermes-home "$HOME/.hermes-orion" \
 
 Use `off` to disable receipts. Omitting the option preserves the existing
 setting. Preference-only mode requires an existing `config.yaml` and rejects
-instance/setup options. It does not require a Apsimo instance manifest.
+instance/setup options. It does not require an Apsimo instance manifest.
 `--hermes-home`, then `HERMES_HOME`, then `~/.hermes` selects the profile in this
 mode. The preview lists changed setting paths without displaying other config
 values. Applying uses the existing atomic writer and retains the exact previous
@@ -143,13 +148,12 @@ two environments need no shared dependencies. See
 If native registration fails after attachment, rerun the same command with
 `--local-work`. It resumes the prepared profile using the retained planning
 role, identity and credentials. Restart an already-running Apsimo instance and
-Hermes gateway to load the new binding. Existing cron assignments drain before
-their old draft job is paused. An older instance without a planning role or compatible
-adapter needs explicit configuration or an adapter upgrade first.
+Hermes gateway to load the new binding.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
-are disabled in this profile. Install `apsimo[graph,vectors]==1.3.1` only when
-adding those services intentionally. Model quality still determines extraction and
+are disabled in this profile. The `graph` and `vectors` package extras retain
+optional dependencies; installing them does not qualify those features or
+enable them in this setup. Model quality still determines extraction and
 reasoning quality. Lexical retrieval does not promise semantic recall of every
 paraphrase. This setup is a growing local base, not a claim that every autonomous
 behaviour or public channel is ready.
@@ -264,6 +268,9 @@ requires an explicit upgrade rather than being silently replaced.
 
 ## Update an existing attachment
 
+This procedure updates a current Apsimo attachment. It is not a ColonyAI
+migration or a guarantee that arbitrary old databases can be downgraded.
+
 Stop the selected Hermes gateway and its workers using their existing host
 lifecycle, then stop this Apsimo instance (`apsimo --instance /private/path stop`,
 or `service stop` for a managed instance). Complete or cancel in-flight work
@@ -273,7 +280,7 @@ Update both Apsimo distributions in the environment that runs Apsimo, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "apsimo[hermes]==1.3.4" "apsimo-hermes[native-memory]==1.3.4"
+python -m pip install --upgrade "apsimo[hermes]==1.4.4" "apsimo-hermes[native-memory]==1.4.4"
 apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
@@ -282,9 +289,9 @@ native installed Apsimo entry points also needs that adapter package updated exp
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
 it does not copy a second active adapter or install packages itself.
-Keep the attachment's existing loading mode. Switching between a package
-installed in Hermes and profile-local directory adapters requires a separate
-migration; refresh rejects that change before writing anything.
+Keep the attachment's existing loading mode. Refresh rejects a switch between
+a package installed in Hermes and profile-local directory adapters before
+writing anything.
 
 The ordinary separate-environment attachment uses a copied adapter. Updating
 Python packages alone does not update that copy. `--refresh-adapter` replaces
@@ -317,7 +324,7 @@ root in your development environment:
 ```bash
 python -m pip install . ./sidecar
 apsimo init --hermes-python /path/to/hermes/.venv/bin/python \
-  --hermes-home "$HOME/.hermes-colony-dev"
+  --hermes-home "$HOME/.hermes-apsimo-dev"
 ```
 
 Keep generated profiles and private state outside the checkout. After changing
@@ -383,7 +390,7 @@ definition is retained as `service/<name>.previous`, and a failed installation
 restores its bytes. This does not roll back databases or application releases.
 If startup fails, inspect the private `service/sidecar.log`; the manager remains
 installed for recovery. An occupied port is an error, never permission to stop
-its occupant. The old global launchd command remains only for legacy profiles.
+its occupant.
 
 The opt-in `sidecar/tests/test_instance_service_live.py` qualification creates
 two disposable instances through the installed CLI and actual native manager.
@@ -403,7 +410,8 @@ CI performs that actual sequence using the built packages, full sidecar and
 native Hermes against a disposable local streaming model fixture; it proves
 capture and injection rather than judging a real model's recall quality.
 
-Setup keeps the original config and environment in `colony/hermes-original/`.
+Setup keeps the original config and environment in the private instance's
+`hermes-original/` directory.
 YAML values are preserved, but formatting/comments may normalize. New secrets
 are kept in private files; generated config contains environment references.
 On an attachment write failure, only the installer's exact written bytes are
@@ -414,16 +422,9 @@ retains it; it is not an upgrade command.
 To undo an attachment, stop this instance and Hermes, restore the original
 `config.yaml` and `.env` from `hermes-original` (remove only wizard-created files
 when no original existed), and remove the selected `plugins/apsimo` and `plugins/apsimo-memory`
-adapters (or their retained legacy directories)
-only if this setup created them in private-directory mode. Keep the private Apsimo
+adapters only if this setup created them in private-directory mode. Keep the private Apsimo
 state and Hermes transcripts. No database rollback is part of installation or
 recovery. Compare files before restoring if you have edited them since setup.
 
-The former built-in self-knowledge catalog is retired. Legacy standalone/MCP
-setup no longer writes that catalog into the world model or requests graph
-seeding. The guided Hermes installation follows its existing setup path.
-`colony seed`, including its compatibility flags `--force` and `--verify`, reports
-retirement without contacting a sidecar. `POST /v1/host/seed` retains its response
-shape with zero counts, no errors, and `skipped=["builtin_self_knowledge_retired"]`.
-Historical records remain intact. This retirement does not revise previously
-stored claims or the separate self-question context corpus.
+Private identity comes from the guided setup and the agent's retained experience.
+The obsolete `apsimo seed` command and `/v1/host/seed` endpoint have been removed.

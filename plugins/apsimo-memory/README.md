@@ -18,13 +18,7 @@ memory:
 
 Native `hermes memory setup` saves non-secret fields in the selected profile's
 `apsimo-memory.json` and credentials through Hermes's private environment.
-Existing profiles keep their `colony-memory.json` file and established credential
-key. If an `apsimo-memory.json` file is explicitly present, it is the selected
-configuration. Legacy `memory.provider: colony-memory`, `COLONY_*` values,
-`colony_memory` imports and `ColonyMemoryProvider` callers remain compatibility
-aliases for the same implementation. Explicit conflicting environment aliases
-are configuration errors; resolving them does not create another memory store.
-Those fields override legacy `memory.config` values. Explicit constructor
+The profile file takes precedence over `memory.config` values. Explicit constructor
 configuration is supported for embedded callers. Handoff files are read only
 from that same profile. Set `timezone` in provider configuration or
 `APSIMO_AGENT_TIMEZONE` in its environment; absent either, local clock context
@@ -40,7 +34,7 @@ APSIMO_MEMORY_DEFAULT_CONTEXT_AUTHORITY=none
 ```
 
 The two prefetch flags are mandatory; explicitly disabling either prevents the
-provider from starting. On Hermes 0.21.1, the general Apsimo plugin's explicit
+provider from starting. The general Apsimo plugin's explicit
 `attested_system_platforms: [cli]` binding supplies the configured owner to
 ordinary CLI recollection through the exact active native turn. This does not
 require a supplied-input wrapper or provider-wide owner fallback. The provider
@@ -59,21 +53,22 @@ For a guest turn the provider:
 
 1. resolves the exact sender contact;
 2. calls `GET /v1/host/context/projection-readiness`;
-3. requires a server-attested viewer matching that contact, P8 `shadow`/`live`
-   scoped projection readiness, and `legacy_global_allowed=false`;
+3. requires a server-attested viewer matching that contact, a ready `p8` or
+   `canonical_sources` projection, and `legacy_global_allowed=false`;
 4. sends `projection_policy=scoped_viewer_required` with the assembly request;
 5. verifies the same attestation on the response.
 
-Failure, timeout, malformed posture, P8-off, or a viewer mismatch yields no
-Apsimo content. Guest time is local-clock-only. The old quote-based reply
+Failure, timeout, malformed posture, an unavailable projection, or a viewer
+mismatch yields no Apsimo content. Guest time is local-clock-only. The old quote-based reply
 timeline lookup is disabled until a transport-attested scoped reply endpoint
 exists. Direct legacy read-tool endpoints are owner/system-only; guests use the
 scoped assembled context instead.
 
-The server returns 503 before any legacy-global producer runs when a scoped
-guest requests context without P8. Exact scoped owner and temporary legacy
-migration credentials retain explicit compatibility carve-outs. The currently
-wired deployment canary is `APSIMO_RECIPIENT_SIMULATOR_MODE=shadow`; `live` is
+With P8 off, the canonical-source projection supplies the guest's scoped
+source evidence and proven shared commitments. It omits unscoped graph,
+relationship and global producers. Exact scoped owners have their own context
+path. Retained global-credential paths are outside the supported baseline.
+The currently wired deployment canary is `APSIMO_RECIPIENT_SIMULATOR_MODE=shadow`; `live` is
 reserved by the protocol but is not wired by the present shared integration.
 
 ## General-plugin coexistence
@@ -112,5 +107,5 @@ sender resolution is negatively cached for the current turn (maximum five
 seconds) and is retried on the next `on_turn_start`, preventing one outage from
 blocking the same turn several times.
 
-Install with `../hermes-plugin/install.sh --memory` or
-`colony init --agent-harness hermes`. No Hermes core patch is required.
+Use the [current setup guide](../../docs/LOCAL-HERMES-SETUP.md) to install the
+matching `apsimo` and `apsimo-hermes` packages and select the Hermes profile.

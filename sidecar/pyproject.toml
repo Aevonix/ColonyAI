@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "apsimo"
-version = "1.4.3"
+version = "1.4.4"
 description = "Persistent identity, memory and autonomy for AI agents"
 readme = "README.md"
 license = "MIT"
@@ -29,10 +29,9 @@ dependencies = [
 graph = ["neo4j>=5.18"]
 neo4j = ["neo4j>=5.18"]
 vectors = ["sentence-transformers>=3.0", "pandas>=2.0", "pyarrow>=15.0", "lancedb>=0.10"]
-hermes = ["apsimo-hermes>=1.4.3,<2"]
+hermes = ["apsimo-hermes>=1.4.4,<2"]
 mcp = ["mcp[cli]>=1.0,<2"]
 lancedb = ["lancedb>=0.6", "pyarrow>=14.0", "pandas>=2.0"]
-postgres = ["asyncpg>=0.29"]
 extraction = ["PyMuPDF>=1.24", "beautifulsoup4>=4.12"]
 video = ["av==18.1.0"]
 dev = [
@@ -56,15 +55,10 @@ apsimo-agent-bridge = "apsimo.workers.agent_bridge:main"
 apsimo-queue-worker = "apsimo.workers.queue_worker:main"
 apsimo-skills-sync = "apsimo.workers.skills_sync:main"
 apsimo-worker = "apsimo.workers.colony_worker:main"
-colony = "apsimo.cli:main"
-colony-agent-bridge = "apsimo.workers.agent_bridge:main"
-colony-queue-worker = "apsimo.workers.queue_worker:main"
-colony-skills-sync = "apsimo.workers.skills_sync:main"
-colony-worker = "apsimo.workers.colony_worker:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo*", "colony_sidecar*"]
+include = ["apsimo*"]
 exclude = ["*.tests", "*.tests.*", "*.test_*", "*.conftest"]
 
 [tool.setuptools.package-data]

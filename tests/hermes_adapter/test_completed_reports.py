@@ -19,7 +19,7 @@ def no_network(*a,**k):raise AssertionError('No network in native dispatcher fix
 socket.socket.connect=no_network;socket.create_connection=no_network
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
  'owner_contact_id':'owner','url':'http://fixture','turn_outbox_path':str(home/'outbox.db'),
  'turn_outbox_drain_timeout_ms':1000,
  'turn_writer_platforms':['api_server','rcs','sms','whatsapp']}},
@@ -31,9 +31,9 @@ if profile_owned:
  from hermes_cli.profiles import resolve_profile_env
  assert Path(resolve_profile_env('default')) == home
  cfg=json.loads((home/'config.yaml').read_text())
- cfg['memory']={'provider':'colony-memory','config':{
+ cfg['memory']={'provider':'apsimo-memory','config':{
   'url':'http://fixture','contact_id':'owner','turn_writer':'disabled'}}
- cfg['plugins']['colony']['native_local_work']={'board':'colony-drafts',
+ cfg['plugins']['apsimo']['native_local_work']={'board':'colony-drafts',
   'worker_profile':'colony-drafts','destination':str(home/'drafts'),'worker':False}
  (home/'config.yaml').write_text(json.dumps(cfg))
  assert not any(name in os.environ for name in (
@@ -67,7 +67,7 @@ print(json.dumps(worker_env))
 
 
 PROBE = r'''
-import asyncio, copy, json, os, socket, sys, time
+import asyncio, copy, inspect, json, os, socket, sys, time
 from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
@@ -82,10 +82,10 @@ if sys.argv[4]=='lexical':
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import host
-from colony_sidecar.turns import get_turn_idempotency_ledger, canonical_turn_digest
-from colony_hermes.client import TurnOutbox
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import host
+from apsimo.turns import get_turn_idempotency_ledger, canonical_turn_digest
+from apsimo_hermes.client import TurnOutbox
 home=Path(os.environ['HERMES_HOME'])
 profile_owned = sys.argv[5] == 'profile'
 app=FastAPI()
@@ -122,18 +122,18 @@ from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import apply_llm_request_middleware
 from agent.turn_context import compose_user_api_content
 from model_tools import handle_function_call
-from colony_memory.provider import ColonyMemoryProvider
+from apsimo_memory.provider import ColonyMemoryProvider
 from gateway.session_context import set_session_vars
 from tools import kanban_tools
 db=kb.connect(board='default')
 tid=os.environ['HERMES_KANBAN_TASK'];task=kb.get_task(db,tid);assert task
 pm=get_plugin_manager();pm.discover_and_load()
-assert pm._plugins['colony'].enabled,pm._plugins['colony'].error
-import colony_hermes
+assert pm._plugins['apsimo'].enabled,pm._plugins['apsimo'].error
+import apsimo_hermes
 if profile_owned:
- from colony_hermes.native_drafts import NativeDrafts
+ from apsimo_hermes.native_drafts import NativeDrafts
  from agent.delegation_context import non_dispatcher_owned_context
- config=json.loads((home/'config.yaml').read_text())['plugins']['colony']['native_local_work']
+ config=json.loads((home/'config.yaml').read_text())['plugins']['apsimo']['native_local_work']
  assert NativeDrafts.for_execution(config,None,'owner') is None
  # Actual draft workers and nonowned execution retain the board invariant.
  for guard in ('draft-worker','nonowned'):
@@ -148,22 +148,22 @@ if profile_owned:
 observed=[]
 report_outcomes=[]
 for index,callback in enumerate(pm._hooks.get('kanban_task_completed',[])):
- if type(callback).__name__=='CompletedReports':
-  report_handler=callback
+ if type(inspect.unwrap(callback)).__name__=='CompletedReports':
+  report_handler=inspect.unwrap(callback)
   def record_outcome(_callback=callback,**kwargs):
    value=_callback(**kwargs);report_outcomes.append(value);return value
   pm._hooks['kanban_task_completed'][index]=record_outcome
 def inspect_context(**kwargs):
- context=dict(colony_hermes._TOOL_EXECUTION_CONTEXT.get() or {})
+ context=dict(apsimo_hermes._TOOL_EXECUTION_CONTEXT.get() or {})
  observed.append((kwargs,context))
 pm._hooks.setdefault('kanban_task_completed',[]).append(inspect_context)
 set_session_vars(platform='cli',user_id='',chat_id='',session_id='worker-session')
 if profile_owned:
  from plugins.memory import load_memory_provider
- provider=load_memory_provider('colony-memory')
+ provider=load_memory_provider('apsimo-memory')
  assert provider is not None and not provider._turn_writer_enabled()
  assert {row['name'] for row in provider.get_tool_schemas()} == set(__import__(
-  'colony_memory.provider',fromlist=['GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES']).GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES)
+  'apsimo_memory.provider',fromlist=['GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES']).GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES)
 else:
  provider=ColonyMemoryProvider({'url':'http://fixture','contact_id':'owner','turn_writer':'disabled','default_context_authority':'owner_system'})
 provider.initialize('worker-session',hermes_home=str(home))
@@ -175,7 +175,7 @@ invoke_hook('pre_llm_call',session_id='worker-session',task_id='worker-probe',tu
  platform='cli',sender_id='',user_message=worker_instruction)
 if profile_owned:
  before=list(wire)
- denied=json.loads(handle_function_call('colony_accept_local_draft',
+ denied=json.loads(handle_function_call('apsimo_accept_local_draft',
   {'question':'Unrelated draft','sources':[str(home/'unrelated.txt')]},
   session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',tool_call_id='reject-draft'))
  assert denied.get('execution_created') is False,denied
@@ -221,17 +221,17 @@ with ledger._connect() as conn:
 assert any(r['turn_id']==sid for r in ledger.search_sources('calibration finding',contact_id='owner',session_id='later'))
 assert not ledger.search_sources('calibration finding',contact_id='someone-else',session_id='later')
 # The shared operational window expires; the source is still discoverable.
-from colony_sidecar.turns import hermes_kanban
+from apsimo.turns import hermes_kanban
 with patch.object(hermes_kanban,'selected_home',return_value=home):
  assert not hermes_kanban.kanban_view(now=time.time()+8*86400)['recent']
 assert any(r['turn_id']==sid for r in ledger.search_sources('calibration finding',contact_id='owner',session_id='after-window'))
 # A duplicate actual lifecycle callback re-reads the committed summary and
 # preserves the exact outbox envelope, recovering the lost acknowledgement.
-token=colony_hermes._TOOL_EXECUTION_CONTEXT.set(context)
+token=apsimo_hermes._TOOL_EXECUTION_CONTEXT.set(context)
 try:
- with patch('colony_hermes.client.time.time',return_value=rows[0]['lease_expires_at']+.1):
+ with patch('apsimo_hermes.client.time.time',return_value=rows[0]['lease_expires_at']+.1):
   invoke_hook('kanban_task_completed',**{**hook,'summary':'FORGED-CALLBACK-TEXT'})
-finally:colony_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
+finally:apsimo_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
 assert len(outbox.snapshot())==1 and outbox.snapshot()[0]['payload']==payload
 assert outbox.snapshot()[0]['state']=='delivered'
 with ledger._connect() as conn:
@@ -240,7 +240,7 @@ invoke_hook('kanban_task_completed',**hook)
 assert report_outcomes[-1]['reason']=='attested_completion_context_missing'
 assert len(outbox.snapshot())==1
 from agent.delegation_context import non_dispatcher_owned_context
-token=colony_hermes._TOOL_EXECUTION_CONTEXT.set(context)
+token=apsimo_hermes._TOOL_EXECUTION_CONTEXT.set(context)
 try:
  with non_dispatcher_owned_context():
   assert report_handler(**hook)['reason']=='owned_native_run_missing'
@@ -271,11 +271,11 @@ try:
  # Restore the actual supplied request for subsequent erasure/replay proof.
  report_handler.request_memory(request,scope)
  assert report_handler.request_memory.supplied_snapshot(scope)==payload['assistant_source_refs']
-finally:colony_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
+finally:apsimo_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
 async def semantic():
- from colony_sidecar.turns.source_vectors import SourceVectors
- from colony_sidecar.vector.indexes import EmbeddingIdentity, IndexCatalog
- from colony_sidecar.vector.store import VectorStore
+ from apsimo.turns.source_vectors import SourceVectors
+ from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog
+ from apsimo.vector.store import VectorStore
  class Embeddings:
   index_identity=EmbeddingIdentity('completion-fixture','completion-fixture','unknown',3)
   async def embed_batch(self,texts):return [[1.,0.,0.] if 'calibration' in text.lower() else [0.,1.,0.] for text in texts]
@@ -301,9 +301,9 @@ assert ledger.search_sources('orchard',contact_id='owner',session_id='later')
 assert not ledger.search_sources('calibration finding',contact_id='owner',session_id='later')
 page=api.get('/v1/host/memory/sources/erasures',params={'contact_id':'owner','after':0});assert page.status_code==200
 outbox.apply_erasure_page('owner',page.json())
-token=colony_hermes._TOOL_EXECUTION_CONTEXT.set(context)
+token=apsimo_hermes._TOOL_EXECUTION_CONTEXT.set(context)
 try:invoke_hook('kanban_task_completed',**hook)
-finally:colony_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
+finally:apsimo_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
 assert not outbox.snapshot()
 with ledger._connect() as conn:assert not conn.execute('SELECT 1 FROM turn_sources WHERE turn_id=?',(sid,)).fetchone()
 assert kb.latest_run(db,tid).summary==report

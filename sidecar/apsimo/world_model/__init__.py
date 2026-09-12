@@ -8,7 +8,7 @@ Quick start::
 
     from apsimo.world_model import WorldModelStore, WorldModelConfig
 
-    config = WorldModelConfig(backend="sqlite", sqlite_path=":memory:")
+    config = WorldModelConfig(sqlite_path=":memory:")
     async with WorldModelStore(config) as store:
         entity = await store.upsert_entity(PersonEntity(
             id="we-000-test",

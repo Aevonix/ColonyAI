@@ -2,7 +2,7 @@
 
 Colony can now learn from completed project work without trusting a model,
 worker, queue status, or external producer to declare its own success. The
-feature is migration-gated and defaults to off.
+feature defaults to off and requires qualification before activation.
 
 ## Ownership and flow
 
@@ -142,5 +142,6 @@ result.
   gaps stop before the missing sequence by default. Every explicit gap
   acknowledgement is durable and visible to the operator.
 
-The migration and rollback procedure is in
-`docs/runbooks/RECEIPT-DERIVED-COGNITION-EVIDENCE-MIGRATION.md`.
+The first supported baseline does not include an upgrade procedure for earlier
+candidate schemas. Qualification must use the selected release and its actual
+source, projection and recovery behavior before this optional loop is enabled.

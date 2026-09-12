@@ -16,13 +16,13 @@ sys.path.insert(0, sys.argv[1])
 home = Path(os.environ["HERMES_HOME"])
 home.mkdir(mode=0o700)
 Path(os.environ["HERMES_BUNDLED_PLUGINS"]).mkdir()
-(home / "config.yaml").write_text(json.dumps({"plugins": {"enabled": ["colony"], "colony": {
+(home / "config.yaml").write_text(json.dumps({"plugins": {"enabled": ["apsimo"], "apsimo": {
     "owner_contact_id": "test-owner", "attested_system_platforms": ["cli"],
     "turn_outbox_path": str(home / "turns.sqlite3")}}}))
 def no_network(*a, **kw): raise AssertionError("Qualification may not contact a service")
 socket.socket.connect = no_network
 socket.create_connection = no_network
-import colony_hermes
+import apsimo_hermes
 class Reply:
     status_code = 200
     def __init__(self, value): self.value = value
@@ -33,15 +33,15 @@ def get(self, path, **kwargs):
         sender = kwargs["params"]["address"]
         return Reply({"contact_id": "test-owner" if sender == "owner" else "test-guest"})
     raise RuntimeError("No central service in qualification")
-colony_hermes.ColonyClient.get = get
-colony_hermes.ColonyClient.post = lambda *a, **kw: Reply({})
+apsimo_hermes.ColonyClient.get = get
+apsimo_hermes.ColonyClient.post = lambda *a, **kw: Reply({})
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import run_tool_execution_middleware
 manager = get_plugin_manager()
 manager.discover_and_load()
-assert manager._plugins["colony"].enabled, manager._plugins["colony"].error
-assert Path(colony_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
+assert manager._plugins["apsimo"].enabled, manager._plugins["apsimo"].error
+assert Path(apsimo_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 
 # A registry-backed native file tool passes through Hermes' real dispatcher.
 from model_tools import handle_function_call
@@ -59,7 +59,7 @@ assert len(calls) == 1
 
 # Native middleware fails open on callback exceptions. A lookup failure in
 # Colony must still return an explicit denial and reach no downstream handler.
-with patch.object(colony_hermes._TRANSPORT_SCOPES, "for_execution", side_effect=RuntimeError("unavailable")):
+with patch.object(apsimo_hermes._TRANSPORT_SCOPES, "for_execution", side_effect=RuntimeError("unavailable")):
     result = run_tool_execution_middleware("terminal", {}, lambda a: calls.append(a),
                 session_id="owner", task_id="owner", turn_id="owner")
     assert json.loads(result)["status"] == "unavailable"

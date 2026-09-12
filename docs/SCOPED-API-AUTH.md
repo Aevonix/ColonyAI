@@ -208,15 +208,10 @@ folding idempotent, including across a crash after the competence write but
 before outbox acknowledgement. The event's original off/shadow/live posture
 is durable, so a later mode change cannot graduate old shadow evidence.
 
-During shadow migration the scoped worker also retains `api:access`, because
-the compatibility route scope remains unchanged for old consumers. Do not
-switch authority mode and revoke the legacy bearer together. First install
-the grant while shadow remains active, move one worker secret at a time,
-confirm claim tags show `worker_authority_would_deny=false`, rehearse rollback
-to the legacy credential, and only then enable enforcement. Once enforcement
-and a normal-use soak pass, remove `api:access` from a dedicated worker that
-uses no non-worker endpoint. An invalid mode fails closed rather than silently
-weakening policy.
+Configure a scoped worker principal for its actual endpoints and capability
+lane. Shadow observations do not establish that enforcement is active.
+An invalid mode fails closed rather than silently weakening policy. Retained
+global-bearer paths are outside the supported baseline.
 
 A keyring execution grant containing `workers:claim` must also contain
 `workers:lifecycle`; an incomplete principal is rejected at load time instead
@@ -291,20 +286,19 @@ that protocol capability plus every canonical capability in the WorkOrder's
 `capability_allowlist` (for example `memory:read`, `reasoning`, and
 `web:read`). Generic queue/Agent Bridge workers intentionally do **not**
 advertise `work_order:v1`, so they cannot race a deployment's receipt-aware
-Action Plane. The host action executor is therefore a mandatory migration
-consumer before live worker enforcement: update it to advertise
+Action Plane. A host action executor must advertise
 `work_order:v1` and the canonical action capabilities, echo the exact
 `claim_attempt_id` on start/heartbeat/complete/fail/release, and include the
-attempt map in bulk heartbeats. Do not add a Colony legacy bypass; an old
-executor must fail closed until it implements the contract.
+attempt map in bulk heartbeats. An executor that does not implement this
+contract cannot claim those jobs.
 
 Agent webhook dispatch uses the same strong route secret as Hermes. Set a
 per-route HMAC secret in Hermes and in `COLONY_HERMES_WEBHOOK_SECRET`; Colony
 signs the exact body using pinned Hermes' timestamped
 `X-Webhook-Signature-V2` contract and emits a stable `X-Request-ID`.
-Raw-body V1 can be enabled only as an explicit older-receiver migration
-compatibility flag. `INSECURE_NO_AUTH` is a loopback-only development posture,
-not a production migration shortcut.
+Use the V2 contract for the current integration. Raw-body V1 receiver support
+is retained code outside the supported baseline. `INSECURE_NO_AUTH` is a
+loopback-only development posture.
 
 When Hermes' canonical general Colony plugin is active, the separate
 `colony-memory` provider publishes and dispatches only its non-duplicating
@@ -335,9 +329,8 @@ does not backfill provenance or assume that introspection already supplies it. C
 session restriction. This backend does not query legacy graph, contact profiles,
 relationship/affect, shared-fact mirrors, deployment identity, skills, or global
 producers. Its response notices describe these omitted capabilities; it does not
-claim that P8 is running. The exact scoped owner and temporary legacy migration
-bearer retain their existing context behavior. Older providers which require P8
-will keep withholding guest context until their adapter is upgraded. Guest temporal context is local-clock-only, and legacy global
+claim that P8 is running. Exact scoped owners have their own context path.
+Guest temporal context is local-clock-only, and legacy global
 reply-window lookup is disabled pending a transport-attested endpoint. The
 provider's direct commitments/affect/facts/timeline tools are likewise
 owner/system-only until those endpoints emit scoped P8 projections; guest
@@ -373,9 +366,9 @@ scratch `person_id`, and omission derives `COLONY_DEV_PERSON_ID`. It cannot
 select, read, or write the configured owner/shared/global IDs. Set the owner
 mapping to the real owner contact ID before relying on this boundary.
 
-`COLONY_API_KEY` remains a deprecated compatibility principal during
-migration. It retains its historical unrestricted body-selected behavior; it
-is therefore not the desired steady state.
+The implementation retains `COLONY_API_KEY` as a global principal with
+unrestricted body-selected behavior. It is outside the supported baseline;
+guided setup creates a scoped keyring and leaves the global key empty.
 
 ## Keyring
 
@@ -415,40 +408,15 @@ allow/deny reason, count, and first/last-seen timestamps. Tokens, credential
 IDs, headers, bodies, query values, peer addresses, and concrete path IDs are
 never recorded.
 
-`GET /v1/host/admin/auth/status` requires `auth:admin` (the legacy migration
-credential remains compatible) and returns telemetry plus exact-contact grant
-counts and loader health. `colony status` summarizes it and `colony doctor`
-warns while legacy traffic remains, scoped traffic is absent, persistence is
-unhealthy, or the grant projection fails. Do not revoke the legacy bearer
-until a complete normal-use observation window shows no required legacy
-traffic, including the WebSocket event subscriber.
-`COLONY_AUTH_LEGACY_QUIET_HOURS` controls the doctor's required legacy-silence
-window and defaults to 24 hours; cumulative historical counts are retained, so
-the decision uses the legacy principal's last-seen timestamp rather than
-pretending old traffic never happened.
+`GET /v1/host/admin/auth/status` requires `auth:admin` for a scoped principal
+and returns telemetry plus exact-contact grant counts and loader health.
+The current local `status` and `doctor` checks also work with the instance's
+scoped client credential; they do not require a global bearer.
 
-## Consumer-by-consumer migration
+## Scoped credential rotation
 
-1. Keep the existing `COLONY_API_KEY` configured.
-2. Install a mode-private keyring and set `COLONY_API_KEYRING_PATH` while the
-   legacy key remains present.
-3. Restart once to add the keyring path. Verify both old and new credentials.
-4. Move one consumer at a time to its scoped secret. Give it only the endpoint
-   scopes and audience/person lanes it needs.
-5. Observe successful traffic under the exact principal, then migrate the next
-   consumer.
-6. Rotate a scoped principal by adding a second credential, atomically replacing
-   the keyring, moving the consumer, and marking the old credential `retiring`
-   with a bounded `accept_until`.
-7. Remove `COLONY_API_KEY` only after the consumer inventory shows no legacy
-   traffic and rollback has been rehearsed.
-
-## Rollback
-
-During migration, rollback is configuration-only: point each affected consumer
-back to `COLONY_API_KEY`, remove `COLONY_API_KEYRING_PATH`, and restart the
-sidecar. No database migration or memory rewrite is part of scoped auth. Restore
-the previous keyring atomically if only a credential rotation needs rollback.
-
-After the legacy key is finally revoked, rollback should restore a previously
-saved mode-0600 keyring rather than reintroduce a shared global bearer.
+Add a second credential to the exact principal, atomically replace the private
+keyring, move the consumer, and mark the previous credential `retiring` with a
+bounded `accept_until`. Verify the consumer under its new credential before
+removing the retired entry. Recovery uses the appropriate private keyring;
+it must not reintroduce a shared global bearer or undo a later revocation.

@@ -30,7 +30,7 @@ if duplicate:
  # A retained profile forwarder can coexist with canonical installed discovery.
  path=home/'plugins/colony';path.mkdir(parents=True)
  (path/'plugin.yaml').write_text('name: colony\nversion: 1.0.0\nentry_point: __init__.py\n')
- (path/'__init__.py').write_text('from colony_hermes import register\n')
+ (path/'__init__.py').write_text('from apsimo_hermes import register\n')
 def no_network(*args,**kwargs):raise AssertionError('In-process fixture transport only')
 socket.socket.connect=no_network;socket.create_connection=no_network
 import httpx
@@ -47,17 +47,9 @@ def respond(request):
  return httpx.Response(200,json={})
 original_client=httpx.Client
 httpx.Client=lambda *args,**kwargs:original_client(*args,**{**kwargs,'transport':httpx.MockTransport(respond)})
-initial=importlib.import_module(first)
-canonical=importlib.import_module('apsimo_hermes');legacy=importlib.import_module('colony_hermes')
-assert initial is canonical is legacy
-for suffix in ('client','input_provenance','local_work','native_scope'):
- a=importlib.import_module('apsimo_hermes.'+suffix);b=importlib.import_module('colony_hermes.'+suffix)
- assert a is b,(suffix,a,b)
-assert canonical.ApsimoClient is canonical.ColonyClient is legacy.ColonyClient
-assert canonical._TOOL_EXECUTION_CONTEXT is legacy._TOOL_EXECUTION_CONTEXT
-assert canonical._TRANSPORT_SCOPES is legacy._TRANSPORT_SCOPES
-assert canonical.input_provenance._CURRENT is legacy.input_provenance._CURRENT
-with legacy.input_provenance.supplied_input(contact_id='fixture-owner',session_id='native-session',
+canonical=importlib.import_module('apsimo_hermes')
+assert canonical.ApsimoClient is canonical.ColonyClient
+with canonical.input_provenance.supplied_input(contact_id='fixture-owner',session_id='native-session',
  input_refs=[{'source_id':'neutral-source','input_message_hash':'b'*64}]) as supplied:
  assert canonical.input_provenance.current() is supplied
 assert canonical.input_provenance.current() is None
@@ -126,8 +118,8 @@ manager.unload()
 
 
 @pytest.mark.parametrize('discovery', ['installed', 'duplicate'])
-@pytest.mark.parametrize('first', ['apsimo_hermes', 'colony_hermes'])
-@pytest.mark.parametrize('selected', ['apsimo', 'colony'])
+@pytest.mark.parametrize('first', ['apsimo_hermes'])
+@pytest.mark.parametrize('selected', ['apsimo'])
 def test_native_names_preserve_governed_identity(artifacts, tmp_path, selected, first, discovery):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified native Hermes release')
@@ -168,7 +160,7 @@ manager.unload()
 '''
 
 
-@pytest.mark.parametrize('selected', ['apsimo', 'colony'])
+@pytest.mark.parametrize('selected', ['apsimo'])
 def test_explicit_native_plugin_selection_without_settings_namespace(artifacts, tmp_path, selected):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified native Hermes release')
@@ -195,14 +187,12 @@ home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 state=home/'colony';adapter=state/'adapter'
 resources=setup_hermes._adapter_resources(sys.argv[3])
-# Exact managed old directory topology, backed by the real candidate packages.
-for module,name in [('colony_hermes','colony'),('colony_memory','colony-memory')]:
- resources[module+'/plugin.yaml']=('name: '+name+'\nversion: 1.2.1\nentry_point: __init__.py\n').encode()
+# Retained directory names use canonical implementation imports.
 for name,raw in resources.items():
  path=adapter/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_bytes(raw)
-for name,module in [('colony','colony_hermes'),('colony-memory','colony_memory')]:
+for name,module in [('colony','apsimo_hermes'),('colony-memory','apsimo_memory')]:
  path=home/'plugins'/name;path.mkdir(parents=True)
- (path/'__init__.py').write_text(setup_hermes._forwarder(adapter,module,module=='colony_memory'))
+ (path/'__init__.py').write_text(setup_hermes._forwarder(adapter,module,module=='apsimo_memory'))
  (path/'plugin.yaml').write_bytes(resources[module+'/plugin.yaml'])
 config={'plugins':{'enabled':['colony'],'colony':{'instance_dir':str(state),
  'turn_outbox_path':str(home/'turn-outbox.db'),'enabled_read_tools':[]}},
@@ -231,8 +221,6 @@ assert provider is not None
 assert type(provider).__module__=='apsimo_memory.provider'
 assert {schema['name'] for schema in provider.get_tool_schemas()}=={
  'colony_check_commitments','colony_get_affect','colony_get_facts','colony_timeline'}
-import apsimo_memory.provider,colony_memory.provider
-assert apsimo_memory.provider is colony_memory.provider
 assert all(name.startswith('apsimo_') for name in manager._plugins['apsimo'].tools_registered)
 print(json.dumps({'retained_directory_provider':'colony-memory','implementation':type(provider).__module__,
  'general_plugin':'apsimo','native_loads':1,'network':0,'model_calls':0}))
@@ -240,7 +228,7 @@ manager.unload()
 '''
 
 
-def test_refreshed_legacy_directory_loads_canonical_native_provider(artifacts, tmp_path):
+def test_refreshed_retained_directory_loads_canonical_native_provider(artifacts, tmp_path):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified native Hermes release')
     from conftest import ROOT

@@ -1,370 +1,75 @@
-# Colony Harness Integration Guide
+# Connecting Hermes and coding harnesses
 
-Colony integrates with multiple agent harnesses to provide shared cognitive context across your tools.
+Use the [guided local setup](LOCAL-HERMES-SETUP.md) for the current Apsimo
+baseline and its [Hermes qualification target](HERMES-HOOK-COMPATIBILITY.md).
+This guide describes the integration boundaries. Older ColonyAI installers,
+manual context plugins and migration procedures are outside that baseline.
 
-## Architecture Overview
+## Hermes native integration
 
-Colony supports two integration paths:
+The matching `apsimo-hermes` package provides both native registrations:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                      Colony Sidecar (:7777)                      │
-│                                                                  │
-│  ┌──────────────────┐              ┌──────────────────┐         │
-│  │   Plugin API     │              │    MCP Server    │         │
-│  │  (HTTP REST)     │              │    (stdio/HTTP)  │         │
-│  └────────┬─────────┘              └────────┬─────────┘         │
-│           │                                  │                   │
-└───────────┼──────────────────────────────────┼───────────────────┘
-            │                                  │
-            ▼                                  ▼
-    ┌───────────────┐                  ┌───────────────┐
-    │  Agent Hosts  │                  │  Coding Tools │
-    │   (Hermes)    │                  │  (Claude Code,│
-    │               │                  │   Codex, ...) │
-    └───────────────┘                  └───────────────┘
-```
+| Repository path | Registration | Responsibility |
+| --- | --- | --- |
+| `plugins/hermes-plugin/` | `apsimo` general plugin | Capture ordinary turns once, expose configured tools, and observe native work. |
+| `plugins/apsimo-memory/` | `apsimo-memory` provider | Prepare scoped recollection before inference and use Hermes' native compression checkpoint. |
 
-**Plugin path** — for orchestrator/chat agents (Hermes):
-- Direct HTTP API access via host plugins
-- Always-on context integration: context injected before each turn, the turn synced back afterward
+They share Apsimo's client and durable ingestion path. The general plugin owns
+ordinary turn capture when both are active; the memory provider does not write
+a second copy. A general tool catalog alone does not provide automatic memory.
 
-**MCP path** — for coding agents (Claude Code, Codex, Crush, OpenCode; Hermes can use both):
-- Model Context Protocol via stdio (HTTP transport also available: `colony mcp run --transport http`)
-- Configured via harness config files
-- On-demand tool access
+Hermes owns channels, interactive execution, native scheduling and subagents.
+Apsimo retains evidence and shared work associations. The general plugin does
+not start a second event subscriber, scheduler or voice service. Private
+hardware and channel integrations remain with the agent's deployment.
 
-Both paths use the same canonical sources. Retrieval remains scoped to the
-authenticated viewer and conversation; writing a private fact does not make
-it visible to every harness.
+Guided setup selects one Hermes home and the actual runtime interpreter. It
+preserves that profile's unrelated identity, model and channel configuration.
+See the setup guide for installation, copied-adapter refresh and recovery;
+installing a package alone does not prove that the selected gateway loaded it.
 
-Anything that is neither a Hermes host nor an MCP client can talk to the REST API directly (see [API Endpoints Reference](#api-endpoints-reference)).
+For concurrent tasks and detached reviews, use the explicitly documented
+qualification build. Apsimo does not silently patch or replace Hermes.
 
----
+## Coding harnesses through MCP
 
-## Agent Harnesses (Plugin)
+MCP provides explicit tool access to the configured Apsimo instance. It does
+not by itself install Hermes' per-turn memory provider or unify a coding
+harness's entire conversation with the agent.
 
-### Hermes
-
-[Hermes](https://github.com/NousResearch/hermes-agent) is a memory-augmented agent framework that supports **both plugin and MCP integration**.
-
-Colony's supported Hermes installation uses these two native adapters:
-
-| Repo path | Installs to | Role |
-|-----------|-------------|------|
-| `plugins/hermes-plugin/` | `~/.hermes/plugins/colony/` | General adapter: native Colony tools, slash commands (`/colony status`, ...), lifecycle hooks (contact resolution, time injection, turn journaling), WebSocket event subscriber, autonomy bridge |
-| `plugins/colony-memory/` | `~/.hermes/plugins/colony-memory/` | Memory provider: injects assembled context before each turn and syncs the turn back for extraction. The single canonical copy of the provider |
-
-The old manual `plugins/hermes-context/` compressor has been removed from this
-repo. Keep Hermes' native context engine. An existing manual
-installation must first identify its selected engine and switch back to the
-native engine; do not remove its files while an active session uses it.
-
-**Setup (plugin path):**
-```bash
-colony init --agent-harness hermes      # wizard installs and configures the plugins
-# or, from a repo checkout:
-plugins/hermes-plugin/install.sh --memory
-```
-
-**Setup (MCP path):**
-```bash
-colony mcp setup --harness hermes
-```
-
-The MCP path writes an entry to `~/.hermes/config.yaml`:
-```yaml
-mcp_servers:
-  colony:
-    command: colony
-    args: ["mcp"]
-    env:
-      COLONY_API_KEY: "${COLONY_API_KEY}"
-      COLONY_URL: "http://127.0.0.1:7777"
-      COLONY_MCP_CONTACT_ID: "user"
-      COLONY_MCP_SOURCE: "hermes"
-```
-
-Host-side operational tooling (a self-validating doctor, a resilient gateway-restart runner, an activity monitor) lives under `plugins/hermes-plugin/ops/` — see its [README](../plugins/hermes-plugin/ops/README.md).
-
-**Note:** Hermes has no skill directory — it uses plugin-based skills only.
-
----
-
-## Coding Harnesses (MCP)
-
-`colony mcp detect` lists which of these are installed; `colony mcp setup` (no `--harness`) offers the detected ones interactively (defaulting to all), and `colony mcp setup --harness all` configures every detected harness non-interactively.
-
-### Claude Code
-
-Anthropic's official Claude coding agent.
-
-**Setup:**
-```bash
-colony mcp setup --harness claude-code
-```
-
-**Config location:** `~/.claude.json`
-
-```json
-{
-  "mcpServers": {
-    "colony": {
-      "command": "colony",
-      "args": ["mcp"],
-      "env": {
-        "COLONY_API_KEY": "${COLONY_API_KEY}",
-        "COLONY_URL": "http://127.0.0.1:7777",
-        "COLONY_MCP_CONTACT_ID": "user",
-        "COLONY_MCP_SOURCE": "claude-code"
-      }
-    }
-  }
-}
-```
-
-**Note:** Claude Code shares `~/.codex/skills/` with Codex for the `colony-diagnose` skill.
-
-### Codex
-
-OpenAI's terminal coding agent.
-
-**Setup:**
-```bash
-colony mcp setup --harness codex
-```
-
-**Config location:** `~/.codex/config.toml`
-
-```toml
-[mcp_servers.colony]
-command = "colony"
-args = ["mcp"]
-env = { COLONY_API_KEY = "${COLONY_API_KEY}", COLONY_URL = "http://127.0.0.1:7777" }
-```
-
-### Crush
-
-Charmbracelet's terminal-based coding agent.
-
-**Setup:**
-```bash
-colony mcp setup --harness crush
-```
-
-**Config location:** `~/.crush.json`
-
-```json
-{
-  "mcp": {
-    "colony": {
-      "type": "stdio",
-      "command": "colony",
-      "args": ["mcp"],
-      "env": {
-        "COLONY_URL": "http://127.0.0.1:7777",
-        "COLONY_API_KEY": "your-key",
-        "COLONY_MCP_CONTACT_ID": "user",
-        "COLONY_MCP_SOURCE": "crush"
-      }
-    }
-  },
-  "options": {
-    "skills_paths": ["~/.config/crush/skills"]
-  }
-}
-```
-
-Setup also installs the `colony-diagnose` skill to `~/.config/crush/skills/` and adds that directory to `skills_paths`.
-
-**Distributed setup (Colony on a different machine):**
-```bash
-colony mcp setup --harness crush --sidecar-url http://192.168.1.100:7777 --print-config
-```
-
-### OpenCode
-
-Open-source coding agent with MCP support.
-
-**Setup:**
-```bash
-colony mcp setup --harness opencode
-```
-
-**Config location:** `~/.config/opencode/opencode.json`
-
----
-
-## MCP Tools Reference
-
-Colony exposes 18 MCP tools:
-
-### Memory
-| Tool | Description |
-|------|-------------|
-| `colony_lookup_facts` | Search stored facts by query |
-| `colony_remember_fact` | Store a new fact |
-| `colony_forget_fact` | Remove a fact |
-
-### Commitments
-| Tool | Description |
-|------|-------------|
-| `colony_check_commitments` | List active commitments |
-| `colony_create_commitment` | Create a new commitment |
-| `colony_fulfill_commitment` | Mark a commitment as fulfilled |
-| `colony_cancel_commitment` | Cancel a commitment |
-
-### Affect
-| Tool | Description |
-|------|-------------|
-| `colony_check_affect` | Get affect state for a contact |
-| `colony_record_affect` | Record an affect event |
-
-### Context
-| Tool | Description |
-|------|-------------|
-| `colony_get_context` | Get assembled context for a contact |
-| `colony_get_patterns` | Get learned patterns |
-
-### World Model
-| Tool | Description |
-|------|-------------|
-| `colony_search_world` | Search world model entities |
-
-### Tasks & Initiatives
-| Tool | Description |
-|------|-------------|
-| `colony_task_complete` | Mark a task as completed |
-| `colony_task_snooze` | Snooze a task for N hours (1–168) |
-| `colony_task_dismiss` | Dismiss a task as no longer relevant |
-| `colony_initiative_feedback` | Report how an initiative was handled (acknowledged / actioned / dismissed / snoozed) |
-
-### Meta
-| Tool | Description |
-|------|-------------|
-| `colony_health` | Check sidecar health |
-| `colony_record_surprise` | Record a surprise event |
-
-The server also exposes MCP **resources** (`colony://status`, `colony://commitments`, `colony://affect/{contact_id}`, `colony://facts/{contact_id}`, `colony://world/entities`, `colony://surprises/unresolved`) and three **prompts** (daily briefing, pre-task, post-task).
-
----
-
-## API Endpoints Reference
-
-Base URL: `http://127.0.0.1:7777/v1/host/`
-
-Authentication: `Authorization: Bearer {api_key}`
-
-### Key Endpoints
-
-| Endpoint | Method | Description |
-|----------|--------|-------------|
-| `/capabilities` | GET | List all capabilities |
-| `/mind/facts` | GET, POST | List/store facts |
-| `/commitments` | GET, POST | List/create commitments |
-| `/context/assemble` | POST | Get context scoped to the authenticated viewer and contact |
-| `/health` | GET | Sidecar health check |
-| `/autonomy/posture` | GET | The resolved autonomy posture of the running process |
-| `/self/params` | GET | Adaptive runtime parameters and their journaled values |
-
-### Example Requests
-
-**Store a fact:**
-```bash
-curl -X POST http://127.0.0.1:7777/v1/host/mind/facts \
-  -H "Authorization: Bearer colony" \
-  -H "Content-Type: application/json" \
-  -d '{"contact_id": "owner", "fact": "Prefers dark mode", "source": "preference"}'
-```
-
-**Get context:**
-```bash
-curl -X POST http://127.0.0.1:7777/v1/host/context/assemble \
-  -H "Authorization: Bearer $COLONY_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"identity":{"host_id":"example-harness"},"context":{"session_id":"example-session","contact_id":"example-contact"},"incoming_message":{"role":"user","content":"What should I remember for this task?"}}'
-```
-
-Use the adapter's authenticated viewer context. The body identifiers select
-request context; they do not grant access to another person's memory.
-
----
-
-## Distributed Setups
-
-When Colony runs on a different machine than your coding harness:
-
-### Colony Server (Machine A)
-```bash
-# .env
-COLONY_SIDECAR_HOST=0.0.0.0  # Bind to all interfaces
-COLONY_SIDECAR_PORT=7777
-COLONY_API_KEY=your-secure-key
-```
-
-### Coding Harness (Machine B)
-```bash
-# Generate config with remote URL
-colony mcp setup --harness crush --sidecar-url http://192.168.1.100:7777 --print-config
-
-# Or set environment variable
-export COLONY_SIDECAR_URL=http://192.168.1.100:7777
-```
-
-### Security Considerations
-- Use HTTPS in production (reverse proxy with TLS)
-- Firewall port 7777 to trusted IPs only
-- Rotate `COLONY_API_KEY` if it may have leaked
-
----
-
-## Troubleshooting
-
-### Common Issues
-
-| Issue | Diagnosis | Fix |
-|-------|-----------|-----|
-| Sidecar not running | `colony status` returns error | `colony start -d` |
-| 401 Unauthorized | API key mismatch | Check `.env` and harness config match |
-| MCP tools not found | Config not loaded | Restart harness, check config syntax |
-| Neo4j errors | Database not running | `docker start neo4j` (or your Neo4j service) |
-| Connection refused | Firewall/network | Check port 7777 accessible |
-
-### Diagnostic Commands
+Install the matching `apsimo[mcp]` extra in the Apsimo environment when adding
+MCP. Inspect the selected harness configuration before writing it:
 
 ```bash
-# Check sidecar health
-colony status
-
-# Test API connectivity
-curl -s http://127.0.0.1:7777/v1/host/capabilities -H "Authorization: Bearer colony"
-
-# Check MCP config (Crush)
-cat ~/.crush.json | jq '.mcp.colony'
-
-# Detect installed coding harnesses
-colony mcp detect
-
-# Run full diagnostics (config + running-server checks)
-colony doctor
+apsimo mcp detect
+apsimo mcp setup --harness codex --dry-run
+apsimo mcp setup --harness codex
 ```
 
----
+The CLI also accepts `claude-code`, `crush`, `opencode` and `hermes`. Select the
+intended harness explicitly; `all` configures every detected harness. Use
+`apsimo mcp setup --help` for a configured sidecar URL, a contact selector or a
+custom launch command. Configuration support is not proof of an active client
+connection or equivalent behavior across those harnesses.
 
-## Files Written by Colony
+The default MCP server uses stdio; `apsimo mcp run --transport http` selects
+its HTTP transport. Keep credentials and harness configuration outside source
+repositories. The selected credential's grants determine access; a contact ID
+in configuration does not establish authority. See [scoped API authentication](SCOPED-API-AUTH.md).
 
-| Harness | Config File | Skill Directory |
-|---------|-------------|-----------------|
-| Hermes | Selected `HERMES_HOME/config.yaml` plus the installed `colony-hermes` adapter package | Native context engine |
-| Claude Code | `~/.claude.json` (MCP) | `~/.codex/skills/colony-diagnose/` (shared with Codex) |
-| Codex | `~/.codex/config.toml` (MCP) | `~/.codex/skills/colony-diagnose/` |
-| Crush | `~/.crush.json` (MCP) | `~/.config/crush/skills/colony-diagnose/` |
-| OpenCode | `~/.config/opencode/opencode.json` (MCP) | `~/.config/opencode/skills/colony-diagnose/` |
+## Verify the intended behavior
 
----
+For native Hermes, tell the agent a harmless distinctive fact, start another
+session and verify the answer against the retained source. Test shared work
+through the intended channels separately. HTTP health and a loaded plugin do
+not prove either behavior.
 
-## See Also
+For an MCP client, verify that it lists the current Apsimo tools and retrieves
+one authorized source. Confirm the same credential cannot retrieve another
+principal's private evidence. Explicit MCP tools and automatic native
+recollection have different triggers; measure the path actually being used.
 
-- [Colony Documentation](https://github.com/Aevonix/ColonyAI)
-- [Hermes (NousResearch/hermes-agent)](https://github.com/NousResearch/hermes-agent)
-- [MCP Specification](https://modelcontextprotocol.io)
+The [architecture guide](ARCHITECTURE.md) describes state ownership. The
+[native adapter guide](HERMES-ADAPTER.md) covers lifecycle and evaluated learning,
+and the [memory provider](../plugins/apsimo-memory/README.md) describes context
+scope and outages.

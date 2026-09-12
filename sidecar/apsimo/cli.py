@@ -105,11 +105,6 @@ def main() -> None:
     # --- generate-types ---
     sub.add_parser("generate-types", help="Export OpenAPI spec (for TypeScript generation)")
 
-    # --- seed ---
-    seed_p = sub.add_parser("seed", help="Show the retired built-in seeding disposition")
-    seed_p.add_argument("--verify", action="store_true", help="Compatibility flag; show the retirement disposition")
-    seed_p.add_argument("--force", action="store_true", help="Compatibility flag; built-in seeding remains retired")
-
     # --- backfill ---
     backfill_p = sub.add_parser("backfill", help="Re-embed all vectors with current model")
     backfill_p.add_argument("--collection", default=None, help="Specific collection to backfill (default: all)")
@@ -440,10 +435,6 @@ def main() -> None:
         n = len(spec.get("components", {}).get("schemas", {}))
         p = len(spec.get("paths", {}))
         print(f"✅ OpenAPI spec written to {out} ({n} schemas, {p} paths)")
-
-    elif args.command == "seed":
-        from apsimo.seed import seed_self_knowledge_summary
-        print(seed_self_knowledge_summary())
 
     elif args.command == "backfill":
         _load_dotenv()
@@ -2398,8 +2389,8 @@ def _cmd_validate(args) -> None:
     if llm_ok and len(found) >= 2:
         print("  ✅ Full sidecar pipeline working — context assembly + LLM router live")
     elif llm_ok:
-        print("  ⚠️ LLM live but cognitive context sections are thin — seed data "
-              "or run a few turns, then re-validate")
+        print("  ⚠️ LLM live but cognitive context sections are thin — run a few "
+              "ordinary turns and check their retained evidence")
     else:
         print("  ⚪ LLM not verified — context pipeline validated, reasoning not")
 

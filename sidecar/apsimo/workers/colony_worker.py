@@ -332,7 +332,7 @@ def run_cycle(cfg: Dict[str, Any]) -> int:
 
 
 def run_forever(cfg: Dict[str, Any]) -> None:
-    print(f"colony-worker {cfg['node_id']} polling {cfg['colony_url']} "
+    print(f"apsimo-worker {cfg['node_id']} polling {cfg['colony_url']} "
           f"every {cfg['poll_secs']}s (caps={cfg['capabilities']}, "
           f"types={cfg['job_types']})")
     while True:
@@ -354,7 +354,7 @@ def main(argv: Optional[list] = None) -> int:
     except Exception:
         pass
     parser = argparse.ArgumentParser(
-        prog="colony-worker",
+        prog="apsimo-worker",
         description="Claim typed Colony jobs and execute them read/analyse-only.")
     parser.add_argument("--dry-run", action="store_true",
                         help="print resolved config and exit (no network)")
@@ -367,7 +367,7 @@ def main(argv: Optional[list] = None) -> int:
         safe = dict(cfg)
         safe["api_key"] = "***" if cfg["api_key"] else ""
         safe["llm_api_key"] = "***" if cfg["llm_api_key"] else ""
-        print("colony-worker (dry run -- no network calls):")
+        print("apsimo-worker (dry run -- no network calls):")
         for k, v in safe.items():
             print(f"  {k}: {v}")
         return 0

@@ -485,8 +485,6 @@ def supported_capabilities() -> List[str]:
     if _world_store is not None:
         caps.append("context")
         caps.append("world_model_api")
-    if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
-        caps.append("neo4j_backend")
     caps.append("event_journal")
     if _external_event_intake is not None:
         caps.append("external_cognition_events")
@@ -820,8 +818,6 @@ async def health() -> HostHealthResponse:
     if _world_store is not None and hasattr(_world_store, '_backend') and _world_store._backend is not None:
         backend_type = type(_world_store._backend).__name__
         notes["world_model_backend"] = f"{backend_type} connected"
-    if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
-        notes["neo4j"] = "Neo4j backend selected"
 
     health_status = "ok"
     if model_mismatch or embed_degraded or memory_backend_down:
@@ -12033,20 +12029,6 @@ async def executor_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Self-Knowledge Seeding
-# ---------------------------------------------------------------------------
-
-
-class SeedResponse(BaseModel):
-    memories: int = 0
-    entities: int = 0
-    skills: int = 0
-    insights: int = 0
-    errors: list[str] = []
-    skipped: list[str] = []  # Machine-readable dispositions, including retirement
-
-
-# ---------------------------------------------------------------------------
 # Commitment Tracking
 # ---------------------------------------------------------------------------
 
@@ -13043,14 +13025,6 @@ async def extract_tom(
     )
 
 
-@router.post("/seed", response_model=SeedResponse)
-async def seed_self_knowledge_endpoint(force: bool = Query(False, description="Compatibility flag; built-in seeding remains retired")) -> SeedResponse:
-    """Return the retired built-in seeding disposition without opening stores."""
-    from apsimo.seed import seed_self_knowledge
-
-    return SeedResponse(**await seed_self_knowledge(force=force))
-
-
 # ============================================================================
 # World Model — Entity CRUD
 # ============================================================================
@@ -13062,7 +13036,7 @@ async def create_world_entity(body: WorldEntityCreateRequest) -> WorldEntityDeta
         raise HTTPException(status_code=501, detail="World model not initialized")
     try:
         from apsimo.world_model.entities import BaseEntity, ENTITY_CLASS_MAP
-        from apsimo.world_model.neo4j.backend import _generate_id
+        from apsimo.world_model.sqlite.backend import _generate_id
         cls = ENTITY_CLASS_MAP.get(body.entity_type, BaseEntity)
         import dataclasses
         valid = {f.name for f in dataclasses.fields(cls)}
@@ -13155,7 +13129,7 @@ async def create_world_relationship(body: WorldRelationshipCreateRequest) -> Wor
         raise HTTPException(status_code=501, detail="World model not initialized")
     try:
         from apsimo.world_model.relationships import WorldRelationship
-        from apsimo.world_model.neo4j.backend import _generate_id
+        from apsimo.world_model.sqlite.backend import _generate_id
         now = datetime.now(timezone.utc).isoformat()
         rel = WorldRelationship(
             id=_generate_id("wr"),

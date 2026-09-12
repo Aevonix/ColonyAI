@@ -335,7 +335,6 @@ class TestWorldModelBehavior:
 
         # Upsert same entity (MERGE by ID)
         from apsimo.world_model.entities import PersonEntity
-        from apsimo.world_model.neo4j.backend import _generate_id
         # Can't directly upsert by ID via API (it generates IDs), 
         # so test that creating with same name creates separate entity
         r2 = client.post("/v1/host/world/entities", json={

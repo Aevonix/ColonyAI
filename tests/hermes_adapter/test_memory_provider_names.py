@@ -1,4 +1,4 @@
-"""Both configured names load one canonical provider through the native loader."""
+"""Canonical discovery and selected directory providers load one implementation."""
 import importlib.util
 import os
 from pathlib import Path
@@ -26,13 +26,12 @@ if local_source:
 (home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':[]},'memory':{'provider':selected}}))
 first_module=importlib.import_module(first+'.provider')
 canonical=importlib.import_module('apsimo_memory.provider')
-legacy=importlib.import_module('colony_memory.provider')
-assert first_module is canonical is legacy
+assert first_module is canonical
 assert canonical.ApsimoMemoryProvider is canonical.ColonyMemoryProvider
 from plugins import memory
 found={entry.name:entry.value for entry in memory._iter_entry_points()}
 assert found['apsimo-memory']=='apsimo_memory'
-assert found['colony-memory']=='apsimo_memory'
+assert 'colony-memory' not in found
 from agent.memory_provider import MemoryProvider
 created=[]
 def counted(cls,*args,**kwargs):
@@ -48,16 +47,16 @@ if local_source:
 else:
  assert isinstance(provider,canonical.ApsimoMemoryProvider)
 assert provider.name=='apsimo' and provider.is_available()
-assert not any(name.startswith(('colony_sidecar','apsimo_sidecar')) for name in sys.modules)
+assert not any(name == 'apsimo' or name.startswith(('apsimo.', 'colony_sidecar')) for name in sys.modules)
 provider.shutdown()
 print(json.dumps({'selected':selected,'first_import':first,'provider_instances':len(created),'name':provider.name,'module_identity_shared':True,'selected_profile_source':local_source,'model_calls':0}))
 '''
 
 
-@pytest.mark.parametrize('source', ['entrypoint', 'profile'])
-@pytest.mark.parametrize('selected', ['apsimo-memory', 'colony-memory'])
-@pytest.mark.parametrize('first', ['apsimo_memory', 'colony_memory'])
-def test_native_memory_aliases_load_one_provider(artifacts, tmp_path, selected, first, source):
+@pytest.mark.parametrize(('selected', 'source'), [
+    ('apsimo-memory', 'entrypoint'), ('apsimo-memory', 'profile'), ('colony-memory', 'profile')])
+@pytest.mark.parametrize('first', ['apsimo_memory'])
+def test_native_memory_selection_loads_one_provider(artifacts, tmp_path, selected, first, source):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified native Hermes runtime')
     env = {key: os.environ[key] for key in ('PATH', 'LANG', 'TMPDIR') if key in os.environ}

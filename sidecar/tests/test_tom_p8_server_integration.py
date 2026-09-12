@@ -680,7 +680,7 @@ async def test_p8_scoped_non_owner_queries_only_exact_person_commitments(
 
 @pytest.mark.asyncio
 async def test_p8_guest_comms_uses_neutral_owner_label(tmp_path, monkeypatch):
-    from colony_sidecar.contacts.comms import CommsLog
+    from apsimo.contacts.comms import CommsLog
 
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
     monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "owner")
