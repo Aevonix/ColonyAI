@@ -1,5 +1,23 @@
 # Changelog
 
+## v1.4.1 - deferred tool observations and source-admission diagnostics
+
+Selected observations now recognize a single local tool invoked through Hermes'
+`tool_call` wrapper. Native argument normalization connects the wrapper to the
+executed tool, while the adapter verifies the actual arguments, call ID, current
+request and original result bytes. Ambiguous, multi-call or altered bindings
+remain ineligible. Selection limits and source-erasure ancestry are unchanged.
+
+When the current request has no source-admission snapshot, nomination reports
+that source admission is unavailable instead of reporting an unknown call ID.
+This uses existing observed state; it does not probe service health or guarantee
+freshness after an earlier successful request. The diagnostic does not select a
+call, retry automatically or repair host credentials.
+
+Controlled native tests cover the supported Hermes 0.21.1 and 0.21.2 builds,
+including actual deferred dispatch, persisted originals and erasure. These
+checks do not establish better model selection or recall quality.
+
 ## v1.4.0 - selected tool observations and linked communication erasure
 
 An agent can nominate a useful completed native tool call for later automatic
