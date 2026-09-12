@@ -29,7 +29,6 @@ TASK_ROLES = {
     'tom_affect_extraction': 'extraction', 'tom_belief_extraction': 'extraction',
     'tom_intention_extraction': 'extraction',
     'tom_fact_extraction': 'extraction', 'tom_engagement_extraction': 'extraction',
-    'context_compression': 'extraction',
     'workspace_thinking': 'reasoning', 'internal_thinking': 'reasoning',
     'toolsmith_draft': 'coding', 'skill_distillation': 'judging',
 }

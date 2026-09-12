@@ -48,6 +48,19 @@ async def search(client, **changes):
     return response.json()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(('method', 'route'), [
+    ('GET', 'distill-preview'), ('GET', 'conflicts'), ('GET', 'stats'),
+    ('POST', 'verify'), ('POST', 'vector-vacuum'),
+])
+async def test_retired_graph_management_routes_are_not_exposed(memory_app, method, route):
+    app, _ = memory_app
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test',
+                           headers={'Authorization': 'Bearer person'}) as client:
+        response = await client.request(method, '/v1/host/memory/' + route)
+        assert response.status_code == 404
+
+
 def annotate(ledger, annotation_id, correction):
     ref = ledger.source_references(['report'], contact_id='person', session_id='later')[0]
     return ledger.append_source_annotation(contact_id='person', session_id='later',

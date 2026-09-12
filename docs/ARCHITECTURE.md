@@ -222,3 +222,9 @@ commitment observed through another interface, and a decision that can wait
 while independent work continues. Source-backed images, inspectable self-state
 and native skill evaluation extend those contracts. Their availability in a
 package does not establish that a deployment has enabled or qualified them.
+
+## Memory operations
+
+Automatic context, explicit `/v1/host/memory/search` and `/v1/host/memory/read` use scoped canonical sources. Search returns a selected evidence packet, its item count and source revisions. It does not return graph strength, global memory counts or an unscoped list of private conflicts. Source annotations carry corrections; they do not mark a claim as true merely because an operator clicked verify.
+
+Hermes owns conversation compression and its durable memory-provider checkpoint. The sidecar has no parallel adaptive-compression package. Graph-only memory statistics, manual verification, conflict lists, distillation previews and the manual vector-vacuum route are removed. The remaining autonomy graph-pruning sweep and its orphan-vector cleanup still run according to their existing configuration; graph-backed research, synthesis and maintenance need separate migration.

@@ -153,38 +153,6 @@ class MemorySearchResponse(BaseModel):
     annotation_checks: List[SourceAnnotationCheck] = Field(default_factory=list, max_length=20)
 
 
-class MemoryConflictEntry(BaseModel):
-    memory_id_a: str
-    memory_id_b: str
-    entity_name: str
-    reason: str
-    detected_at: Optional[str] = None
-
-
-class MemoryConflictsResponse(BaseModel):
-    conflicts: List[MemoryConflictEntry] = []
-    total: int = 0
-
-
-class MemoryVerifyRequest(BaseModel):
-    identity: HostIdentity
-    memory_id: str
-
-
-class MemoryVerifyResponse(BaseModel):
-    memory_id: str
-    verified: bool
-    effective_confidence: float = 0.0
-
-
-class MemoryStatsResponse(BaseModel):
-    by_state: Dict[str, int] = Field(default_factory=dict)
-    by_source: Dict[str, int] = Field(default_factory=dict)
-    total_active: int = 0
-    total_archived: int = 0
-    protected_count: int = 0
-
-
 # --- Context ----------------------------------------------------------------
 
 class ContextAssembleRequest(BaseModel):

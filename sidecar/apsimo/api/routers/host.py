@@ -108,13 +108,8 @@ from apsimo.api.schemas.host import (
     MemoryEmbedResponse,
     MemoryReadRequest,
     MemoryReadResponse,
-    MemoryConflictEntry,
-    MemoryConflictsResponse,
     MemorySearchRequest,
     MemorySearchResponse,
-    MemoryVerifyRequest,
-    MemoryVerifyResponse,
-    MemoryStatsResponse,
     RerankRequest,
     RerankResponse,
     RerankResult,
@@ -478,14 +473,10 @@ def supported_capabilities() -> List[str]:
     caps.append("event_journal")
     if _external_event_intake is not None:
         caps.append("external_cognition_events")
-    caps.append("context_compression")
     caps.append("skill_sandbox")
     caps.append("security_scanner")
     caps.append("tom_extract")
     return caps
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -1258,23 +1249,6 @@ async def memory_read(body: MemoryReadRequest, request: Request = None) -> Memor
             'code': 'memory_backend_unavailable', 'message': 'Canonical source could not be read'}) from None
 
 
-@router.get("/memory/distill-preview")
-async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
-    """Shadow distill previews: while COLONY_DISTILL_TURNS is off, every stored
-    turn also computes what distillation WOULD have stored; the last 50 pairs
-    (original vs distilled, newest first) live in an in-memory ring here so the
-    flip can be validated against real traffic before it changes stored content."""
-    enabled = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
-    if _graph is None or not hasattr(_graph, "distill_preview"):
-        return {"enabled": enabled, "count": 0, "preview": []}
-    try:
-        items = _graph.distill_preview()[: max(0, int(limit))]
-    except Exception as exc:
-        logger.warning("memory_distill_preview failed: %s", exc)
-        return {"enabled": enabled, "count": 0, "preview": []}
-    return {"enabled": enabled, "count": len(items), "preview": items}
-
-
 @router.post("/memory/search", response_model=MemorySearchResponse)
 async def memory_search(body: MemorySearchRequest, request: Request) -> MemorySearchResponse:
     """Search current canonical evidence for an authenticated participant."""
@@ -1312,104 +1286,6 @@ async def memory_search(body: MemorySearchRequest, request: Request) -> MemorySe
             "code": "memory_backend_unavailable",
             "message": "Canonical memory could not be read or selected",
         }) from None
-
-
-@router.get("/memory/conflicts", response_model=MemoryConflictsResponse)
-async def memory_conflicts() -> MemoryConflictsResponse:
-    if _graph is None:
-        return MemoryConflictsResponse()
-    try:
-        # Query CONFLICTS_WITH relationships
-        async with _graph.driver.session(database=_graph.database) as session:
-            result = await session.run(
-                """
-                MATCH (m1:Memory)-[r:CONFLICTS_WITH]->(m2:Memory)
-                OPTIONAL MATCH (m1)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(m2)
-                RETURN m1.id AS id_a, m2.id AS id_b, e.name AS entity_name,
-                       r.detected_at AS detected_at
-                """
-            )
-            conflicts = []
-            async for record in result:
-                conflicts.append(MemoryConflictEntry(
-                    memory_id_a=record["id_a"],
-                    memory_id_b=record["id_b"],
-                    entity_name=record["entity_name"] or "",
-                    reason="Semantic conflict detected",
-                    detected_at=str(record["detected_at"]) if record["detected_at"] else None,
-                ))
-            return MemoryConflictsResponse(conflicts=conflicts, total=len(conflicts))
-    except Exception as exc:
-        logger.warning("memory_conflicts failed: %s", exc)
-        return MemoryConflictsResponse()
-
-
-@router.get("/memory/stats", response_model=MemoryStatsResponse)
-async def memory_stats() -> MemoryStatsResponse:
-    if _graph is None:
-        return MemoryStatsResponse()
-    try:
-        async with _graph.driver.session(database=_graph.database) as session:
-            # Count by epistemic state
-            result = await session.run(
-                """
-                MATCH (m:Memory)
-                RETURN m.epistemic_state AS state, count(m) AS cnt
-                """
-            )
-            by_state = {}
-            async for record in result:
-                by_state[record["state"] or "inferred"] = record["cnt"]
-            # Count by source type
-            result = await session.run(
-                """
-                MATCH (m:Memory)
-                RETURN m.source_type AS source, count(m) AS cnt
-                """
-            )
-            by_source = {}
-            async for record in result:
-                by_source[record["source"] or "inference"] = record["cnt"]
-            # Count archived
-            result = await session.run(
-                """MATCH (a:ArchivedMemory) RETURN count(a) AS cnt"""
-            )
-            record = await result.single()
-            total_archived = record["cnt"] if record else 0
-            # Count protected
-            result = await session.run(
-                """MATCH (m:Memory) WHERE m.protected = true RETURN count(m) AS cnt"""
-            )
-            record = await result.single()
-            protected_count = record["cnt"] if record else 0
-            total_active = sum(v for k, v in by_state.items() if k != "archived")
-            return MemoryStatsResponse(
-                by_state=by_state,
-                by_source=by_source,
-                total_active=total_active,
-                total_archived=total_archived,
-                protected_count=protected_count,
-            )
-    except Exception as exc:
-        logger.warning("memory_stats failed: %s", exc)
-        return MemoryStatsResponse()
-
-
-@router.post("/memory/verify", response_model=MemoryVerifyResponse)
-async def memory_verify(body: MemoryVerifyRequest) -> MemoryVerifyResponse:
-    if _graph is None:
-        return MemoryVerifyResponse(memory_id=body.memory_id, verified=False)
-    try:
-        await _graph.verify_memory(body.memory_id)
-        mem = await _graph.get_memory(body.memory_id)
-        return MemoryVerifyResponse(
-            memory_id=body.memory_id,
-            verified=True,
-            effective_confidence=float(mem.get("effective_confidence", 0.0)) if mem else 0.0,
-        )
-    except Exception as exc:
-        logger.warning("memory_verify failed: %s", exc)
-        return MemoryVerifyResponse(memory_id=body.memory_id, verified=False)
 
 
 @router.post("/memory/embed", response_model=MemoryEmbedResponse)
@@ -1888,34 +1764,6 @@ async def migrate_status(task_id: str) -> MigrateResponse:
         generation_id=getattr(result, 'generation_id', ''),
         fingerprint=getattr(result, 'fingerprint', ''),
     )
-
-
-class VectorVacuumRequest(BaseModel):
-    dry_run: bool = True
-    max_delete: Optional[int] = None
-
-
-@router.post("/memory/vector-vacuum")
-async def memory_vector_vacuum(body: VectorVacuumRequest) -> dict:
-    """Explicit admin op: remove orphaned memory vectors (ANN entries whose
-    graph node was deleted without its vector). Orphans keep matching in
-    semantic search and then vanish at hydration, stealing recall slots.
-
-    dry_run defaults true (count + sample only). Fails closed: a Neo4j
-    error aborts before any deletion — see ColonyGraph.vacuum_orphan_vectors.
-    """
-    if _graph is None:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                            detail="Memory graph not initialized")
-    if not hasattr(_graph, "vacuum_orphan_vectors"):
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                            detail="Graph backend lacks vacuum_orphan_vectors")
-    try:
-        return await _graph.vacuum_orphan_vectors(
-            dry_run=body.dry_run, max_delete=body.max_delete)
-    except Exception as exc:
-        raise HTTPException(status_code=500,
-                            detail=f"vector vacuum aborted: {exc}")
 
 
 @router.post("/memory/index", response_model=IndexResponse)

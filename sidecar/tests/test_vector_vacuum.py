@@ -1,5 +1,5 @@
 """Orphan-vector vacuum (U11): projected id listing, graph/vector set diff,
-fail-closed Neo4j handling, admin endpoint, and the post-prune sweep gate.
+fail-closed Neo4j handling and the post-prune sweep gate.
 
 Locks: dry_run deletes nothing, Neo4j failure aborts BEFORE any deletion,
 and the post-prune sweep only activates when COLONY_MEMORY_PRUNE_MODE=live
@@ -9,7 +9,6 @@ and the post-prune sweep only activates when COLONY_MEMORY_PRUNE_MODE=live
 from __future__ import annotations
 
 import tempfile
-from contextlib import asynccontextmanager
 
 import pytest
 
@@ -149,61 +148,6 @@ async def test_no_vector_store_reports_unavailable():
     out = await fx.graph.vacuum_orphan_vectors(dry_run=True)
     assert out == {"available": False, "vectors": 0, "orphans": 0,
                    "deleted": 0, "dry_run": True, "ids": []}
-
-
-# --- endpoint -------------------------------------------------------------------
-
-from apsimo.api.routers import host as host_mod  # noqa: E402
-
-
-@asynccontextmanager
-async def _app(graph):
-    from fastapi import FastAPI
-    from httpx import ASGITransport, AsyncClient
-    prev = host_mod._graph
-    host_mod._graph = graph
-    app = FastAPI()
-    app.include_router(host_mod.router)
-    try:
-        async with AsyncClient(transport=ASGITransport(app=app),
-                               base_url="http://test") as client:
-            yield client
-    finally:
-        host_mod._graph = prev
-
-
-@pytest.mark.asyncio
-async def test_endpoint_501_when_graph_missing():
-    async with _app(None) as client:
-        resp = await client.post("/v1/host/memory/vector-vacuum", json={})
-        assert resp.status_code == 501
-
-
-@pytest.mark.asyncio
-async def test_endpoint_defaults_to_dry_run():
-    fx = _Fixture(vector_ids=["a", "orphan"], graph_ids=["a"])
-    async with _app(fx.graph) as client:
-        resp = await client.post("/v1/host/memory/vector-vacuum", json={})
-        assert resp.status_code == 200
-        body = resp.json()
-        assert body["dry_run"] is True and body["orphans"] == 1
-        assert fx.vec.deleted == []
-
-
-@pytest.mark.asyncio
-async def test_endpoint_live_run_and_fail_closed():
-    fx = _Fixture(vector_ids=["orphan"], graph_ids=[])
-    async with _app(fx.graph) as client:
-        resp = await client.post("/v1/host/memory/vector-vacuum",
-                                 json={"dry_run": False})
-        assert resp.status_code == 200
-        assert resp.json()["deleted"] == 1
-    broken = _Fixture(vector_ids=["orphan"], graph_ids=[], fail=True)
-    async with _app(broken.graph) as client:
-        resp = await client.post("/v1/host/memory/vector-vacuum",
-                                 json={"dry_run": False})
-        assert resp.status_code == 500
-        assert broken.vec.deleted == []
 
 
 # --- post-prune sweep gate --------------------------------------------------------
