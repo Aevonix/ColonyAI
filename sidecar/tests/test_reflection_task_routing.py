@@ -6,20 +6,26 @@ import pytest
 
 from test_function_routing import config, endpoint, router
 from test_self_judgments import judgments, source as judgment_source
-from test_source_appraisals import state, source as appraisal_source
+from test_source_appraisals import Processor, state, source as appraisal_source
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('task', ['source_appraisal', 'self_judgment'])
+@pytest.mark.parametrize('task', ['source_appraisal', 'source_appraisal_revision', 'self_judgment'])
 @pytest.mark.parametrize('override', [False, True])
 async def test_reflection_task_override_drives_actual_operator_budget_and_dispatch(
     state, judgments, monkeypatch, task, override,
 ):
-    if task == 'source_appraisal':
+    if task.startswith('source_appraisal'):
         worker, table = state, 'appraisal_runs'
+        if task == 'source_appraisal_revision':
+            appraisal_source(worker, 'prior', 'The export stalled at the validation step.')
+            await worker.process_one(Processor())
         appraisal_source(worker, 'incident', 'The export failed again after the same retry.')
-        default, alternate = 'extraction', 'reasoning'
-        answer = {'observations': [], 'incident_decisions': []}
+        default, alternate = (('reasoning', 'extraction') if task.endswith('_revision')
+                              else ('extraction', 'reasoning'))
+        previous = worker._prepare({'turn_id': 'incident'})[1]['incident_ids']
+        answer = {'observations': [], 'incident_decisions': [
+            {'record_id': identifier, 'outcome': 'uncertain'} for identifier in previous]}
     else:
         worker, _ = judgments
         table = 'self_judgment_runs'
