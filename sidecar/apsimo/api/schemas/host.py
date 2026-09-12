@@ -102,7 +102,7 @@ class MemoryReadRequest(BaseModel):
     source_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
     source_version: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     session_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    source_view: Literal['source', 'assertions', 'image', 'document', 'video'] = 'source'
+    source_view: Literal['source', 'assertions', 'observations', 'image', 'document', 'video'] = 'source'
     asset_hash: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     page: Optional[int] = Field(default=None, ge=1, strict=True)
     requested_ms: Optional[int] = Field(default=None, ge=0, le=30000, strict=True)

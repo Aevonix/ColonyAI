@@ -151,6 +151,11 @@ class TurnIdempotencyLedger:
                     )
                 """)
                 conn.execute("""
+                    CREATE INDEX IF NOT EXISTS source_observation_origin ON turn_sources
+                    (contact_id, json_extract(messages_json, '$[0]._observation_sources[0].source_id'), turn_id)
+                    WHERE json_extract(messages_json, '$[0]._native_tool_observation') = 'native-tool-observation-v1'
+                """)
+                conn.execute("""
                     CREATE VIRTUAL TABLE IF NOT EXISTS turn_source_search USING fts5(
                         turn_id UNINDEXED, role UNINDEXED, content,
                         tokenize='unicode61'

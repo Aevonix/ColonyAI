@@ -8,6 +8,13 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 VERSION = 'native-tool-observation-v1'
 MAX_BYTES = 16384
+MAX_OPENING_CANDIDATES = 64
+# Matches source_observation_origin, including its partial-index predicate.
+ORIGIN_QUERY = """SELECT * FROM turn_sources
+    WHERE contact_id=? AND json_extract(messages_json, '$[0]._observation_sources[0].source_id')=?
+      AND json_extract(messages_json, '$[0]._native_tool_observation') = 'native-tool-observation-v1'
+      AND (scope='person' OR session_id=?)
+    ORDER BY turn_id LIMIT ?"""
 
 
 class NativeToolIdentity(BaseModel):
@@ -50,6 +57,58 @@ class ToolObservation(BaseModel):
 def identity_id(native):
     return 'native-observation:' + hashlib.sha256(json.dumps(native, sort_keys=True,
         separators=(',', ':'), ensure_ascii=False).encode()).hexdigest()
+
+
+def retained_for_origin(ledger, conn, origin, *, contact_id, session_id):
+    """Bounded reference discovery, never a claim that a task succeeded.
+
+    The current v1 writer stores its validated origin first. Other dependencies,
+    common sessions and the model's nomination reason cannot establish origin.
+    None denotes an over-limit cohort, not an empty or complete directory.
+    """
+    from .idempotency import canonical_turn_digest, source_message_hash
+    scope = {'contact_id': contact_id, 'session_id': session_id}
+    parent = conn.execute('SELECT session_id,messages_json FROM turn_sources WHERE turn_id=?',
+                          (origin['source_id'],)).fetchone()
+    messages = json.loads(parent['messages_json']) if parent else []
+    if (origin not in ledger.source_references([origin['source_id']], **scope)
+            or len(messages) != 1 or messages[0].get('role') != 'user'
+            or canonical_turn_digest(messages) != origin['source_version']):
+        raise ValueError('source_observations_require_current_instruction')
+    rows = conn.execute(ORIGIN_QUERY, (contact_id, origin['source_id'], session_id,
+                                      MAX_OPENING_CANDIDATES + 1)).fetchall()
+    if len(rows) > MAX_OPENING_CANDIDATES:
+        return None
+    retained = []
+    for row in rows:
+        try:
+            messages = json.loads(row['messages_json'])
+            if len(messages) != 1 or messages[0].get('role') != 'tool':
+                continue
+            message = messages[0]
+            provenance = message['provenance']
+            dependencies = message['_observation_sources']
+            if (not dependencies or dependencies[0] != origin or provenance['kind'] != VERSION
+                    or provenance['selection']['author'] != 'model'):
+                continue
+            observation = ToolObservation(native=provenance['native'], content=message['content'],
+                reason=provenance['selection']['reason'], origin=dependencies[0], sources=dependencies[1:])
+            native = observation.native.model_dump()
+            ref = {'source_id': row['turn_id'], 'source_version': canonical_turn_digest(messages)}
+            current = ledger.source_references([ref['source_id'], *(r['source_id'] for r in dependencies)], **scope)
+            if (identity_id(native) != row['turn_id'] or native['session_id'] != row['session_id']
+                    or native['session_id'] != parent['session_id'] or ref not in current
+                    or any(r not in current for r in dependencies)):
+                continue
+            retained.append({'reference': ref,
+                'message_hash': source_message_hash(row['session_id'], message),
+                'entry': {**ref, 'tool_name': native['tool_name'], 'tool_call_id': native['tool_call_id'],
+                    'recorded_at': row['ingested_at'],
+                    'selection_reason': {'author': 'model', 'reason': observation.reason}}})
+        except (KeyError, TypeError, ValueError):
+            # Non-v1 or incomplete originals have no trustworthy opening link.
+            continue
+    return retained
 
 
 def record(ledger, observation, *, contact_id, session_id, source_id):
