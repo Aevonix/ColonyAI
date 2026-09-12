@@ -35,7 +35,7 @@ def correct(ledger, *, operation_id, performed_by, old_contact_id, contact_id,
     person. Returned refs let other stores purge their own source projections.
     """
     from apsimo.contacts.identity_links import _refs, _json
-    from .idempotency import canonical_turn_digest, source_dependencies, SourceErased
+    from .idempotency import canonical_turn_digest, SourceErased
     selected, evidence = _refs(source_ids), _refs(evidence_refs)
     if not selected or not evidence or old_contact_id == contact_id:
         raise ValueError('invalid_source_attribution')
@@ -71,7 +71,7 @@ def correct(ledger, *, operation_id, performed_by, old_contact_id, contact_id,
                 if row['turn_id'] in selected or row['turn_id'] in descendants:
                     continue
                 if any(ref.get('source_id') in pending for message in json.loads(row['messages_json'])
-                       for ref in source_dependencies(message)):
+                       for ref in message.get('_supplied_sources', [])):
                     found.add(row['turn_id'])
             descendants.update(found)
             pending = found

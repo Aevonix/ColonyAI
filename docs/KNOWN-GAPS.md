@@ -15,18 +15,6 @@ the tested cases, and deployment-specific hardware coverage. Native skill
 evaluation needs an independently supplied task oracle; it does not establish
 general self-improvement simply by recording a successful review.
 
-Exact request-linked observation inclusion uses the separately versioned
-`exact-origin-spare-budget-v1` policy in structured diagnostics; prompt evidence
-shows the exact request relation and retained-only scope. It can add a complete
-bounded set of retained tool originals beside a recalled request, using only unused context
-space. Added observations have not passed the query relevance cutoff, and
-retained observations are not a complete task history. Oversized sets provide
-an explicitly incomplete opening notice. Legacy observations without a
-recomputable native origin do not expand. Source, scope, correction and packing
-tests cover the mechanics; end-to-end model answer quality and distraction
-from authentic but irrelevant observations remain qualification work. The
-existing numerical reranker cutoff does not qualify this expanded packet.
-
 ## Partially wired (works, with a missing half)
 
 - **Generic goal dispatch**: the default goal engine has no execution backend.
