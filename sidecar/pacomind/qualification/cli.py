@@ -13,6 +13,8 @@ def add_parser(sub):
         item.add_argument('--config', required=True, type=Path,
                           help='Private host model JSON, or Hermes config YAML for the native suite')
         item.add_argument('--suite', choices=['standard', 'native'], default='standard')
+        item.add_argument('--hermes-python', type=Path,
+                          help='Native suite interpreter; defaults to the configured instance.hermes_python')
         if command == 'evaluate':
             item.add_argument('--roles', help='Default: chat,extraction; native suite: chat')
             item.add_argument('--deadline-seconds', type=float,
@@ -40,7 +42,8 @@ def run(args):
     native = getattr(args, 'suite', 'standard') == 'native'
     if native:
         from .native import configuration
-        config, recipe = configuration(args.config, args.binding)
+        config, recipe = configuration(args.config, args.binding,
+                                       hermes_python=getattr(args, 'hermes_python', None))
     else:
         config = read(args.config)
         recipe = inspect_binding(config, args.binding)
@@ -51,13 +54,12 @@ def run(args):
     roles = [r.strip() for r in (args.roles or ('chat' if native else 'chat,extraction')).split(',') if r.strip()]
     consumers = CONSUMERS
     if native:
-        from types import SimpleNamespace
-        from .native import cases as native_cases, native_cli
+        from .native import cases as native_cases, native_cli, native_context
         deadline, cleanup = getattr(args, 'deadline_seconds', None), getattr(args, 'cleanup_seconds', None)
         cases = native_cases(roles, deadline_seconds=60 if deadline is None else deadline,
                             cleanup_seconds=5 if cleanup is None else cleanup)
         consumers = {**CONSUMERS, 'native_cli': native_cli}
-        factory = lambda _: SimpleNamespace(binding=args.binding, native_config=config)
+        factory = lambda _: native_context(config, recipe)
     else:
         if getattr(args, 'deadline_seconds', None) is not None or getattr(args, 'cleanup_seconds', None) is not None:
             raise ValueError('Deadline overrides apply only to the native suite')

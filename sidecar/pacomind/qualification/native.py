@@ -3,12 +3,12 @@ import asyncio
 from copy import deepcopy
 from dataclasses import replace
 import hashlib
-import importlib.util
 import json
 import os
 from pathlib import Path
 import re
-import sys
+import subprocess
+import tempfile
 import time
 
 import yaml
@@ -24,7 +24,33 @@ _PROVIDER_FIELDS = {
 }
 
 
-def configuration(path, binding):
+def _runtime(supplied, explicit_python):
+    from ..util.instance import plugin_settings
+    selected = explicit_python
+    try:
+        if not selected and (instance := plugin_settings(supplied).get('instance_dir')):
+            selected = read(Path(instance).expanduser()/'instance.json').get('hermes_python')
+        if not selected:
+            raise FileNotFoundError('No selected Hermes interpreter')
+        python = str(Path(selected).expanduser().absolute())
+        # Metadata only in the selected native interpreter. No Hermes imports or profile state.
+        code = ('import hashlib,importlib.util,json,pathlib,sys; '
+                's=importlib.util.find_spec("run_agent"); '
+                'p=pathlib.Path(s.origin) if s and s.origin else None; '
+                'print(json.dumps({"python":sys.executable,"python_version":sys.version.split()[0],'
+                '"native_source_sha256":hashlib.sha256(p.read_bytes()).hexdigest() if p else None}))')
+        with tempfile.TemporaryDirectory(prefix='pacomind-native-inspect-') as home:
+            probe = subprocess.run([python, '-I', '-c', code], cwd=home,
+                env=_environment(Path(home), {'providers': {}}), capture_output=True, text=True, timeout=5)
+        info = json.loads(probe.stdout) if probe.returncode == 0 else {}
+        if not info.get('native_source_sha256'):
+            raise ModuleNotFoundError('Selected interpreter has no Hermes runtime')
+        return {**info, 'status': 'ready'}
+    except (OSError, ValueError, subprocess.TimeoutExpired, ModuleNotFoundError) as exc:
+        return {'status': 'unavailable', 'error_type': type(exc).__name__, 'python': str(selected) if selected else None}
+
+
+def configuration(path, binding, *, hermes_python=None):
     """Read only the selected provider. Never import a deployed home or auth store."""
     raw = Path(path).read_bytes()
     supplied = yaml.safe_load(raw)
@@ -49,18 +75,25 @@ def configuration(path, binding):
         'auxiliary': {'title_generation': {'enabled': False}}, 'fallback_providers': []}
     if isinstance(current, dict) and current.get('provider') == binding and 'context_length' in current:
         selected['model']['context_length'] = current['context_length']
-    spec = importlib.util.find_spec('run_agent')
-    native_source = Path(spec.origin) if spec and spec.origin else None
+    runtime = _runtime(supplied, hermes_python)
     recipe = {'binding': binding, 'declared': {}, 'configured_model': model,
         'config_sha256': hashlib.sha256(raw).hexdigest(), 'selected_config_sha256': digest(selected),
         'boundary': 'native_hermes', 'consumer': 'isolated_native_cli_loop',
-        'native_source_sha256': hashlib.sha256(native_source.read_bytes()).hexdigest() if native_source else None,
+        'native_runtime': runtime,
         'native_worker_sha256': hashlib.sha256(Path(__file__).with_name('native_worker.py').read_bytes()).hexdigest(),
         'request_timeout_seconds': provider.get('request_timeout_seconds'),
         'stale_timeout_seconds': provider.get('stale_timeout_seconds'),
         'returned_model': None, 'observed_weight_revision': None,
         'basis': 'configured CLI-loop recipe; no gateway, channel, tool or memory qualification'}
     return selected, recipe
+
+
+def native_context(config, recipe):
+    from types import SimpleNamespace
+    if recipe['native_runtime']['status'] != 'ready':
+        raise ValueError('Selected Hermes interpreter is unavailable; use --hermes-python')
+    return SimpleNamespace(binding=recipe['binding'], native_config=config,
+                           hermes_python=recipe['native_runtime']['python'])
 
 
 def cases(roles, *, deadline_seconds=60, cleanup_seconds=5):
@@ -104,7 +137,7 @@ async def native_cli(inputs, context):
     with log_path.open('xb') as log:
         log_path.chmod(0o600)
         context.state_cleanup_safe = False
-        spawning = asyncio.create_task(asyncio.create_subprocess_exec(sys.executable, '-I', '-B',
+        spawning = asyncio.create_task(asyncio.create_subprocess_exec(context.router.hermes_python, '-I', '-B',
             str(Path(__file__).with_name('native_worker.py')), str(state/'input.json'),
             cwd=state, env=_environment(state, config), stdout=log, stderr=log))
         proc = None

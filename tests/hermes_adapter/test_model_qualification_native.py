@@ -5,14 +5,14 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 import json
 from pathlib import Path
+import sys
 import threading
 import time
-from types import SimpleNamespace
 
 import pytest
 
 from pacomind.qualification.cli import add_parser, run
-from pacomind.qualification.native import configuration, native_cli
+from pacomind.qualification.native import configuration, native_cli, native_context
 from pacomind.qualification.records import read
 
 
@@ -96,6 +96,7 @@ def arguments(config, output, *, deadline=8, cleanup=5):
     add_parser(parser.add_subparsers())
     return parser.parse_args(['models', 'evaluate', 'fixture', '--suite', 'native',
         '--config', str(config), '--output', str(output), '--evidence-mode', 'controlled',
+        '--hermes-python', sys.executable,
         '--deadline-seconds', str(deadline), '--cleanup-seconds', str(cleanup)])
 
 
@@ -166,6 +167,60 @@ def test_native_transport_failure_is_not_graded_as_a_model_answer(tmp_path):
         assert row['cleanup'] == 'state_directory_removed'
 
 
+def test_recorded_separate_hermes_python_needs_no_pacomind_install(tmp_path):
+    import importlib.util
+    import subprocess
+    import venv
+    # Reuse installed native dependencies without installing PacoMind into this interpreter.
+    home = tmp_path/'native-python'
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(home)
+    site = home/f'lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages'
+    for source in (Path(p) for p in sys.path if p.endswith('site-packages')):
+        for item in source.iterdir():
+            if item.name.startswith(('pacomind', '__editable__')) or item.suffix == '.pth':
+                continue
+            target = site/item.name
+            if not target.exists():
+                target.symlink_to(item)
+    native_root = Path(importlib.util.find_spec('run_agent').origin).parent
+    (site/'selected-native.pth').write_text(str(native_root)+'\n')
+    python = home/'bin/python'
+    check = subprocess.run([str(python), '-I', '-c',
+        'import importlib.util; assert importlib.util.find_spec("pacomind") is None; import run_agent'],
+        env={'HOME': str(tmp_path/'probe-home'), 'HERMES_HOME': str(tmp_path/'probe-home'),
+             'HERMES_SKIP_DOTENV': '1'}, capture_output=True, text=True, timeout=8)
+    assert check.returncode == 0, check.stderr
+    with endpoint() as (url, requests, _entered):
+        config = configured(tmp_path, url)
+        instance = tmp_path/'instance'
+        instance.mkdir()
+        (instance/'instance.json').write_text(json.dumps({'hermes_python': str(python)}))
+        document = json.loads(config.read_text())
+        document['plugins'] = {'pacomind': {'instance_dir': str(instance)}}
+        config.write_text(json.dumps(document))
+        output = tmp_path/'run'
+        args = arguments(config, output)
+        args.hermes_python = None
+        assert run(args) == 0
+        runtime = read(output/'run.json')['recipe']['native_runtime']
+        assert runtime['python'] == str(python) and runtime['python'] != sys.executable
+        assert runtime['native_source_sha256']
+        assert len(requests) == 1
+
+
+def test_explicit_missing_native_python_records_setup_error_without_inference(tmp_path):
+    with endpoint() as (url, requests, _entered):
+        output = tmp_path/'run'
+        args = arguments(configured(tmp_path, url), output)
+        args.hermes_python = tmp_path/'missing-python'
+        assert run(args) == 1
+        row = read(output/'attempts/native.chat.grounded-note/result.json')
+        runtime = read(output/'run.json')['recipe']['native_runtime']
+        assert row['outcome'] == 'setup_error'
+        assert runtime['status'] == 'unavailable' and runtime['error_type'] == 'FileNotFoundError'
+        assert requests == []
+
+
 def test_deadline_during_process_creation_keeps_ownership(tmp_path, monkeypatch):
     import asyncio
     from pacomind.qualification import native
@@ -197,11 +252,11 @@ async def test_native_cancellation_records_real_interruption_and_exit(tmp_path):
     from pacomind.qualification.cases import EVALUATORS
     from pacomind.qualification.runner import evaluate
     with endpoint(blocked=True) as (url, requests, entered):
-        config, recipe = configuration(configured(tmp_path, url), 'fixture')
+        config, recipe = configuration(configured(tmp_path, url), 'fixture', hermes_python=sys.executable)
         output = tmp_path/'run'
         task = asyncio.create_task(evaluate(output, recipe, cases(['chat']),
             {'native_cli': native_cli}, EVALUATORS,
-            lambda _: SimpleNamespace(binding='fixture', native_config=config)))
+            lambda _: native_context(config, recipe)))
         assert await asyncio.to_thread(entered.wait, 8)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -221,7 +276,8 @@ async def test_incomplete_native_stop_retains_state_and_does_not_start_later_cas
     from pacomind.qualification import native
     from pacomind.qualification.cases import EVALUATORS
     from pacomind.qualification.runner import evaluate
-    config, recipe = configuration(configured(tmp_path, 'http://127.0.0.1:9/v1'), 'fixture')
+    config, recipe = configuration(configured(tmp_path, 'http://127.0.0.1:9/v1'), 'fixture',
+                                   hermes_python=sys.executable)
     original = asyncio.create_subprocess_exec
     spawned = []
 
@@ -235,7 +291,7 @@ async def test_incomplete_native_stop_retains_state_and_does_not_start_later_cas
     case = native.cases(['chat'], deadline_seconds=.3, cleanup_seconds=.05)[0]
     output = tmp_path/'run'
     await evaluate(output, recipe, [case, replace(case, id='later')], {'native_cli': native_cli},
-        EVALUATORS, lambda _: SimpleNamespace(binding='fixture', native_config=config))
+        EVALUATORS, lambda _: native_context(config, recipe))
     assert len(spawned) == 1 and spawned[0].returncode is not None
     row = read(output/'attempts/native.chat.grounded-note/result.json')
     assert row['outcome'] == 'timeout' and row['cleanup'] == 'state_directory_retained'
@@ -245,7 +301,7 @@ async def test_incomplete_native_stop_retains_state_and_does_not_start_later_cas
     assert not (output/'attempts/later/started.json').exists()
     first = (output/'attempts/native.chat.grounded-note/result.json').read_bytes()
     await evaluate(output, recipe, [case, replace(case, id='later')], {'native_cli': native_cli},
-        EVALUATORS, lambda _: SimpleNamespace(binding='fixture', native_config=config), resume=True)
+        EVALUATORS, lambda _: native_context(config, recipe), resume=True)
     assert len(spawned) == 1
     assert (output/'attempts/native.chat.grounded-note/result.json').read_bytes() == first
     assert not (output/'attempts/later/started.json').exists()
