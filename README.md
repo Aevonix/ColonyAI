@@ -14,10 +14,8 @@ Hermes handles conversations and tools. Apsimo adds recollection, task
 coordination, and the stored preferences and relationships that guide the agent.
 Each installation has its own identity, models, channels and optional devices.
 
-Phase 1 establishes Apsimo's first supported baseline; validation is still in
-progress. Older ColonyAI releases and their migration paths are outside that
-baseline. Retained historical names and modules are implementation details,
-not promises of backward compatibility.
+Phase 1 establishes the first supported release. Until its validation is
+complete, development releases may change interfaces and storage layouts.
 
 ## Mission: what we mean by pseudo-AGI
 

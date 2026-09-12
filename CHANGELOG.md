@@ -1,6 +1,6 @@
 # Changelog
 
-## v1.4.4 - recall requests with their retained results
+## v1.4.4 - request-linked recall and baseline cleanup
 
 Recall can include the original tool results retained while answering a remembered
 request. It checks the exact native origin and source revisions, preserves ranked
@@ -14,6 +14,17 @@ dependencies consistently with erasure. An index over existing canonical records
 supports the bounded lookup. No model, cutoff, new service or Hermes patch is added.
 The expanded context still requires task-level quality evaluation; source inclusion
 alone does not establish better answers.
+
+Phase 1 defines the first supported release baseline. This preparation removes
+obsolete world-model Neo4j and PostgreSQL adapters, their backend-selection
+fallbacks and the PostgreSQL dependency extra. The world model uses its existing
+SQLite store for entities, relationships and typed observations. Its HTTP
+creation, health and persistence paths use that same implementation. The separate
+Neo4j memory graph remains active code pending its own retirement.
+
+Current setup and architecture documentation replace historical upgrade guides
+and compatibility promises. Development releases before the completed Phase 1
+baseline may change interfaces and storage layouts.
 
 ## v1.4.3 - recall evidence and quality measurement
 

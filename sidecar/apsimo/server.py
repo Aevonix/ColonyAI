@@ -2686,13 +2686,8 @@ async def lifespan(app: FastAPI):
             logger.warning("Extraction pipeline init skipped: %s", eexc)
     except Exception as exc:
         logger.warning("WorldModelStore init failed: %s", exc)
-        # Try without connect() — some operations work without it
-        try:
-            world_store = WorldModelStore(WorldModelConfig())
-            set_world_store(world_store)
-            logger.info("WorldModelStore initialized (without connect)")
-        except Exception as exc2:
-            logger.error("WorldModelStore fallback init also failed: %s", exc2)
+        world_store = None
+        set_world_store(None)
 
     # --- 11. Cognition (CognitionPipeline) ---
     cognition_pipeline = None
