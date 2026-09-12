@@ -56,6 +56,12 @@ jobs:
           PY
           python -m pytest hostworker/tests -q
           python -m pytest benchmarks/source_recall/test_harness.py -q
+      - name: Qualify native original-memory observations
+        env:
+          PYTHONPATH: ${{ github.workspace }}/.qualification/hermes
+        run: |
+          python -c "import hermes_state"
+          python -m pytest sidecar/tests/test_native_tool_observations.py -q
 
   python:
     runs-on: ubuntu-latest
