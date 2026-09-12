@@ -2067,16 +2067,21 @@ async def context_assemble(
     # --- Scoped execution observations (not a commitment lock) ---
     try:
         from pacomind.api.routers.executions import authorized_viewer, with_queue_work
-        from pacomind.turns.executions import registry, format_view
+        from pacomind.turns.executions import registry, request_work_context
         person, owner = authorized_viewer(request, body.context.contact_id, scope="context:read")
         # Public/guest turns do not get cross-session activity. The owner view
         # is sealed from existing exact person grants, never a body owner flag.
         if owner:
-            work = registry().view(contact_id=person, owner=True, limit=8)
+            # Initial work is metadata only. Source-backed input excerpts belong
+            # to the native request refresh, which carries their freshness guards.
+            work = registry().view(contact_id=person, owner=True, limit=8,
+                                   include_ancestors=True, include_inputs=False)
             work = await with_queue_work(work, owner=True, limit=8)
             current_work_available = True
             if work["items"] or work.get('worker_work', {}).get('items') or work.get('native_cron') or work.get('reported_worker'):
-                sections.append(ContextSection(id="pacomind-executions", title="Work observed at turn start", body=format_view(work), priority=73))
+                observed = request_work_context(work, session_id=body.context.session_id,
+                                                limit=8, max_chars=4000)
+                sections.append(ContextSection(id="pacomind-executions", title="Work observed at turn start", body=observed['text'], priority=73))
     except HTTPException:
         pass
     except Exception:

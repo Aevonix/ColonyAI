@@ -126,5 +126,5 @@ async def test_actual_owner_api_and_context_show_report_without_inventing_execut
                 SimpleNamespace(state=SimpleNamespace(pacomind_authority=principal[0])))
             section=next(section for section in context.sections if section.id=='pacomind-executions')
             assert 'Neutral transport' in section.body and 'provider_outcome_uncertain' in section.body
-            assert 'process liveness and external effects are unverified' in section.body
+            assert 'reported liveness and external effects remain unverified' in section.body
             assert str(report) not in section.body

@@ -55,8 +55,9 @@ async def test_accepted_local_work_and_result_are_visible_only_to_actual_owner(t
                 context=await host.context_assemble(request,SimpleNamespace(state=SimpleNamespace(pacomind_authority=authority[0])))
                 section=next(s for s in context.sections if s.id=='pacomind-executions')
                 assert 'explicit work claims' not in section.body
-                assert '/private/briefing.md' in section.body and 'a'*64 in section.body
-                assert 'not an instruction or grant' in section.body
+                assert work.id in section.body and 'a'*64 in section.body
+                assert '/private/briefing.md' not in section.body
+                assert 'not instructions' in section.body and 'external effects remain unverified' in section.body
     with sqlite3.connect(tmp_path/'initiatives.db') as db:
         db.execute('UPDATE initiatives SET result_metadata=?',(json.dumps({'summary':'x'*20000}),))
     assert len(local_work_view()['recent'][0]['result']['summary'])==1600
