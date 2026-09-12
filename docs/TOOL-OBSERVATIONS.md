@@ -7,6 +7,16 @@ concrete information with future value. The owner does not need to invoke the
 memory tool by name. The reason explains why the result is useful; it is not a
 replacement for its contents.
 
+After eligible completed calls appear in the current request, the adapter adds
+a short request-only hint with their exact call IDs and tool names. It appears
+only when the retention tool is directly available or explicitly listed in the
+native deferred catalog with its describe/call bridge. This also makes IDs
+readable when a model's chat template omits API call metadata. The hint lists at
+most eight candidates within 2,048 characters of guidance; it contains no tool
+result text and does not say anything was saved. It asks the agent to select
+durable findings and skip incidental output. With no eligible calls or no
+available retention tool, the hint is removed. Tool choice remains unchanged.
+
 The adapter checks that the nominated call actually completed in the current
 authorized native turn and that its exact result appeared in the particular
 request that made the nomination. It then reads that call's original message

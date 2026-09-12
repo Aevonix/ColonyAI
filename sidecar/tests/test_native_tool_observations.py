@@ -71,17 +71,29 @@ def native(source_app, monkeypatch, tmp_path):
     context.hooks['pre_llm_call'](**call_context, platform='cli', sender_id='owner', user_message=INSTRUCTION,
         conversation_history=[{'role':'user','content':INSTRUCTION}])
     messages = [{'role':'user','content':INSTRUCTION}]
-    def request(request_id='api-2', *, anthropic=False):
+    def request(request_id='api-2', *, anthropic=False, responses=False, deferred=False, tools=True):
         payload = {'messages': copy.deepcopy(messages), 'tools':[{'type':'function','function':
             context.tools['apsimo_memory_retain_observation']['schema']}]}
+        if deferred:
+            from tools.tool_search import assemble_tool_defs, ToolSearchConfig
+            payload['tools'] = assemble_tool_defs(payload['tools'], config=ToolSearchConfig.from_raw(
+                {'enabled': 'on', 'defer': ['apsimo_memory_retain_observation']})).tool_defs
+        if not tools:
+            payload['tools'] = []
         if anthropic:
             from agent.anthropic_message_convert import convert_messages_to_anthropic, convert_tools_to_anthropic
             system, payload['messages'] = convert_messages_to_anthropic(payload['messages'])
             if system is not None:
                 payload['system'] = system
             payload['tools'] = convert_tools_to_anthropic(payload['tools'])
+        if responses:
+            from agent.codex_responses_adapter import _chat_messages_to_responses_input, _responses_tools
+            payload['input'] = _chat_messages_to_responses_input(payload.pop('messages'))
+            payload['tools'] = _responses_tools(payload['tools'])
+            payload['instructions'] = 'Stable identity.'
         return native_middleware.apply_llm_request_middleware(payload,
-            **call_context, api_request_id=request_id)
+            **call_context, api_request_id=request_id,
+            api_mode='anthropic_messages' if anthropic else 'chat_completions')
     request('api-1')
     def complete(call_id='call-1', result=RESULT, name='fixture_observe'):
         call = {'id':call_id,'type':'function','function':{'name':name,'arguments':'{}'}}
@@ -169,6 +181,68 @@ def test_actual_native_anthropic_conversion_preserves_original_tool_nomination(n
     rows = n.ledger.search_sources('copper synchronization', contact_id='cid-owner', session_id='later')
     original = next(row for row in rows if row['turn_id'] == receipt['source_id'])
     assert original['role'] == 'tool' and original['content'] == RESULT
+    assert '"call_id": "call-1"' in request['system']
+
+
+def test_actual_native_deferred_catalog_and_completed_call_offer_bounded_hint(native):
+    n = native
+    assert not any('apsimo-observation-candidates-v1' in str(row) for row in n.request(deferred=True).payload['messages'])
+    n.complete()
+    before = copy.deepcopy(n.messages)
+    request = n.request(deferred=True).payload
+    schemas = {row['function']['name']: row['function'] for row in request['tools']}
+    assert 'apsimo_memory_retain_observation' not in schemas
+    assert '- apsimo_memory_retain_observation: Retain a useful original tool result in persistent memory.' in schemas['tool_search']['description']
+    hints = [row['content'] for row in request['messages'] if row.get('role') == 'system'
+             and str(row.get('content', '')).startswith('[apsimo-observation-candidates-v1]')]
+    assert len(hints) == 1 and len(hints[0]) < 2150
+    assert '"call_id": "call-1"' in hints[0] and '"tool_name": "fixture_observe"' in hints[0]
+    assert 'tool_describe' in hints[0] and 'tool_call' in hints[0]
+    assert 'not saved memories' in hints[0] and RESULT not in hints[0]
+    assert n.messages == before and n.retain()['source_recorded']
+
+
+def test_actual_native_responses_conversion_places_hint_in_instructions(native):
+    n = native
+    n.complete()
+    request = n.request(responses=True).payload
+    assert request['instructions'].startswith('Stable identity.')
+    assert request['instructions'].count('[apsimo-observation-candidates-v1]') == 1
+    assert '"call_id": "call-1"' in request['instructions']
+    assert any(row.get('type') == 'function_call_output' and row.get('output') == RESULT for row in request['input'])
+    assert n.retain()['source_recorded']
+
+
+def test_hint_omits_invented_stale_calls_and_disappears_without_available_tool(native):
+    n = native
+    n.complete()
+    n.messages.extend([{'role': 'assistant', 'tool_calls': [{'id': 'invented', 'function': {
+        'name': 'fixture_observe', 'arguments': '{}'}}]},
+        {'role': 'tool', 'tool_call_id': 'invented', 'content': RESULT}])
+    request = n.request().payload
+    hint = next(row for row in request['messages'] if str(row.get('content', '')).startswith(
+        '[apsimo-observation-candidates-v1]'))
+    assert 'invented' not in hint['content'] and '"call_id": "call-1"' in hint['content']
+    n.messages.append(hint)  # Simulate re-processing a request that already has our hint.
+    no_tools = n.request(tools=False).payload
+    assert not any('apsimo-observation-candidates-v1' in str(row) for row in no_tools['messages'])
+    for row in n.messages:
+        if row.get('role') == 'tool' and row.get('tool_call_id') == 'call-1':
+            row['content'] = 'Different bytes in the current request.'
+    stale = n.request().payload
+    assert not any('apsimo-observation-candidates-v1' in str(row) for row in stale['messages'])
+    assert not n.retain()['accepted']
+
+
+def test_hint_operation_requires_direct_schema_or_exact_native_catalog_entry(native):
+    module = importlib.import_module(native.plugin.__name__ + '.tool_observations')
+    tools = [{'name': name} for name in ('tool_search', 'tool_describe', 'tool_call')]
+    tools[0]['description'] = 'Some prose mentions apsimo_memory_retain_observation.'
+    assert module._available_retention({'tools': tools}) is None
+    tools[0]['description'] = module._CATALOG_HEADER + '\nother tools (2):\napsimo_memory_retain_observation, other_tool'
+    assert module._available_retention({'tools': tools}) == ('apsimo_memory_retain_observation', True)
+    assert module._available_retention({'tools': tools, 'tool_choice': 'none'}) is None
+    assert module._available_retention({'tools': tools[:-1]}) is None
 
 
 def test_origin_erasure_removes_observation_and_queued_retry(native):
@@ -256,3 +330,6 @@ def test_rereads_retention_outputs_and_oversized_results_are_not_candidates(nati
         turn_id='native-turn',valid_participant=True,authority_lane='system',platform='cli',user_message=INSTRUCTION)
     observer.completed(scope,{'tool_call_id':'excluded','tool_name':name,'api_request_id':'api-1'},result)
     assert not observer._turns
+    request = observer.checked({'messages': [], 'tools': [{'name': 'apsimo_memory_retain_observation'}]},
+        scope, 'api-2')
+    assert 'apsimo-observation-candidates-v1' not in str(request)
