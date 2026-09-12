@@ -6,18 +6,18 @@ OpenAI-compatible chat endpoint. Install Hermes separately using its
 [native installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
 PacoMind does not patch or download Hermes, models, containers or machine services.
 
-Phase 1 is the first supported PacoMind baseline and is still being validated.
-This guide covers current installations. It does not provide an upgrade path
-from older PacoMind releases or promise support for their aliases and layouts.
+Phase 1 is in development and validation.
 
-Install the matching published packages in a private Python environment. This
-path needs no PacoMind checkout or source edits. The environment may be shared
-with Hermes, but the commands below keep an existing Hermes installation intact:
+Use Git to fetch the current tagged release, then install its matching packages
+in a private Python environment. No source edits are needed. The environment may
+be shared with Hermes; the commands below keep an existing Hermes installation
+intact:
 
 ```bash
 python3.12 -m venv "$HOME/.local/share/pacomind/venv"
 source "$HOME/.local/share/pacomind/venv/bin/activate"
-python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
+git clone --depth 1 --branch v1.5.0 https://github.com/Aevonix/PacoMind.git
+python -m pip install "./PacoMind[native-memory]" "./PacoMind/sidecar[hermes]"
 pacomind init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -276,15 +276,15 @@ lifecycle, then stop this PacoMind instance (`pacomind --instance /private/path 
 or `service stop` for a managed instance). Complete or cancel in-flight work
 through Hermes before stopping it. Keep the private instance and Hermes home.
 
-Update both PacoMind distributions in the environment that runs PacoMind, selecting
-the same release for both packages:
+Fetch the release you intend to use into a source checkout, then update both
+PacoMind distributions from that checkout in the environment that runs PacoMind:
 
 ```sh
-python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
+python -m pip install --upgrade "/path/to/PacoMind[native-memory]" "/path/to/PacoMind/sidecar[hermes]"
 pacomind init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
-For a pinned deployment, select the same published release for both packages.
+For a pinned deployment, select the same release tag for both packages.
 A Hermes interpreter with installed PacoMind entry points also needs that adapter updated in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;

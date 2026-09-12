@@ -94,14 +94,17 @@ storage layouts. The [known gaps](docs/KNOWN-GAPS.md) and
 
 ## Get started
 
-You need Python 3.12, a supported Hermes deployment and one OpenAI-compatible
+You need Python 3.12, Git, a supported Hermes deployment and one OpenAI-compatible
 chat endpoint. The minimum profile does not require Docker, a graph database
 or an embedding model.
+
+Install the current tagged release:
 
 ```bash
 python3.12 -m venv "$HOME/.local/share/pacomind/venv"
 source "$HOME/.local/share/pacomind/venv/bin/activate"
-python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
+git clone --depth 1 --branch v1.5.0 https://github.com/Aevonix/PacoMind.git
+python -m pip install "./PacoMind[native-memory]" "./PacoMind/sidecar[hermes]"
 pacomind init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
