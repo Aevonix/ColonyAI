@@ -164,7 +164,7 @@ _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
     },
     {
         "name": "colony_memory_retain_observation",
-        "description": "When a completed tool result supplies concrete information useful beyond this conversation, retain its original evidence without waiting for the owner to request a memory write. Nominate its actual call_id from the current request and briefly explain its future use. Prefer durable findings or meaningful task outcomes; skip routine chatter, duplicate status, transient noise and secrets. The host reads the exact original, up to 16 KiB; you cannot supply replacement facts. A tool result remains an observation, not verified external truth. This first route supports current ordinary owner conversations, not historical session_search results or background workers. Pending or unconfirmed is not saved. Repeating a nomination uses its first reason and the same source.",
+        "description": "Retain a useful original tool result in persistent memory. When a completed result supplies concrete information useful beyond this conversation, nominate its actual call_id from the current request and briefly explain its future use. Prefer durable findings or meaningful task outcomes; skip routine chatter, duplicate status, transient noise and secrets. The host reads the exact original, up to 16 KiB; you cannot supply replacement facts. A tool result remains an observation, not verified external truth. This first route supports current ordinary owner conversations, not historical session_search results or background workers. Pending or unconfirmed is not saved. Repeating a nomination uses its first reason and the same source.",
         "parameters": _parameters({
             "call_id": {"type": "string", "minLength": 1, "maxLength": 256},
             "reason": {"type": "string", "minLength": 1, "maxLength": 512},
@@ -2748,8 +2748,9 @@ def register(ctx: Any) -> None:
             result['request'] = input_provenance.withheld_request(result['request'], failure=supplied.failure)
             result['reason'] = 'source_update_receipt_unavailable'
         result['request'] = describe(result['request'])
+        result['request'] = tool_observations.checked(result['request'], scope, kwargs.get('api_request_id'),
+            api_mode=str(kwargs.get('api_mode') or ''))
         native_memory.checked(result['request'], scope)
-        tool_observations.checked(result['request'], scope, kwargs.get('api_request_id'))
         return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
 
     def commitment_work_handler(args=None, **kwargs):

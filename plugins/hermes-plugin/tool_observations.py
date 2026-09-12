@@ -11,9 +11,36 @@ import time
 
 from .followups import capture_instruction
 from .naming import operation
+from .request_work import replace_context
 
 MAX_BYTES = 16384
 _EXCLUDED = {'session_search', 'colony_memory_retain_observation', 'apsimo_memory_retain_observation'}
+_HINT_MARKER = 'apsimo-observation-candidates-v1'
+_CATALOG_HEADER = 'Deferred tool catalog (call schemas via `tool_describe`, invoke via `tool_call`):'
+
+
+def _available_retention(request):
+    if (request.get('tool_choice') in ('none', {'type': 'none'})
+            or request.get('function_call') == 'none'):
+        return None
+    schemas = request.get('tools') or request.get('functions') or []
+    functions = [tool.get('function', tool) for tool in schemas if isinstance(tool, dict)]
+    named = {fn['name']: fn for fn in functions if isinstance(fn, dict) and isinstance(fn.get('name'), str)}
+    for name in named:
+        if operation(name) == 'colony_memory_retain_observation':
+            return name, False
+    if not {'tool_search', 'tool_describe', 'tool_call'} <= named.keys():
+        return None
+    description = named['tool_search'].get('description', '')
+    if not isinstance(description, str) or _CATALOG_HEADER not in description:
+        return None
+    for line in description.split(_CATALOG_HEADER, 1)[1].splitlines():
+        names = [line[2:].split(':', 1)[0]] if line.startswith('- ') else line.split(',')
+        for name in names:
+            name = name.strip()
+            if operation(name) == 'colony_memory_retain_observation':
+                return name, True
+    return None
 
 
 def _key(scope):
@@ -108,11 +135,15 @@ class ToolObservations:
             while len(self._turns) > 64:
                 self._turns.popitem(last=False)
 
-    def checked(self, request, scope, request_id):
+    def checked(self, request, scope, request_id, *, api_mode=''):
         key = _key(scope)
-        if key is None or not isinstance(request, dict) or not isinstance(request_id, str) or not request_id:
-            return
+        if not isinstance(request, dict):
+            return request
+        request = replace_context(request, api_mode=api_mode, marker=_HINT_MARKER)
+        if key is None or not isinstance(request_id, str) or not request_id:
+            return request
         calls, results = _request_results(request)
+        eligible = []
         with self._lock:
             for call_id, record in self._turns.get(key, {}).items():
                 text = results.get(call_id)
@@ -121,8 +152,31 @@ class ToolObservations:
                 if (isinstance(name, str) and operation(name) == record['name'] and isinstance(text, str)
                         and hashlib.sha256(text.encode()).hexdigest() == record['sha256']):
                     record['visible'][request_id] = name
+                    if (record['sources'] is not None
+                            and record['input_sha256'] == hashlib.sha256(scope.user_message.encode()).hexdigest()):
+                        eligible.append({'call_id': call_id, 'tool_name': name})
                 while len(record['visible']) > 8:
                     record['visible'].pop(next(iter(record['visible'])))
+        available = _available_retention(request)
+        if not eligible or not available or self.request_memory.supplied_snapshot(scope) is None:
+            return request
+        name, deferred = available
+        guidance = (f'For durable findings or meaningful outcomes with likely future use, you may retain '
+            f'an original tool result using {name}(call_id, reason). Skip incidental output, duplicate '
+            'status, transient noise and secrets. These are candidates, not saved memories. ')
+        if deferred:
+            guidance += f'Load {name} with tool_describe, then invoke it with tool_call. '
+        guidance += '\nEligible completed calls in this request: '
+        listed = []
+        for item in reversed(eligible):
+            encoded = json.dumps([*listed, item], ensure_ascii=True).replace('[/', r'\u005b/')
+            if len(guidance) + len(encoded) > 2048 or len(listed) == 8:
+                break
+            listed.append(item)
+        if not listed:
+            return request
+        text = guidance + json.dumps(listed, ensure_ascii=True).replace('[/', r'\u005b/')
+        return replace_context(request, text, api_mode=api_mode, marker=_HINT_MARKER)
 
     def finish(self, scope):
         with self._lock:

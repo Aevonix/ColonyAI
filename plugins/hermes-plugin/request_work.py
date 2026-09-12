@@ -19,32 +19,35 @@ _UNAVAILABLE = ('Current shared work is unavailable for this model request. '
                 'that previously observed work has stopped.')
 
 
-def _owned_message(row):
+def _owned_message(row, opening=_OPEN, closing=_CLOSE):
     return (isinstance(row, dict) and row.get('role') in ('system', 'developer')
             and isinstance(row.get('content'), str)
-            and row['content'].startswith(_OPEN + '\n')
-            and row['content'].endswith('\n' + _CLOSE))
+            and row['content'].startswith(opening + '\n')
+            and row['content'].endswith('\n' + closing))
 
 
-def replace_context(request, text=None, *, api_mode=''):
+def replace_context(request, text=None, *, api_mode='', marker='colony-work-request-v1'):
     """Replace our request-only block without changing user or tool content."""
     result = dict(request)
+    opening, closing = '[' + marker + ']', '[/' + marker + ']'
+    pattern = _BLOCK if opening == _OPEN else re.compile(
+        r'(?:\n\n)?' + re.escape(opening) + '.*?' + re.escape(closing), re.S)
     for name in ('messages', 'input'):
         if isinstance(request.get(name), list):
-            result[name] = [row for row in request[name] if not _owned_message(row)]
+            result[name] = [row for row in request[name] if not _owned_message(row, opening, closing)]
     for name in ('instructions', 'system'):
         value = request.get(name)
         if isinstance(value, str):
-            result[name] = _BLOCK.sub('', value)
+            result[name] = pattern.sub('', value)
         elif name == 'system' and isinstance(value, list):
             result[name] = [row for row in value if not (
                 isinstance(row, dict) and row.get('type') == 'text'
                 and isinstance(row.get('text'), str)
-                and row['text'].startswith(_OPEN + '\n')
-                and row['text'].endswith('\n' + _CLOSE))]
+                and row['text'].startswith(opening + '\n')
+                and row['text'].endswith('\n' + closing))]
     if text is None:
         return result
-    block = _OPEN + '\n' + text + '\n' + _CLOSE
+    block = opening + '\n' + text + '\n' + closing
     if 'input' in result:
         instructions = result.get('instructions') or ''
         if isinstance(instructions, str):
