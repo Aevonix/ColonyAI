@@ -47,6 +47,7 @@ from . import followups as followup_tools
 from . import source_forget
 from . import source_annotate
 from . import source_read
+from .tool_observations import ToolObservations
 from . import input_provenance
 from .task_controller import configured_tasks, TOOL_SCHEMA as _NATIVE_TASK_SCHEMA
 
@@ -160,6 +161,14 @@ _LOCAL_TOOL_SCHEMAS: list[dict[str, Any]] = [
             "offset": {"type": "integer", "minimum": 0, "maximum": 10000000},
             "read_revision": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
         }, ("source_id", "source_version")),
+    },
+    {
+        "name": "colony_memory_retain_observation",
+        "description": "When a completed tool result supplies concrete information useful beyond this conversation, retain its original evidence without waiting for the owner to request a memory write. Nominate its actual call_id from the current request and briefly explain its future use. Prefer durable findings or meaningful task outcomes; skip routine chatter, duplicate status, transient noise and secrets. The host reads the exact original, up to 16 KiB; you cannot supply replacement facts. A tool result remains an observation, not verified external truth. This first route supports current ordinary owner conversations, not historical session_search results or background workers. Pending or unconfirmed is not saved. Repeating a nomination uses its first reason and the same source.",
+        "parameters": _parameters({
+            "call_id": {"type": "string", "minLength": 1, "maxLength": 256},
+            "reason": {"type": "string", "minLength": 1, "maxLength": 512},
+        }, ("call_id", "reason")),
     },
     {
         "name": "colony_memory_annotate",
@@ -340,7 +349,7 @@ _ACTION_INTENT_TOOL_NAMES: tuple[str, ...] = tuple(
 )
 
 _OWNER_MESSAGE_TOOL_NAMES: tuple[str, ...] = ("colony_send_message",)
-_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_contacts', 'colony_followup', 'colony_read_work_source', 'colony_judgments', 'colony_memory_forget', 'colony_memory_annotate', 'colony_memory_read_source', 'colony_work_initiative', 'colony_task')
+_COORDINATION_TOOL_NAMES = ('colony_accept_local_draft', 'colony_commitment_work', 'colony_contacts', 'colony_followup', 'colony_read_work_source', 'colony_judgments', 'colony_memory_forget', 'colony_memory_annotate', 'colony_memory_retain_observation', 'colony_memory_read_source', 'colony_work_initiative', 'colony_task')
 
 # No event can be injected until Colony exposes an exact viewer-attested event
 # projection.  An empty catalog is an intentional security and attribution
@@ -2375,6 +2384,7 @@ def register(ctx: Any) -> None:
     turn_writer_platforms = boundary.turn_writer_platforms
     turn_outbox = boundary.turn_outbox
     request_memory = RequestMemory(client, turn_outbox)
+    tool_observations = ToolObservations(client, turn_outbox, request_memory)
     task_config = config.get('native_tasks')
     native_tasks = (configured_tasks(client, turn_outbox, owner_contact_id, config=task_config,
         attested_system_platforms=attested_system_platforms)
@@ -2497,6 +2507,7 @@ def register(ctx: Any) -> None:
         )
         supplied_input = input_provenance.current()
         input_allowed = check_supplied_input(scope)
+        tool_observations.finish(scope)
         supplied_sources = request_memory.finish(task_id=str(kwargs.get('task_id') or ''),
             turn_id=str(kwargs.get('turn_id') or ''), contact_id=scope.contact_id if scope else None)
         from .evidence import native_work_capture_excluded
@@ -2700,6 +2711,9 @@ def register(ctx: Any) -> None:
                         session_id=context.get('session_id',''), task_id=context.get('task_id',''),
                         turn_id=context.get('turn_id',''))
                     return reconcile(selected_args,value,scope,context,request_memory)
+                scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id',''),
+                    task_id=context.get('task_id',''), turn_id=context.get('turn_id',''))
+                tool_observations.completed(scope, context, value)
                 return value
             if execution_observer is not None:
                 return execution_observer.tool(dispatch, args, **{
@@ -2735,6 +2749,7 @@ def register(ctx: Any) -> None:
             result['reason'] = 'source_update_receipt_unavailable'
         result['request'] = describe(result['request'])
         native_memory.checked(result['request'], scope)
+        tool_observations.checked(result['request'], scope, kwargs.get('api_request_id'))
         return execution_observer.request_metadata(result, **kwargs) if execution_observer else result
 
     def commitment_work_handler(args=None, **kwargs):
@@ -2790,6 +2805,12 @@ def register(ctx: Any) -> None:
             task_id=context.get('task_id', ''), turn_id=context.get('turn_id', '')) if all(
                 context.get(key) for key in ('session_id', 'task_id', 'turn_id')) else None
         return source_annotate.handle(args or {}, scope, client, request_memory)
+    def observation_handler(args=None, **kwargs):
+        context = _TOOL_EXECUTION_CONTEXT.get() or {}
+        scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
+            task_id=context.get('task_id', ''), turn_id=context.get('turn_id', '')) if all(
+                context.get(key) for key in ('session_id', 'task_id', 'turn_id')) else None
+        return tool_observations.handle(args or {}, scope, context)
     def source_read_handler(args=None, **kwargs):
         context = _TOOL_EXECUTION_CONTEXT.get() or {}
         scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id', ''),
@@ -2814,6 +2835,7 @@ def register(ctx: Any) -> None:
                 native_task_handler if name == 'colony_task' else
                 initiative_work_handler if name == 'colony_work_initiative' else
                 source_annotate_handler if name == 'colony_memory_annotate' else
+                observation_handler if name == 'colony_memory_retain_observation' else
                 source_read_handler if name == 'colony_memory_read_source' else
                 source_forget_handler if name == 'colony_memory_forget' else
                 judgment_handler if name == "colony_judgments" else
