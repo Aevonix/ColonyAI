@@ -45,6 +45,14 @@ def _request_results(request):
             results[message.get('tool_call_id')] = message.get('content')
         elif message.get('type') == 'function_call_output':
             results[message.get('call_id')] = message.get('output')
+        if isinstance(message.get('content'), list):
+            for block in message['content']:
+                if not isinstance(block, dict):
+                    continue
+                if message.get('role') == 'assistant' and block.get('type') == 'tool_use':
+                    calls[block.get('id')] = block.get('name')
+                elif message.get('role') == 'user' and block.get('type') == 'tool_result':
+                    results[block.get('tool_use_id')] = block.get('content')
     return calls, results
 
 

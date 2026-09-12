@@ -71,10 +71,16 @@ def native(source_app, monkeypatch, tmp_path):
     context.hooks['pre_llm_call'](**call_context, platform='cli', sender_id='owner', user_message=INSTRUCTION,
         conversation_history=[{'role':'user','content':INSTRUCTION}])
     messages = [{'role':'user','content':INSTRUCTION}]
-    def request(request_id='api-2'):
-        return native_middleware.apply_llm_request_middleware(
-            {'messages': copy.deepcopy(messages), 'tools':[{'type':'function','function':
-                context.tools['apsimo_memory_retain_observation']['schema']}]},
+    def request(request_id='api-2', *, anthropic=False):
+        payload = {'messages': copy.deepcopy(messages), 'tools':[{'type':'function','function':
+            context.tools['apsimo_memory_retain_observation']['schema']}]}
+        if anthropic:
+            from agent.anthropic_message_convert import convert_messages_to_anthropic, convert_tools_to_anthropic
+            system, payload['messages'] = convert_messages_to_anthropic(payload['messages'])
+            if system is not None:
+                payload['system'] = system
+            payload['tools'] = convert_tools_to_anthropic(payload['tools'])
+        return native_middleware.apply_llm_request_middleware(payload,
             **call_context, api_request_id=request_id)
     request('api-1')
     def complete(call_id='call-1', result=RESULT, name='fixture_observe'):
@@ -148,6 +154,21 @@ def test_failed_delivery_is_pending_and_same_outbox_retries_without_native_reexe
     assert n.retain()['source_recorded']
     assert 'files_written' in n.recall()['body']
     assert n.db._conn.execute("SELECT count(*) FROM messages WHERE role='tool'").fetchone()[0] == 1
+
+
+def test_actual_native_anthropic_conversion_preserves_original_tool_nomination(native):
+    n = native
+    n.complete()
+    request = n.request(anthropic=True).payload
+    blocks = [block for message in request['messages'] if isinstance(message.get('content'), list)
+              for block in message['content']]
+    assert any(block.get('type') == 'tool_use' and block.get('id') == 'call-1' for block in blocks)
+    assert any(block.get('type') == 'tool_result' and block.get('content') == RESULT for block in blocks)
+    receipt = n.retain()
+    assert receipt['accepted'] and receipt['source_recorded'], receipt
+    rows = n.ledger.search_sources('copper synchronization', contact_id='cid-owner', session_id='later')
+    original = next(row for row in rows if row['turn_id'] == receipt['source_id'])
+    assert original['role'] == 'tool' and original['content'] == RESULT
 
 
 def test_origin_erasure_removes_observation_and_queued_retry(native):
