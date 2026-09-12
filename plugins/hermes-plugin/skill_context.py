@@ -14,8 +14,24 @@ from threading import RLock
 
 
 def _tool_names(request):
-    return {str((tool.get('function') or tool).get('name') or '')
-            for tool in request.get('tools', []) if isinstance(tool, dict)}
+    if (request.get('tool_choice') in ('none', {'type': 'none'})
+            or request.get('function_call') == 'none'):
+        return set()
+    schemas = request.get('tools') or request.get('functions') or []
+    named = {(tool.get('function') or tool).get('name'): (tool.get('function') or tool)
+             for tool in schemas if isinstance(tool, dict)}
+    names = set(named)
+    if {'tool_search', 'tool_describe', 'tool_call'} <= names:
+        from .tool_observations import _CATALOG_HEADER
+        description = named['tool_search'].get('description', '')
+        if isinstance(description, str) and _CATALOG_HEADER in description:
+            # Native full/names catalogs contain exact session-scoped names.
+            # Group-only catalogs cannot establish individual availability.
+            for line in description.split(_CATALOG_HEADER, 1)[1].splitlines():
+                entries = [line[2:].split(':', 1)[0]] if line.startswith('- ') else line.split(',')
+                names.update(name.strip() for name in entries
+                             if re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*', name.strip()))
+    return names
 
 
 def _texts(value):
@@ -124,7 +140,7 @@ class SkillContext:
 
     def __call__(self, request, **context):
         tools = _tool_names(request)
-        if not tools.intersection({'skills_list', 'skill_view', 'skill_manage'}):
+        if 'skill_view' not in tools:
             return None
         from hermes_constants import get_hermes_home
         from agent.skill_utils import (get_all_skills_dirs, get_project_skills_dirs,
