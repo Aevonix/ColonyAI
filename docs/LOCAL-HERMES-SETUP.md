@@ -273,7 +273,7 @@ Update both Apsimo distributions in the environment that runs Apsimo, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "apsimo[hermes]==1.3.3" "apsimo-hermes[native-memory]==1.3.3"
+python -m pip install --upgrade "apsimo[hermes]==1.3.4" "apsimo-hermes[native-memory]==1.3.4"
 apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
