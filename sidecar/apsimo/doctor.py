@@ -61,7 +61,7 @@ SERVER_CHECK_NAMES = (
     "server-owner-contact",
     "server-llm-router",
     "server-embedder",
-    "server-memory-graph",
+    "server-source-memory",
     "server-fd-limit",
     "server-blocked-approvals",
     "server-worker-liveness",
@@ -1061,52 +1061,43 @@ def check_server_embedder(base_url: str, api_key: str, timeout: float) -> CheckR
     return CheckResult("server-embedder", WARN, detail=f"unexpected HTTP {status}: {body}")
 
 
-def check_server_memory_graph(base_url: str, api_key: str, timeout: float) -> CheckResult:
-    """14b. Graph/memory backend reachability.
-
-    A dead Neo4j means every memory read/write fails while the API keeps
-    answering — the one degradation the doctor previously never looked at
-    (it reported ok:true with the graph completely down).
-    """
-    status, body = _http_get(f"{base_url}/v1/host/memory/status", api_key, timeout)
-    if status in (404, 501):
+def check_server_source_memory(base_url: str, api_key: str, timeout: float) -> CheckResult:
+    """Check canonical source access and reported projection work for this owner."""
+    owner = os.environ.get("COLONY_OWNER_CONTACT_ID", "").strip()
+    if not owner or not api_key:
         return CheckResult(
-            "server-memory-graph", SKIP,
-            detail=f"memory status not exposed (HTTP {status})",
+            "server-source-memory", FAIL,
+            detail="An owner contact and scoped client credential are required.",
+            remedy="Use the selected instance environment and its COLONY_CLIENT_API_KEY.",
         )
-    if status != 200 or not isinstance(body, dict):
+    try:
+        status, body = _http_get(
+            base_url.rstrip("/") + "/v1/host/memory/sources/claims/status?"
+            + urlencode({"contact_id": owner}), api_key, timeout,
+        )
+        if (status != 200 or not isinstance(body, dict)
+                or not all(isinstance(body.get(name), list) for name in ("sources", "media"))
+                or not all(isinstance(row, dict) for name in ("sources", "media") for row in body[name])):
+            return CheckResult(
+                "server-source-memory", FAIL,
+                detail=f"Scoped source status unavailable (HTTP {status}); check the selected owner and client credential.",
+            )
+        jobs = body["sources"] + body["media"]
+        errors = sum(bool(row.get("error")) for row in jobs)
+        pending = sum(row.get("status") != "complete" for row in jobs)
+        semantic = body.get("semantic")
+        index_state = semantic.get("index_state", "not_reported") if isinstance(semantic, dict) else "not_reported"
         return CheckResult(
-            "server-memory-graph", FAIL,
-            detail=f"/v1/host/memory/status returned HTTP {status}: {body}",
+            "server-source-memory", WARN if errors else PASS,
+            detail=f"Scoped source status accepted: {len(jobs)} recent jobs, {pending} pending, {errors} with errors. "
+                   f"Semantic index: {index_state}. "
+                   "This verifies access and reported jobs, not model recall quality.",
         )
-    if body.get("graph_wired") is False:
+    except Exception as exc:
         return CheckResult(
-            "server-memory-graph", WARN,
-            detail="no graph backend wired — memory endpoints return stubs",
-            remedy="configure the graph backend (Neo4j) if this deployment "
-                   "is supposed to have persistent memory",
+            "server-source-memory", FAIL,
+            detail="Scoped source status unavailable: " + type(exc).__name__,
         )
-    if not body.get("neo4j_connected"):
-        return CheckResult(
-            "server-memory-graph", FAIL,
-            detail="graph backend is wired but UNREACHABLE — every memory "
-                   "read/write is failing",
-            remedy="start/repair Neo4j (or fix its credentials/URI), then "
-                   "re-run 'colony doctor'",
-        )
-    if not body.get("wired"):
-        missing = [k for k in ("embeddings_ready", "vector_store_ready")
-                   if not body.get(k)]
-        return CheckResult(
-            "server-memory-graph", WARN,
-            detail="graph reachable but memory pipeline incomplete: "
-                   + (", ".join(missing) or "unknown component"),
-            remedy="check embedder/vector-store wiring in the sidecar log",
-        )
-    return CheckResult(
-        "server-memory-graph", PASS,
-        detail="graph backend reachable; memory pipeline fully wired",
-    )
 
 
 def check_server_blocked_approvals(base_url: str, api_key: str, timeout: float) -> CheckResult:
@@ -1977,7 +1968,7 @@ def run_server_checks(base_url: str, api_key: str, timeout: float = 10.0) -> Lis
     results += _run("server-owner-contact", check_server_owner_contact, base_url, api_key, timeout)
     results += _run("server-llm-router", check_server_llm, base_url, api_key, timeout)
     results += _run("server-embedder", check_server_embedder, base_url, api_key, timeout)
-    results += _run("server-memory-graph", check_server_memory_graph,
+    results += _run("server-source-memory", check_server_source_memory,
                     base_url, api_key, timeout)
     results += _run("server-fd-limit", check_server_fd_limit, base_url, api_key, timeout)
     results += _run("server-blocked-approvals", check_server_blocked_approvals,
@@ -2042,29 +2033,13 @@ def run_private_instance_checks(base_url: str, api_key: str, timeout: float) -> 
         results.append(CheckResult('server-health', FAIL, detail='Sidecar is unavailable: ' + type(exc).__name__,
             remedy='Start this private instance and inspect its sidecar.log.'))
         healthy = False
-    owner = os.environ.get('COLONY_OWNER_CONTACT_ID', '')
-    if not healthy or not owner or not api_key:
+    if not healthy:
         results.append(CheckResult('server-source-memory', FAIL,
             detail='A ready instance, owner contact and scoped client credential are required.',
             remedy='Use the selected instance environment and its COLONY_CLIENT_API_KEY.'))
         return results
-    try:
-        status, body = _http_get(base_url + '/v1/host/memory/sources/claims/status?' +
-            urlencode({'contact_id': owner}), api_key, timeout)
-        if (status != 200 or not isinstance(body, dict) or
-                not all(isinstance(body.get(name), list) for name in ('sources', 'media'))):
-            results.append(CheckResult('server-source-memory', FAIL,
-                detail=f'Scoped source status unavailable (HTTP {status}); check the selected owner and client credential.'))
-        else:
-            jobs = body['sources'] + body['media']
-            errors = sum(bool(row.get('error')) for row in jobs if isinstance(row, dict))
-            pending = sum(row.get('status') != 'complete' for row in jobs if isinstance(row, dict))
-            results.append(CheckResult('server-source-memory', WARN if errors else PASS,
-                detail=f'Scoped source status accepted: {len(jobs)} recent jobs, {pending} pending, {errors} with errors. '
-                       'This verifies access and reported jobs, not model recall quality.'))
-    except Exception as exc:
-        results.append(CheckResult('server-source-memory', FAIL,
-            detail='Scoped source status unavailable: ' + type(exc).__name__))
+    results += _run("server-source-memory", check_server_source_memory,
+                    base_url, api_key, timeout)
     return results
 
 

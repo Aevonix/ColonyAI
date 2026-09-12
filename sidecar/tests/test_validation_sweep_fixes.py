@@ -280,22 +280,20 @@ async def test_world_extract_plain_text_is_clear_400(app, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# 8. Doctor covers graph/memory backend reachability
+# 8. Doctor covers canonical source-store availability
 # ---------------------------------------------------------------------------
 
-def test_doctor_flags_unreachable_graph_backend(monkeypatch):
+def test_doctor_flags_unavailable_source_store(monkeypatch):
     from apsimo import doctor
 
-    assert "server-memory-graph" in doctor.SERVER_CHECK_NAMES
+    assert "server-source-memory" in doctor.SERVER_CHECK_NAMES
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "contact-fixture")
 
     def _fake(url, api_key="", timeout=10.0):
-        assert url.endswith("/v1/host/memory/status")
-        return 200, {
-            "wired": False, "graph_wired": True, "neo4j_connected": False,
-            "embeddings_ready": True, "vector_store_ready": True,
-        }
+        assert url.endswith("/v1/host/memory/sources/claims/status?contact_id=contact-fixture")
+        raise OSError("source store unavailable")
 
     monkeypatch.setattr(doctor, "_http_get", _fake)
-    result = doctor.check_server_memory_graph("http://x", "k", 5.0)
+    result = doctor.check_server_source_memory("http://x", "k", 5.0)
     assert result.status == doctor.FAIL
-    assert "UNREACHABLE" in result.detail
+    assert "Scoped source status unavailable: OSError" in result.detail

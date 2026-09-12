@@ -527,9 +527,8 @@ def _happy_responses(owner="cid-owner-1"):
         "/v1/host/health/llm": (200, {"ok": True, "tier": "small",
                                       "latency_ms": 40, "error": None}),
         "/v1/host/embed/health": (200, {"status": "ok", "dims": 384, "latency_ms": 4}),
-        "/v1/host/memory/status": (200, {
-            "wired": True, "graph_wired": True, "neo4j_connected": True,
-            "embeddings_ready": True, "vector_store_ready": True,
+        f"/v1/host/memory/sources/claims/status?contact_id={owner}": (200, {
+            "sources": [], "media": [], "semantic": {"index_state": "compatible"},
         }),
         "/v1/host/queue/jobs/blocked": (200, []),
         "/v1/host/queue/jobs/pending?task_type=agent_action&limit=200": (200, []),
@@ -611,6 +610,43 @@ def test_server_happy_path_all_pass(clean_env, monkeypatch):
     by = _by_name(run_server_checks(URL, "key"))
     for name in doctor.SERVER_CHECK_NAMES:
         assert by[name].status == PASS, f"{name}: {by[name].detail}"
+
+
+@pytest.mark.parametrize("status,body,expected", [
+    (200, {"sources": [], "media": [], "semantic": {"index_state": "unverified_or_unavailable"}}, PASS),
+    (200, {"sources": [{"status": "complete"}], "media": [{"status": "pending", "error": "decode failed"}]}, WARN),
+    (200, {"sources": ["invalid record"], "media": []}, FAIL),
+    (200, {}, FAIL),
+    (403, {"detail": "contact not granted"}, FAIL),
+    (501, {"detail": "unavailable"}, FAIL),
+])
+def test_source_memory_readiness_reports_storage_and_optional_index_separately(
+        clean_env, monkeypatch, status, body, expected):
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "person+fixture")
+
+    def read(url, key, timeout):
+        assert url == URL + "/v1/host/memory/sources/claims/status?contact_id=person%2Bfixture"
+        assert key == "scoped-client" and timeout == 4
+        return status, body
+
+    monkeypatch.setattr(doctor, "_http_get", read)
+    result = doctor.check_server_source_memory(URL + "/", "scoped-client", 4)
+    assert result.status == expected
+    if expected == PASS:
+        assert "Semantic index: unverified_or_unavailable" in result.detail
+        assert "not model recall quality" in result.detail
+    elif expected == WARN:
+        assert "2 recent jobs, 1 pending, 1 with errors" in result.detail
+
+
+@pytest.mark.parametrize("owner,key", [("", "scoped-client"), ("person-fixture", "")])
+def test_source_memory_readiness_requires_selected_owner_and_credential(
+        clean_env, monkeypatch, owner, key):
+    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", owner)
+    monkeypatch.setattr(doctor, "_http_get", lambda *args: pytest.fail("Unscoped read"))
+    result = doctor.check_server_source_memory(URL, key, 4)
+    assert result.status == FAIL
+    assert "COLONY_CLIENT_API_KEY" in result.remedy
 
 
 def test_server_degraded_health_warns(clean_env, monkeypatch):
