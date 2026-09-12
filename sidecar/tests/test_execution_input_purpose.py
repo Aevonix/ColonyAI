@@ -96,6 +96,22 @@ def test_source_change_between_work_fetch_and_existing_request_check_withholds_q
             platform='cli', sender_id='', user_message='A native task wrapper', conversation_history=[])
     ctx.hooks['pre_llm_call'](session_id='observer', task_id='observer-task', turn_id='observer-turn',
         platform='cli', sender_id='', user_message='What are you doing?', conversation_history=[])
+    # This race begins after a successful work fetch. Capture the actual scoped
+    # response before the timed middleware so unrelated queue-reader scheduling
+    # cannot turn this into the separate late-work-response case. The source
+    # mutation and subsequent erasure/annotation API check below remain real.
+    params = {'contact_id': 'owner', 'session_id': 'observer', 'limit': 8,
+              'projection': 'request', 'input_context': True}
+    captured = h.api.get('/v1/host/executions', params=params)
+    assert captured.status_code == 200, captured.text
+    assert captured.json()['input_provenance']['source_refs'][0]['source_id'] == 'original-input'
+    get = h.module.ColonyClient.get
+    def fetched_work(self, path, **kwargs):
+        if path == '/v1/host/executions':
+            assert kwargs['params'] == params
+            return captured
+        return get(self, path, **kwargs)
+    monkeypatch.setattr(h.module.ColonyClient, 'get', fetched_work)
     post = h.module.ColonyClient.post
     checked = []
     def erase_before_check(self, path, **kwargs):
@@ -117,7 +133,7 @@ def test_source_change_between_work_fetch_and_existing_request_check_withholds_q
     monkeypatch.setattr(h.module.ColonyClient, 'post', erase_before_check)
     result = ctx.middleware['llm_request']({'messages': [{'role': 'user', 'content': 'What are you doing?'}]},
         session_id='observer', task_id='observer-task', turn_id='observer-turn')
-    assert len(checked) == 1 and checked[0][0]['source_id'] == 'original-input'
+    assert len(checked) == 1 and checked[0][0]['source_id'] == 'original-input', result
     assert result['reason'] == 'source_erasure_unavailable'
     assert 'Use the lamp maintenance record I supplied.' not in json.dumps(result['request'])
     assert 'shared work withheld' in json.dumps(result['request'])
