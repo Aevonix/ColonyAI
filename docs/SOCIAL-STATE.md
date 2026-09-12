@@ -1,14 +1,14 @@
 # Contacts, appraisals and current world state
 
-Apsimo keeps one canonical contact identity across verified channel handles.
+PacoMind keeps one canonical contact identity across verified channel handles.
 Name similarity creates a proposal, never an authoritative merge. The owner can
-correct an exact handle and selected source attribution through `colony_contacts`.
+correct an exact handle and selected source attribution through `pacomind_contacts`.
 The correction preserves its receipt, invalidates dependent projections and
 reconciles surviving sources. A relationship update grants no permission.
 
 The existing source ledger holds preferences, temporary appraisals and narrow
 person/topic judgments with quotations, contrary evidence, source revisions,
-processor provenance and owner corrections. `colony_judgments` inspects these
+processor provenance and owner corrections. `pacomind_judgments` inspects these
 records. Recollection selects relevant records for the current participant;
 private owner opinions are not disclosed to other contacts. Erasing or correcting
 supporting evidence removes its influence. Delayed extraction cannot resurrect

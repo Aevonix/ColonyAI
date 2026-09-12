@@ -18,7 +18,7 @@ from run_agent import AIAgent
 import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
 OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
-from apsimo_hermes.local_work_runner import main
+from pacomind_hermes.local_work_runner import main
 home=Path(os.environ['HERMES_HOME'])
 job=next(j for j in json.loads((home/'cron/jobs.json').read_text())['jobs'] if j['script']=='accepted-work.py')
 counter=home/'requests.jsonl'
@@ -34,7 +34,7 @@ def response(**kwargs):
     if not rows:
         if MODE=='cancel':
             urlopen(Request(BASE+'/fixture/cancel',data=b'{}',headers={'Content-Type':'application/json'})).close()
-            calls=[call('tool_call',{'name':'apsimo_read_work_source','arguments':{'source':0}})]
+            calls=[call('tool_call',{'name':'pacomind_read_work_source','arguments':{'source':0}})]
         else:
             observed=json.load(urlopen(BASE+'/v1/host/executions?contact_id=owner'))
             assert observed['local_work']['items'][0]['status']=='assigned',observed
@@ -42,15 +42,15 @@ def response(**kwargs):
             calls=[call('tool_search',{'queries':['read selected local work source']})]
     elif MODE!='cancel' and 'tools' in json.loads(rows[-1]['content']):
         search=json.loads(rows[-1]['content'])
-        if 'apsimo_read_work_source' not in search['tools']:
+        if 'pacomind_read_work_source' not in search['tools']:
             # Native search can decline a weak query. Follow its connected-source
             # hint once; still require real discovery before invoking the tool.
             assert len(rows)==1 and not search['tools'],rows
             sources=search['results'][0]['available_sources']
-            assert any(source['name']=='apsimo_local_work' for source in sources),search
-            calls=[call('tool_search',{'queries':['apsimo_local_work read source']})]
+            assert any(source['name']=='pacomind_local_work' for source in sources),search
+            calls=[call('tool_search',{'queries':['pacomind_local_work read source']})]
         else:
-            calls=[call('tool_call',{'name':'apsimo_read_work_source','arguments':{'source':0}})]
+            calls=[call('tool_call',{'name':'pacomind_read_work_source','arguments':{'source':0}})]
     else:
         if MODE!='cancel':
             assert json.loads(rows[-1]['content'])['native_read']['content'].find('neutral fixture source')>=0,rows
@@ -69,7 +69,7 @@ def initialize(self,*args,**kwargs):
     conversation=self.run_conversation
     def observed_conversation(*a,**k):
         outcome=conversation(*a,**k)
-        from apsimo_hermes.local_work import ACTIVE
+        from pacomind_hermes.local_work import ACTIVE
         work=ACTIVE.get()
         # Synthetic fixture diagnostics retain the actual completion contract.
         # No retry or change to the native return value is introduced.
@@ -97,14 +97,14 @@ mode=sys.argv[4];worker=sys.argv[5]
 from fastapi import FastAPI,Response
 from fastapi.testclient import TestClient
 import uvicorn
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import commitment_work,host,executions
-from apsimo.commitments.store import CommitmentStore
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.turns.local_work import local_work_view
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import commitment_work,host,executions
+from pacomind.commitments.store import CommitmentStore
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.turns.local_work import local_work_view
 home=Path(os.environ['HERMES_HOME']);home.mkdir(mode=0o700)
 (home/'scripts').mkdir();Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
+state=Path(os.environ['PACOMIND_STATE_DIR']);state.mkdir()
 commitments=CommitmentStore(state/'commitments.db');initiatives=InitiativeStore(state)
 host._commitment_store=commitments;host._initiative_store=initiatives
 obligation=commitments.create('owner','Summarize the selected neutral fixture')
@@ -112,7 +112,7 @@ source=home/'source.txt';source.write_text('neutral fixture source\n')
 app=FastAPI();failed=[False]
 @app.middleware('http')
 async def authority(request,next_call):
-    request.state.colony_authority=RequestAuthority(principal_id='fixture-native',credential_id='fixture',scopes=frozenset({'turns:write','context:read'}),viewer_person_id='owner',person_ids=frozenset({'owner'}),audiences=frozenset({'viewer'}),authenticated=True)
+    request.state.pacomind_authority=RequestAuthority(principal_id='fixture-native',credential_id='fixture',scopes=frozenset({'turns:write','context:read'}),viewer_person_id='owner',person_ids=frozenset({'owner'}),audiences=frozenset({'viewer'}),authenticated=True)
     if mode=='reconcile' and request.url.path.endswith('/finish') and not failed[0]:
         payload=await request.json()
         if payload.get('result',{}).get('status')=='draft_created':
@@ -127,7 +127,7 @@ listener=socket.socket();listener.bind(('127.0.0.1',0));base='http://127.0.0.1:'
 server=uvicorn.Server(uvicorn.Config(app,log_level='error',lifespan='off'))
 thread=threading.Thread(target=server.run,kwargs={'sockets':[listener]},daemon=True);thread.start()
 while not server.started:time.sleep(.01)
-config={'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':'owner','url':base,'attested_system_platforms':['cli'],'turn_writer_platforms':[]}},
+config={'plugins':{'enabled':['pacomind'],'pacomind':{'owner_contact_id':'owner','url':base,'attested_system_platforms':['cli'],'turn_writer_platforms':[]}},
         'providers':{'fixture':{'base_url':'http://127.0.0.1:1/v1','api_key':'fixture','default_model':'fixture/local'}},
         'model':{'default':'fixture/local'},'tools':{'tool_search':{'enabled':'on'}}}
 (home/'config.yaml').write_text(json.dumps(config))
@@ -136,7 +136,7 @@ script="ADAPTER="+repr(sys.argv[1])+"\nBASE="+repr(base)+"\nMODE="+repr(mode)+"\
 from cron.jobs import create_job,trigger_job
 from cron.scheduler import tick
 job=create_job(prompt=None,schedule='every 1h',name='Accepted neutral local work',deliver='local',script='accepted-work.py',no_agent=True,attach_to_session=False)
-os.environ['COLONY_LOCAL_WORK_JOB_ID']=job['id']
+os.environ['PACOMIND_LOCAL_WORK_JOB_ID']=job['id']
 # Native caller derives owner/turn identity; task payload contains no authority.
 from hermes_cli.plugins import get_plugin_manager
 from hermes_cli.lifecycle import invoke_hook
@@ -145,7 +145,7 @@ get_plugin_manager().discover_and_load()
 invoke_hook('pre_llm_call',session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',platform='cli',sender_id='',user_message='Please summarize this selected neutral file for my obligation.')
 accept_args={'question':'Summarize the selected note','sources':[str(source)]}
 if mode!='standalone':accept_args['commitment_id']=obligation['id']
-accepted=json.loads(handle_function_call('apsimo_accept_local_draft',accept_args,session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',tool_call_id='accept'))
+accepted=json.loads(handle_function_call('pacomind_accept_local_draft',accept_args,session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',tool_call_id='accept'))
 assert accepted.get('status')=='pending',accepted
 assert accepted['context']['commitment_id']==(None if mode=='standalone' else obligation['id'])
 assert local_work_view()['items'][0]['liveness']=='not_started'
@@ -193,12 +193,12 @@ def test_native_accepted_draft_lifecycle(artifacts, tmp_path, mode):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes to exercise its actual scheduler and tools')
     env={key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'profile'),COLONY_STATE_DIR=str(tmp_path/'state'),
+    env.update(HERMES_HOME=str(tmp_path/'profile'),PACOMIND_STATE_DIR=str(tmp_path/'state'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_GENERAL_PLUGIN_ACTIVE='1',COLONY_MEMORY_WORKER_TOOLS='0',COLONY_MEMORY_TURN_WRITER='disabled',
-        COLONY_SKIP_DOTENV='1',COLONY_LOCAL_WORK_ENABLED='true',COLONY_OWNER_CONTACT_ID='owner',
+        PACOMIND_GENERAL_PLUGIN_ACTIVE='1',PACOMIND_MEMORY_WORKER_TOOLS='0',PACOMIND_MEMORY_TURN_WRITER='disabled',
+        PACOMIND_SKIP_DOTENV='1',PACOMIND_LOCAL_WORK_ENABLED='true',PACOMIND_OWNER_CONTACT_ID='owner',
         LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),mode,WORKER,cwd=tmp_path,env=env)
+    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH',''),mode,WORKER,cwd=tmp_path,env=env)
     assert '"restart_no_duplicate": true' in result.stdout
 
 
@@ -206,7 +206,7 @@ def test_packaged_draft_json_format_boundary(artifacts, tmp_path):
     script = r'''
 import json,sys
 sys.path.insert(0,sys.argv[1])
-from apsimo_hermes.model_response import decode_json_response
+from pacomind_hermes.model_response import decode_json_response
 value={'draft':'Neutral source [source:0].','sources':[0]}
 raw=json.dumps(value)
 for body in [raw, '\n '+raw+' \n', '```json\n'+raw+'\n```', '```\r\n'+raw+'\r\n```']:

@@ -5,7 +5,7 @@ import sqlite3
 
 import pytest
 
-from apsimo.commitments.store import CommitmentStore
+from pacomind.commitments.store import CommitmentStore
 
 
 # Deployment evidence: rollback floor

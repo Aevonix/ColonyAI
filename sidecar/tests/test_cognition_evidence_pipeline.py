@@ -8,28 +8,28 @@ import time
 
 import pytest
 
-from apsimo.cognition.evidence_pipeline import (
+from pacomind.cognition.evidence_pipeline import (
     CognitionEvidenceReducer,
     CognitionEvidenceStore,
     project_evidence_event,
 )
-from apsimo.events.journal import append_event_record, _checksum
-from apsimo.execution_results import ExecutionResultV1, bounded_refs
-from apsimo.projects.event_outbox import ProjectEventProjector
-from apsimo.projects.engine import ProjectEngine
-from apsimo.projects.models import Project, Step
-from apsimo.projects.store import ProjectStore
-from apsimo.self_model.expectations import ExpectationEngine, ExpectationStore
-from apsimo.self_model.store import CompetenceStore, SelfModel
-from apsimo.work_orders import WorkOrderV1
+from pacomind.events.journal import append_event_record, _checksum
+from pacomind.execution_results import ExecutionResultV1, bounded_refs
+from pacomind.projects.event_outbox import ProjectEventProjector
+from pacomind.projects.engine import ProjectEngine
+from pacomind.projects.models import Project, Step
+from pacomind.projects.store import ProjectStore
+from pacomind.self_model.expectations import ExpectationEngine, ExpectationStore
+from pacomind.self_model.store import CompetenceStore, SelfModel
+from pacomind.work_orders import WorkOrderV1
 
 
 def _isolate(monkeypatch, tmp_path, *, mode="live"):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_RETENTION", "500")
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", mode)
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE_BOOTSTRAP", "beginning")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_RETENTION", "500")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", mode)
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE_BOOTSTRAP", "beginning")
 
 
 def _project_order(
@@ -304,7 +304,7 @@ def test_external_evidence_uses_exact_shared_envelope_and_projection_validator(
     tmp_path, monkeypatch, mutation,
 ):
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "owner-person-1")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "owner-person-1")
     raw = _external_journal_record()
     mutation(raw)
 
@@ -320,7 +320,7 @@ def test_external_evidence_v2_envelope_has_exact_host_event_id_bound(
     tmp_path, monkeypatch, length, accepted,
 ):
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "owner-person-1")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "owner-person-1")
     raw = _external_journal_record()
     raw["ulid"] = "j" * length
     projects = ProjectStore(str(tmp_path / "projects.db"))
@@ -338,7 +338,7 @@ def test_external_evidence_cannot_recompute_an_attacker_into_owner_lane(
     tmp_path, monkeypatch,
 ):
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "owner-person-1")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "owner-person-1")
     raw = _external_journal_record()
     forged = deepcopy(raw["data"])
     forged.update(
@@ -367,7 +367,7 @@ def test_external_success_report_remains_unverified_and_cannot_train(
     tmp_path, monkeypatch,
 ):
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "owner-person-1")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "owner-person-1")
     occurred_at = "2026-07-13T00:00:00+00:00"
     projects = ProjectStore(str(tmp_path / "projects.db"))
     scope = {
@@ -702,16 +702,16 @@ def test_shadow_and_live_disable_the_legacy_competence_writer(
 
     model = RecordingModel()
     engine = ProjectEngine(ProjectStore(), self_model=model)
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
 
     engine._record_outcome("success", 0.2, stated_confidence=0.8)
     assert model.calls == []
 
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "shadow")
     engine._record_outcome("success", 0.2, stated_confidence=0.8)
     assert model.calls == []
 
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "off")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "off")
     engine._record_outcome("success", 0.2, stated_confidence=0.8)
     assert len(model.calls) == 1
 
@@ -836,7 +836,7 @@ def test_second_replay_error_after_gap_acknowledgement_stays_unhealthy(
     tmp_path, monkeypatch,
 ):
     _isolate(monkeypatch, tmp_path)
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE_GAP_POLICY", "acknowledge")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE_GAP_POLICY", "acknowledge")
     projects = ProjectStore(str(tmp_path / "projects.db"))
     evidence = CognitionEvidenceStore(str(tmp_path / "evidence.db"))
     evidence.initialize_cursor(
@@ -905,7 +905,7 @@ def test_internal_sequence_gap_requires_durable_acknowledgement(
     assert stopped["processed"] == 1
     assert evidence.cursor(reducer.consumer_id) == 1
 
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE_GAP_POLICY", "acknowledge")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE_GAP_POLICY", "acknowledge")
     resumed = reducer.run_once()
     assert resumed["processed"] == 1
     assert evidence.cursor(reducer.consumer_id) == 3
@@ -982,7 +982,7 @@ def test_off_passthrough_prevents_live_relearning_legacy_outcome(
     assert off["passthrough_events"] == 1
     assert reducer.status()["gaps"]["count"] == 0
     assert reducer.status()["passthrough"]["count"] == 1
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
     live = reducer.run_once()
 
     assert live["processed"] == 0
@@ -1024,7 +1024,7 @@ def test_off_staged_outcome_cannot_train_when_first_consumed_live(
         reducer.consumer_id, 0, bootstrap_mode="beginning",
     )
 
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
     reduced = reducer.run_once()
 
     assert reduced["processed"] == 1
@@ -1078,7 +1078,7 @@ def test_off_staged_terminal_cannot_settle_project_when_consumed_live(
         reducer.consumer_id, 0, bootstrap_mode="beginning",
     )
 
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
     reduced = reducer.run_once()
 
     assert reduced["processed"] == 2

@@ -1,4 +1,4 @@
-"""Finite neutral comparison, using actual current Colony retrieval paths.
+"""Finite neutral comparison, using actual current PacoMind retrieval paths.
 
 Canonical SQLite/Lance and model calls are real. Neo4j reads are replaced with
 an explicit scoped fixture adapter, never an expected-answer oracle.
@@ -23,24 +23,24 @@ import time
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT.parents[1] / 'sidecar'))
 from assessment import assess
-from apsimo.router.router import LLMRouter
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.source_vectors import SourceVectors, merge_source_hits
-from apsimo.turns.media import SourceMedia
-from apsimo.vector.config import EmbeddingConfig
-from apsimo.vector.embedder import EmbeddingPipeline
-from apsimo.vector.openai_provider import OpenAIAPIEmbeddingProvider
-from apsimo.vector.reranker import OpenAIAPIRerankerProvider
-from apsimo.vector.indexes import IndexCatalog
-from apsimo.vector.store import VectorStore
-from apsimo.vector.collections import Collection
-from apsimo.vector.query import VectorItem
-from apsimo.intelligence.graph.client import ColonyGraph
-from apsimo.memory.selection import RecallSelector
-from apsimo.memory.recall import calibration_fingerprint, provider_calibration_metadata
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.turns.source_annotations import expand, current_candidates
+from pacomind.router.router import LLMRouter
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.source_vectors import SourceVectors, merge_source_hits
+from pacomind.turns.media import SourceMedia
+from pacomind.vector.config import EmbeddingConfig
+from pacomind.vector.embedder import EmbeddingPipeline
+from pacomind.vector.openai_provider import OpenAIAPIEmbeddingProvider
+from pacomind.vector.reranker import OpenAIAPIRerankerProvider
+from pacomind.vector.indexes import IndexCatalog
+from pacomind.vector.store import VectorStore
+from pacomind.vector.collections import Collection
+from pacomind.vector.query import VectorItem
+from pacomind.intelligence.graph.client import PacoMindGraph
+from pacomind.memory.selection import RecallSelector
+from pacomind.memory.recall import calibration_fingerprint, provider_calibration_metadata
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.turns.source_annotations import expand, current_candidates
 
 class Result:
     def __init__(self, rows): self.rows = iter(rows)
@@ -69,14 +69,14 @@ def environment(*, source_only=False):
                 'RERANKER_BASE_URL', 'RERANKER_MODEL')
     if not source_only:
         required += ('CHAT_BASE_URL', 'CHAT_MODEL')
-    missing = [name for name in required if not os.environ.get('COLONY_BENCH_' + name)]
+    missing = [name for name in required if not os.environ.get('PACOMIND_BENCH_' + name)]
     if missing:
-        raise ValueError('Missing benchmark variables: ' + ', '.join('COLONY_BENCH_' + name for name in missing))
+        raise ValueError('Missing benchmark variables: ' + ', '.join('PACOMIND_BENCH_' + name for name in missing))
     names = (*required, 'EMBED_API_KEY', 'RERANKER_API_KEY', 'CHAT_API_KEY',
              'RERANKER_PROMPT_STYLE', 'EMBED_QUERY_INSTRUCTION', 'CHAT_WEIGHT_REVISION',
              'RERANKER_REVISION', 'RECALL_INDEX_GENERATION')
-    return {'COLONY_' + name: os.environ['COLONY_BENCH_' + name]
-            for name in names if 'COLONY_BENCH_' + name in os.environ}
+    return {'PACOMIND_' + name: os.environ['PACOMIND_BENCH_' + name]
+            for name in names if 'PACOMIND_BENCH_' + name in os.environ}
 
 
 def save(path, data):
@@ -88,8 +88,8 @@ def save(path, data):
 class SelectionCapture:
     """Record this sequential benchmark's selector observations, not credentials."""
 
-    ENVIRONMENT_KEYS = ('COLONY_RECALL_RERANK', 'COLONY_RECALL_RERANK_MIN_SCORE',
-                        'COLONY_RECALL_RERANK_TIMEOUT_MS', 'COLONY_RECALL_RERANK_CALIBRATION')
+    ENVIRONMENT_KEYS = ('PACOMIND_RECALL_RERANK', 'PACOMIND_RECALL_RERANK_MIN_SCORE',
+                        'PACOMIND_RECALL_RERANK_TIMEOUT_MS', 'PACOMIND_RECALL_RERANK_CALIBRATION')
     CALIBRATION_KEYS = ('provider', 'model', 'prompt_style', 'format_version',
                         'weights_revision', 'embedding_identity', 'candidate_format',
                         'embedding_model', 'embedding_dimensions', 'index_generation')
@@ -193,9 +193,9 @@ async def run(config, args):
         raise ValueError('Use a new empty disposable state directory')
     tmp.mkdir(parents=True, exist_ok=True)
     identity = {'fixture_sha256': hashlib.sha256(fixture_path.read_bytes()).hexdigest(),
-                'extraction_model': config.get('COLONY_CHAT_MODEL'),
-                'extraction_weight_revision': config.get('COLONY_CHAT_WEIGHT_REVISION', 'unknown'),
-                'query_instruction': config.get('COLONY_EMBED_QUERY_INSTRUCTION',
+                'extraction_model': config.get('PACOMIND_CHAT_MODEL'),
+                'extraction_weight_revision': config.get('PACOMIND_CHAT_WEIGHT_REVISION', 'unknown'),
+                'query_instruction': config.get('PACOMIND_EMBED_QUERY_INSTRUCTION',
                     'Instruct: Given a search query, retrieve relevant memories that answer it\nQuery: ')}
     if args.source_only:
         identity['source_only'] = True
@@ -204,40 +204,40 @@ async def run(config, args):
     if resumed is None:
         resumed = {'identity': identity, 'prepared': False, 'captures': []}
         save(manifest_path, resumed)
-    os.environ.update(COLONY_STATE_DIR=str(tmp), COLONY_RECALL_HYBRID='on', COLONY_RECALL_RERANK='on',
-        COLONY_RECALL_RERANK_TIMEOUT_MS='1200', COLONY_RECALL_RERANK_MIN_SCORE=str(args.threshold),
-        COLONY_EMBED_QUERY_INSTRUCTION=identity['query_instruction'])
+    os.environ.update(PACOMIND_STATE_DIR=str(tmp), PACOMIND_RECALL_HYBRID='on', PACOMIND_RECALL_RERANK='on',
+        PACOMIND_RECALL_RERANK_TIMEOUT_MS='1200', PACOMIND_RECALL_RERANK_MIN_SCORE=str(args.threshold),
+        PACOMIND_EMBED_QUERY_INSTRUCTION=identity['query_instruction'])
     router = LLMRouter() if not args.source_only else None
     host = {'provider': 'local', 'models': {}, 'modelPool': {'bench': {
-        'model': config.get('COLONY_CHAT_MODEL'), 'baseUrl': config.get('COLONY_CHAT_BASE_URL'),
-        'apiKey': config.get('COLONY_CHAT_API_KEY', ''),
-        'weightRevision': config.get('COLONY_CHAT_WEIGHT_REVISION', 'unknown'),
+        'model': config.get('PACOMIND_CHAT_MODEL'), 'baseUrl': config.get('PACOMIND_CHAT_BASE_URL'),
+        'apiKey': config.get('PACOMIND_CHAT_API_KEY', ''),
+        'weightRevision': config.get('PACOMIND_CHAT_WEIGHT_REVISION', 'unknown'),
         'maxTokens': 1400}}, 'functionRoles': {'extraction': ['bench']}}
-    if os.environ.get('COLONY_BENCH_LOCAL_HOSTS'):
-        host['localHosts'] = os.environ['COLONY_BENCH_LOCAL_HOSTS'].split(',')
+    if os.environ.get('PACOMIND_BENCH_LOCAL_HOSTS'):
+        host['localHosts'] = os.environ['PACOMIND_BENCH_LOCAL_HOSTS'].split(',')
     if router is not None:
         router.configure(host)
-    model = config.get('COLONY_CHAT_MODEL')
-    provider=OpenAIAPIEmbeddingProvider(EmbeddingConfig(provider='openai_api', model_id=config['COLONY_EMBED_MODEL'], dimensions=int(config['COLONY_EMBED_DIMS'])))
-    provider.configure(config['COLONY_EMBED_BASE_URL'],config.get('COLONY_EMBED_API_KEY',''))
+    model = config.get('PACOMIND_CHAT_MODEL')
+    provider=OpenAIAPIEmbeddingProvider(EmbeddingConfig(provider='openai_api', model_id=config['PACOMIND_EMBED_MODEL'], dimensions=int(config['PACOMIND_EMBED_DIMS'])))
+    provider.configure(config['PACOMIND_EMBED_BASE_URL'],config.get('PACOMIND_EMBED_API_KEY',''))
     pipeline=EmbeddingPipeline(provider); await pipeline.warmup()
     embedding_identity = asdict(pipeline.index_identity)
     if resumed.get('embedding_identity') not in (None, embedding_identity):
         raise ValueError('Embedding identity changed; use a new state directory')
     resumed['embedding_identity'] = embedding_identity
     save(manifest_path, resumed)
-    reranker=OpenAIAPIRerankerProvider(config['COLONY_RERANKER_MODEL'])
-    reranker.configure(config['COLONY_RERANKER_BASE_URL'], config.get('COLONY_RERANKER_API_KEY',''), config.get('COLONY_RERANKER_PROMPT_STYLE',''))
+    reranker=OpenAIAPIRerankerProvider(config['PACOMIND_RERANKER_MODEL'])
+    reranker.configure(config['PACOMIND_RERANKER_BASE_URL'], config.get('PACOMIND_RERANKER_API_KEY',''), config.get('PACOMIND_RERANKER_PROMPT_STYLE',''))
     calibration={**reranker.calibration_metadata(), 'weights_revision':'unverified', 'embedding_identity':pipeline.index_identity.fingerprint,
                  'candidate_format':args.ranking_format}
     if args.source_only:
         # Same metadata fields and correction representation as serving recall.
         # The explicit trial cutoff is not newly qualified by this stamp.
-        os.environ.update({key: config[key] for key in ('COLONY_EMBED_MODEL', 'COLONY_EMBED_DIMS')})
-        for key in ('COLONY_RERANKER_REVISION', 'COLONY_RECALL_INDEX_GENERATION'):
+        os.environ.update({key: config[key] for key in ('PACOMIND_EMBED_MODEL', 'PACOMIND_EMBED_DIMS')})
+        for key in ('PACOMIND_RERANKER_REVISION', 'PACOMIND_RECALL_INDEX_GENERATION'):
             os.environ[key] = config.get(key, 'unverified')
         calibration = provider_calibration_metadata(reranker)
-    os.environ['COLONY_RECALL_RERANK_CALIBRATION']=calibration_fingerprint(calibration)
+    os.environ['PACOMIND_RECALL_RERANK_CALIBRATION']=calibration_fingerprint(calibration)
     calls=[]
     async def rerank(query, documents, top_k):
         result=await reranker.rerank(query,documents,top_k=top_k)
@@ -283,7 +283,7 @@ async def run(config, args):
         vectors=await pipeline.embed_batch([row['content'] for row in batch])
         await store.add_batch(Collection.MEMORIES,[VectorItem(id=row['id'],text=row['content'],vector=vec,
             metadata={'source_uri':'turn:'+row['id'],'person_id':'owner'}) for row,vec in zip(batch,vectors)])
-    graph=ColonyGraph.__new__(ColonyGraph); graph.database='fixture'; graph.driver=GraphReadAdapter(ledger,records)
+    graph=PacoMindGraph.__new__(PacoMindGraph); graph.database='fixture'; graph.driver=GraphReadAdapter(ledger,records)
     graph._vector_store=store; graph.set_embed_fn(pipeline.embed)
     arms = ('canonical_hybrid',) if args.source_only else ('lexical_only','existing_hybrid','source_semantic')
     results=[]
@@ -362,8 +362,8 @@ async def run(config, args):
         'fixture_sha256':hashlib.sha256(fixture_path.read_bytes()).hexdigest(),'calls':calls,
         'selection_sources': {str(path.relative_to(ROOT.parents[1])): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (Path(__file__).resolve(),
-                         ROOT.parents[1] / 'sidecar/apsimo/memory/selection.py',
-                         ROOT.parents[1] / 'sidecar/apsimo/memory/recall.py')},
+                         ROOT.parents[1] / 'sidecar/pacomind/memory/selection.py',
+                         ROOT.parents[1] / 'sidecar/pacomind/memory/recall.py')},
         'limits':['Default corpus: 120 frozen neutral sources, 96 queries, 24 holdout. A supplied smaller fixture is a smoke test.',
             'Actual local extraction/embeddings/reranker and canonical SQLite/Lance. Graph query reads are scoped SQLite fixture adapter, not Neo4j.',
             'Public/team fixture annotations do not invent shared authority: sources belong to fixture owner; six guest privacy queries expect abstention.',

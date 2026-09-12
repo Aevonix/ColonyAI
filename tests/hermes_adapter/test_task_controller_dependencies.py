@@ -18,10 +18,10 @@ socket.socket.connect = no_network
 socket.create_connection = no_network
 from gateway.config import GatewayConfig, PlatformConfig
 from gateway.session import SessionStore
-from apsimo_hermes.client import TurnOutbox
-from apsimo_hermes.task_controller import NativeTasks, configured_tasks
-from apsimo_hermes.task_handoffs import TaskHandoffs, TaskHandoffError
-from apsimo_hermes.native_task_platform import NativeTaskAdapter
+from pacomind_hermes.client import TurnOutbox
+from pacomind_hermes.task_controller import NativeTasks, configured_tasks
+from pacomind_hermes.task_handoffs import TaskHandoffs, TaskHandoffError
+from pacomind_hermes.native_task_platform import NativeTaskAdapter
 
 class DeploymentError(ValueError): pass
 @contextmanager
@@ -52,7 +52,7 @@ controller = NativeTasks(None, outbox, 'owner', database=database, sources=sourc
     error_type=DeploymentError, reply_effect='retained_for_speech_transport')
 assert controller.path is None and controller.sources is sources
 assert controller.handoffs.count() == old.count() == 5
-assert not Path('colony-native-tasks.sqlite3').exists()
+assert not Path('pacomind-native-tasks.sqlite3').exists()
 assert controller.handoffs.admit(request_id='bound', request='Review bound', source_input=source)['id'] == rows['bound']['id']
 try: controller.handoffs.get('absent')
 except DeploymentError: pass
@@ -139,12 +139,12 @@ print(json.dumps({'shared_store_and_original_routes':True}))
 
 
 def test_injected_store_and_original_native_routing(artifacts, tmp_path):
-    native = os.environ.get('COLONY_TEST_HERMES_PATH', '')
+    native = os.environ.get('PACOMIND_TEST_HERMES_PATH', '')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native adapter integration')
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path/'profile'), HERMES_DISABLE_TELEMETRY='1',
         HERMES_DISABLE_LAZY_INSTALLS='1', PYTHON_DOTENV_DISABLED='1')
     result = run_python('-I', '-c', PROBE, artifacts[3], native,
-        os.environ.get('COLONY_TEST_DEPENDENCY_PATH', ''), cwd=tmp_path, env=env)
+        os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH', ''), cwd=tmp_path, env=env)
     assert '"shared_store_and_original_routes": true' in result.stdout

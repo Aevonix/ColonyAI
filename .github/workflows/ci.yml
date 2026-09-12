@@ -10,7 +10,7 @@ jobs:
   hermes-adapter:
     runs-on: ubuntu-latest
     env:
-      COLONY_TEST_HERMES_PATH: ${{ github.workspace }}/.qualification/hermes
+      PACOMIND_TEST_HERMES_PATH: ${{ github.workspace }}/.qualification/hermes
       HERMES_TEST_SOURCE: ${{ github.workspace }}/.qualification/hermes
       AEVA_HERMES_TEST_SOURCE: ${{ github.workspace }}/.qualification/hermes
     steps:

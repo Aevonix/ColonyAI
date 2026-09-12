@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.task_queue.models import JobResult, JobStatus
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.task_queue.models import JobResult, JobStatus
 
 
 def _job(job_id="j1"):
@@ -34,7 +34,7 @@ def _loop():
 
 @pytest.mark.asyncio
 async def test_capture_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("COLONY_ENABLE_SKILL_SYNTHESIS", raising=False)
+    monkeypatch.delenv("PACOMIND_ENABLE_SKILL_SYNTHESIS", raising=False)
     loop = _loop()
     service = MagicMock()
     service.handle = AsyncMock(return_value="skill-x")
@@ -46,7 +46,7 @@ async def test_capture_disabled_by_default(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_capture_creates_deferred_review_initiative(monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_SKILL_SYNTHESIS", "true")
+    monkeypatch.setenv("PACOMIND_ENABLE_SKILL_SYNTHESIS", "true")
     loop = _loop()
     service = MagicMock()
     service.handle = AsyncMock(return_value="parse-ci-logs_ab12cd34")
@@ -67,7 +67,7 @@ async def test_capture_creates_deferred_review_initiative(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_novelty_skip_creates_nothing(monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_SKILL_SYNTHESIS", "true")
+    monkeypatch.setenv("PACOMIND_ENABLE_SKILL_SYNTHESIS", "true")
     loop = _loop()
     service = MagicMock()
     service.handle = AsyncMock(return_value=None)  # novelty gate said skip
@@ -78,7 +78,7 @@ async def test_novelty_skip_creates_nothing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_capture_errors_do_not_break_writeback(monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_SKILL_SYNTHESIS", "true")
+    monkeypatch.setenv("PACOMIND_ENABLE_SKILL_SYNTHESIS", "true")
     loop = _loop()
     service = MagicMock()
     service.handle = AsyncMock(side_effect=RuntimeError("packager exploded"))

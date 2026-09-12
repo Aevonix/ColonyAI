@@ -1,5 +1,28 @@
 # Changelog
 
+## v1.5.0 - PacoMind namespaces and current installation
+
+PacoMind uses one public namespace: `pacomind`, `pacomind-hermes` and
+`pacomind-hostworker`, with `PACOMIND_*` configuration and `pacomind` native
+plugin selection. PACO means Persistent Autonomous Cognitive Orchestration.
+The CLI, model-visible tools, packages, service templates and bundled skills use
+these names directly. Name translation layers and deprecated setup entrypoints
+are removed. This pre-Phase-1 namespace change requires a coordinated deployment
+migration; it does not provide compatibility aliases.
+
+Canonical recollection can include the directly linked input and assistant reply
+as separate, attributed evidence. Selecting a correction preserves its exact
+speaker and source. A bounded native comparison improved correction recall and
+removed one unsupported completion claim; unsupported date arithmetic remains
+an observed limitation. This is not a general response-quality result.
+
+Local identity remains private to each installation. Optional federation trust
+requires an explicitly configured public key and a valid signed instance
+manifest; the package includes no deployment-specific trust anchor.
+
+Phase 1 remains in development and validation.
+
+
 ## v1.4.8 - canonical recall and bounded runtime logs
 
 Automatic recall now selects canonical sources without adding graph-memory
@@ -67,7 +90,7 @@ graph consumers remain pending retirement.
 ## v1.4.5 - bundled skills and current instructions
 
 The adapter includes Deep Research and Skill Creator workflows. Guided setup
-installs them into the selected Hermes profile; `apsimo init --skills-only`
+installs them into the selected Hermes profile; `pacomind init --skills-only`
 installs or refreshes owned bundled copies without model or instance setup.
 Locally modified copies are preserved. Hermes advertises short descriptions
 and loads the full instructions through its native skill tools when needed.
@@ -79,7 +102,7 @@ load clears its reload notice. Saved system prompts and historical messages are
 preserved; unchanged skills add no request text. The integration uses the
 existing request middleware and native tools, without a new service or core patch.
 
-Shared recall and evidence-selection helpers now live in `apsimo.memory`,
+Shared recall and evidence-selection helpers now live in `pacomind.memory`,
 independently of the Neo4j graph package. Their selection behavior is unchanged.
 The separate graph retirement and measured memory-quality work remain open.
 
@@ -92,11 +115,11 @@ SQLite store for entities, relationships and typed observations. Its HTTP
 creation, health and persistence paths use that same implementation. The separate
 Neo4j memory graph remains active code pending its own retirement.
 
-Canonical `apsimo` packages and entry points replace the removed Colony aliases.
+Canonical `pacomind` packages and entry points replace the removed PacoMind aliases.
 The retired self-knowledge seeding endpoint, command and module are removed;
 guided identity setup and source-backed self queries remain. Obsolete poller
 wrappers are removed, and worker setup selects current executable names.
-The standalone `apsimo-hostworker` package advances to 0.2.1.
+The standalone `pacomind-hostworker` package advances to 0.2.1.
 
 Current setup and architecture documentation replace historical upgrade guides
 and compatibility promises. Development releases before the completed Phase 1
@@ -127,7 +150,7 @@ and discovery tools remain responsible for the actual installed catalog. The
 internal executor registry and its explicit API remain available.
 
 The native skill regression checks the real prompt index, skill listing and
-skill loading beside formatted Apsimo context. CI requires it to run and pass
+skill loading beside formatted PacoMind context. CI requires it to run and pass
 against the pinned Hermes qualification build. The original-memory observation
 fixture also completes its setup before requests begin, preserving its existing
 runtime deadlines and behavioral assertions.
@@ -252,21 +275,6 @@ Replayed clock notes and earlier tool observations remain historical; retained
 conversation history is unchanged. Native two-turn checks qualify composition
 and persistence. Improved model answers require a separate behavioral trial.
 
-## v1.3.0 - Apsimo interfaces and compatible attachment
-
-The public platform uses Apsimo package, command and native adapter names.
-Guided setup creates a private instance and attaches it to a selected Hermes
-profile. Managed refresh retains existing private state, credentials and service
-identity; historical Colony imports and explicit plugin/provider selections
-remain aliases to the same implementation.
-
-- Canonical native tools preserve existing governed action identifiers and
-  task contracts, with one active adapter and one selected memory provider.
-- Memory recall and profile settings survive the name migration, including
-  copied installations and existing per-profile provider configuration.
-- Native reviews retain their bounded evidence tools and existing dispatch
-  lifecycle. This release adds no separate review or approval service.
-
 ## v1.2.1 - bounded native operational reviews
 
 Autonomous operational reviews use an opt-in native profile with two tools:
@@ -293,10 +301,10 @@ Hermes' retired normal output cap. Native truncation recovery remains intact.
 
 ## v1.2.0 - shared native tasks during conversation
 
-The optional `colony_task` tool starts durable Hermes work while foreground
+The optional `pacomind_task` tool starts durable Hermes work while foreground
 conversation continues. The same authenticated owner can inspect, steer or stop
 that task from another enrolled channel. Hermes retains execution, native
-sessions, interruption and recovery. Colony supplies durable source associations
+sessions, interruption and recovery. PacoMind supplies durable source associations
 through one generic adapter and controller, which private transports can reuse
 with their existing storage and authentication.
 
@@ -342,7 +350,7 @@ production extraction, model routing, native behavior or role selection.
 
 ## v1.1.16 - bounded model consumer qualification
 
-The opt-in `colony models inspect`, `evaluate` and `compare` commands inspect
+The opt-in `pacomind models inspect`, `evaluate` and `compare` commands inspect
 configured bindings and record finite consumer evaluations without changing
 deployed model selections. Recipes, cases, independent oracles, evaluator
 identity and first results are retained in private result directories. Resume
@@ -412,7 +420,7 @@ require deployment observation. No Hermes core patch or new worker is added.
 
 Hermes can build an extra final-summary request from retained history after a
 task reaches its iteration limit. This call bypasses ordinary request hooks.
-Colony now applies its existing source-validity and erasure filter through the
+PacoMind now applies its existing source-validity and erasure filter through the
 native turn's scoped Relay execution contract, including streaming and retry
 calls. When an exact erased source identifies a historical conversation turn,
 its derived tool arguments, results and reasoning are withheld together. The
@@ -747,7 +755,7 @@ No data migration or Hermes core change is required.
 
 ## v1.0.34 - profile read-receipt preference
 
-`colony init --preferences-only --whatsapp-read-receipts on|off` updates an
+`pacomind init --preferences-only --whatsapp-read-receipts on|off` updates an
 existing Hermes profile through the existing config writer. `--preview` lists
 the changed setting paths without writing. This path does not create an
 identity, attach an adapter, contact a model or restart a service. Ordinary init
@@ -859,7 +867,7 @@ Deployments must qualify their own recognizer and capture adapter before enablin
 audio where they previously supplied text. See [audio sources](docs/SOURCE-AUDIO.md).
 
 Automatic persistent judgments are experimental and off by default. Exact
-`COLONY_SELF_JUDGMENTS_ENABLED=1` opts in after a deployment qualifies its reasoning
+`PACOMIND_SELF_JUDGMENTS_ENABLED=1` opts in after a deployment qualifies its reasoning
 model. Disabled generation leaves sources, history and correction controls intact;
 pending judgments stay held and no working views enter automatic context.
 
@@ -954,7 +962,7 @@ consumers such as voice adapters.
 
 Literal memory markup in trusted system or developer instructions no longer
 discards the remaining instruction text. Exact erased-source copies and explicit
-Colony lineage packets still follow the existing erasure boundary, including
+PacoMind lineage packets still follow the existing erasure boundary, including
 Responses instructions and multimodal text parts.
 
 No historical memory is rewritten, no database migration is needed, and no new
@@ -975,7 +983,7 @@ goals are neither deleted nor automatically adopted into native tasks.
 
 Legacy persona setup reports that host identity, configuration overlays and
 plugins were not installed by its logging-only host step. Its service, channel
-and saved-manifest compatibility remains. New installations use `colony init`.
+and saved-manifest compatibility remains. New installations use `pacomind init`.
 Existing manifests and configured graph stores still need proven export/restore
 migrations before their compatibility paths can be retired.
 
@@ -1035,7 +1043,7 @@ actionable setup error without changing shared permissions.
 ## v1.0.22 - complete native recollection and shared work results
 
 Fresh attachment and explicit adapter refresh align Hermes's supported hook
-spill allowance with Colony's existing memory context, including generated
+spill allowance with PacoMind's existing memory context, including generated
 draft profiles. The default 10,000-character spill could replace selected
 evidence and its source revisions with a truncated preview. The 65,536-character
 allowance preserves the observed default packet; disabled or larger operator
@@ -1063,7 +1071,7 @@ Native integration fixtures patch the actual client and tool owners after
 upstream's module split. The pinned native CI target is the exact 0.21.1 release.
 
 Existing source memory and adapter configuration require no data migration.
-Install the updated adapter before upgrading Hermes; Colony never changes the
+Install the updated adapter before upgrading Hermes; PacoMind never changes the
 runtime or restarts a gateway during attachment.
 
 ## v1.0.20 - distinguish time requests from pasted evidence
@@ -1095,7 +1103,7 @@ Corrections follow the recalled message's provenance, so independent messages
 and surviving atomic facts do not inherit a sibling's correction or erasure.
 Corrected graph beliefs retain their underlying identity for recall reinforcement.
 
-The native `colony_memory_annotate` tool lets an attested owner or system turn
+The native `pacomind_memory_annotate` tool lets an attested owner or system turn
 append a correction to a source revision actually supplied to that turn. Identity
 and idempotency come from the existing native context. An unknown acknowledgment
 can be retried with identical arguments in the same turn without another source.
@@ -1104,7 +1112,7 @@ The source-reference protocol is unchanged; the new tool requires adapter refres
 ## v1.0.17 - persistent worker ownership and useful review recurrence
 
 Paired Hermes profiles resolve memory and tool ownership from their persisted
-Colony plugin and memory-provider selections. Cold workers can register the
+PacoMind plugin and memory-provider selections. Cold workers can register the
 completion-report callback without inherited launcher flags. The memory provider
 still leaves turn writing and mutation tools to the general plugin. Explicit
 profile deselection and legacy standalone configuration retain their meanings.
@@ -1130,7 +1138,7 @@ This sidecar correction adds no native worker or dispatcher changes.
 ## v1.0.15 - native review undertakings and retained completion reports
 
 Selected generated internal reviews can become shared native Hermes tasks
-through `colony_work_initiative`. The existing initiative ledger retains one
+through `pacomind_work_initiative`. The existing initiative ledger retains one
 task association across repeated cycles and lost acknowledgments. Native
 completion, exhausted failures and needs-input blocks remain distinct in shared
 work views. These reviews use the default native profile and its existing
@@ -1142,7 +1150,7 @@ the existing Hermes profile. It enables native task tools and selected-board
 observation, preserves explicit model and authority settings, and reports
 conflicting dispatcher or ledger bindings. Existing YAML aliases remain intact
 outside the changed configuration. Hermes supplies the dispatcher and worker;
-Colony does not start its gateway or add another executor. Kanban availability
+PacoMind does not start its gateway or add another executor. Kanban availability
 is profile-wide, and existing consent rules still apply.
 
 Attested native worker completions can retain their committed summaries as
@@ -1174,7 +1182,7 @@ Owner sessions can observe selected native Hermes Kanban boards through the
 existing current-work context. General tasks expose their native state, current
 attempt, configured goal budget and recent terminal record. Board coverage and
 omissions remain explicit. Hermes retains dispatch, continuation and recovery;
-Colony adds no second task executor. Native dispatcher and delegated worker
+PacoMind adds no second task executor. Native dispatcher and delegated worker
 instructions stay out of owner-source capture, including compression and legacy
 sync paths, while their native task and session records remain available.
 
@@ -1195,7 +1203,7 @@ to generation. Erasing one of those sources also removes later captured
 assistant answers that depended on it, including paraphrases and delayed outbox
 delivery. Independent user messages survive partial erasure. Selected sourced
 preferences and working views contribute their existing canonical dependencies.
-The owner can select exact recalled source IDs through `colony_memory_forget`.
+The owner can select exact recalled source IDs through `pacomind_memory_forget`.
 
 This is conservative, forward-only provenance: an entire assistant answer can
 be removed when any supplied source is erased. It does not discover historical
@@ -1213,7 +1221,7 @@ repeatedly failing on list-valued content.
 Function routing rejects empty, reasoning-only and truncated responses within
 the existing fallback budget. Requested tool calls remain valid output.
 Repeated identical standing-boundary quotations appear once per polarity in
-context. Explicit `colony init --refresh-adapter` refreshes copied adapters while
+context. Explicit `pacomind init --refresh-adapter` refreshes copied adapters while
 preserving private identity, state and the previous adapter for recovery.
 
 ## v1.0.10 - keep caller deadlines separate from endpoint outages
@@ -1294,7 +1302,7 @@ learning service. See [native review evidence](docs/NATIVE-REVIEW-EVIDENCE.md).
 ## v1.0.5 - native draft execution
 
 - Accepted local source drafts use the stock Hermes Kanban dispatcher and a
-  constrained native worker profile. Colony retains consent, commitment scope,
+  constrained native worker profile. PacoMind retains consent, commitment scope,
   source/report validation and current-work projection; Hermes owns attempts,
   crash recovery and native completion delivery. Saved receipts reconcile an
   interrupted acknowledgment without redrafting. Recovery may use a finishing
@@ -1362,7 +1370,7 @@ learning service. See [native review evidence](docs/NATIVE-REVIEW-EVIDENCE.md).
 
 ## v1.0.1 - fresh setup and local work visibility
 
-- Fresh Hermes environments no longer need the legacy Colony CLI dependency
+- Fresh Hermes environments no longer need the legacy PacoMind CLI dependency
   `typer` to pass setup. The wizard attaches the private native adapter using
   the selected Hermes core environment.
 - Owner current-work views include accepted local capability briefings and
@@ -1373,7 +1381,7 @@ learning service. See [native review evidence](docs/NATIVE-REVIEW-EVIDENCE.md).
 
 ## v1.0.0 - persistent native core
 
-Colony 1.0 defines a supported core beside Hermes, with private identity and
+PacoMind 1.0 defines a supported core beside Hermes, with private identity and
 hardware integrations supplied by each deployment.
 
 - **Native Hermes integration:** packaged general and memory-provider adapters,
@@ -1417,37 +1425,37 @@ feelings or completion of every autonomous-agent acceptance behavior.
 
 **Preset-loop coupling — default flip + migration note**
 (`util.autonomy_preset`, `autonomy.config`): an active
-`COLONY_AUTONOMY_PRESET` now supplies the autonomy loop mode when
-`COLONY_AUTONOMY_MODE` is unset (passive: `reactive`;
+`PACOMIND_AUTONOMY_PRESET` now supplies the autonomy loop mode when
+`PACOMIND_AUTONOMY_MODE` is unset (passive: `reactive`;
 calibration/autonomous: `proactive`), governed by
-`COLONY_PRESET_LOOP_COUPLING` (new, default `on`). MIGRATION: a deployment
-running `COLONY_AUTONOMY_PRESET=calibration` or `=autonomous` WITHOUT an
-explicit `COLONY_AUTONOMY_MODE` will come up with a proactive loop on next
+`PACOMIND_PRESET_LOOP_COUPLING` (new, default `on`). MIGRATION: a deployment
+running `PACOMIND_AUTONOMY_PRESET=calibration` or `=autonomous` WITHOUT an
+explicit `PACOMIND_AUTONOMY_MODE` will come up with a proactive loop on next
 restart — previously it silently stayed reactive and none of the
 preset-enabled subsystems ever ran. This is the intended fix for the
 "everything looks enabled, nothing ever ticks" misconfiguration. Rollback:
-set `COLONY_AUTONOMY_MODE=reactive` (explicit env always wins) or
-`COLONY_PRESET_LOOP_COUPLING=off` (restores the old env-only resolution
+set `PACOMIND_AUTONOMY_MODE=reactive` (explicit env always wins) or
+`PACOMIND_PRESET_LOOP_COUPLING=off` (restores the old env-only resolution
 exactly). Resolution precedence: explicit env > coupled preset > legacy
 tick-interval migration > default; coupling errors fail toward reactive.
 Annunciation: the server logs a startup WARNING whenever the mode is
 preset-inherited, records one durable action-journal entry (domain
 `preset_coupling`) on the first coupled boot, and
-`GET /v1/host/autonomy/posture` now reports `COLONY_AUTONOMY_MODE_SOURCE`
-(`env`/`preset`/`legacy_tick`/`default`) plus the coupling flag. `colony
+`GET /v1/host/autonomy/posture` now reports `PACOMIND_AUTONOMY_MODE_SOURCE`
+(`env`/`preset`/`legacy_tick`/`default`) plus the coupling flag. `pacomind
 doctor` reworded: FAIL only for an explicit reactive pin under a
 calibration/autonomous preset or coupling switched off under a preset; a
 coupling fail-safe (reactive despite coupling on) is WARN.
 
 **Preset activation — expectations + workspace** (`util.autonomy_preset`):
-`COLONY_EXPECTATIONS` and `COLONY_WORKSPACE` are now managed by
-`COLONY_AUTONOMY_PRESET` (calibration: expectations `on` + workspace
+`PACOMIND_EXPECTATIONS` and `PACOMIND_WORKSPACE` are now managed by
+`PACOMIND_AUTONOMY_PRESET` (calibration: expectations `on` + workspace
 `shadow`; autonomous: expectations `on` + workspace `live`; passive: both
 `off`). Deployments running under a preset WITHOUT these env vars set will
 see both subsystems come on at the preset's default on restart — that is
 the intended activation. An explicitly set env var still always wins in
-both directions, so deployments that pin `COLONY_EXPECTATIONS` /
-`COLONY_WORKSPACE` themselves are unchanged. `COLONY_EXPECTATIONS=on` is
+both directions, so deployments that pin `PACOMIND_EXPECTATIONS` /
+`PACOMIND_WORKSPACE` themselves are unchanged. `PACOMIND_EXPECTATIONS=on` is
 newly accepted as the canonical enabled value (`shadow`/`live` remain
 aliases). Two world-model prediction resolvers (relationship-still-active,
 property-unchanged) now register with the expectation engine at boot.
@@ -1490,7 +1498,7 @@ strings or object specs. Found configuring a live GLM cutover.
 
 Two related capabilities for running big models well:
 
-**Context gate** (`colony_sidecar.contextgate`): a model's *useful* context
+**Context gate** (`pacomind.contextgate`): a model's *useful* context
 window — the range over which exact retrieval stays reliable — is often far
 below its advertised maximum, and stuffing a huge document in silently
 degrades recall. The gate decides per call whether content fits whole, and
@@ -1506,8 +1514,8 @@ an explicit `task_kind` or a heuristic classifier.
   (`content`/`documents` + `query` + `budget_tokens` or `model_tier`)
 - Inference jobs gate automatically against the target tier's budget
   (opt out per job with `payload.context_gate = "off"`)
-- Config: `COLONY_CONTEXT_GATE` (auto/on/off), `…_HEADROOM`, `…_BUDGET`,
-  `COLONY_CONTEXT_CHUNK_TOKENS`, `…_OVERLAP_TOKENS`, `…_CHARS_PER_TOKEN`
+- Config: `PACOMIND_CONTEXT_GATE` (auto/on/off), `…_HEADROOM`, `…_BUDGET`,
+  `PACOMIND_CONTEXT_CHUNK_TOKENS`, `…_OVERLAP_TOKENS`, `…_CHARS_PER_TOKEN`
 
 **Multi-endpoint model tiers**: `POST /v1/host/configure` `models` values
 may now be objects, not just model strings — per tier: `baseUrl`, `apiKey`,
@@ -1517,7 +1525,7 @@ may now be objects, not just model strings — per tier: `baseUrl`, `apiKey`,
 model on one endpoint, a large reasoning model on another. String specs
 keep working unchanged. The Hermes plugin exposes the same per tier via
 `llm_<tier>_base_url` / `_api_key` / `_extra_body` / `_useful_ctx` /
-`_max_tokens` (and `COLONY_LLM_<TIER>_*` env vars).
+`_max_tokens` (and `PACOMIND_LLM_<TIER>_*` env vars).
 
 ## v0.31.1 — env secrets backend reads its own file
 
@@ -1535,18 +1543,18 @@ several mailboxes/calendars feeding cognition side by side; listed accounts
 default on, each can be disabled individually, and email observations are
 attributed to the receiving account.
 
-## v0.30.2 — `colony secrets` is a real command
+## v0.30.2 — `pacomind secrets` is a real command
 
 The secrets CLI handlers existed but were never registered with the main
-parser; `colony secrets set KEY VALUE` (as documented for setup-once
+parser; `pacomind secrets set KEY VALUE` (as documented for setup-once
 connector credentials) now works: list / get / set / delete / backend /
 status.
 
 ## v0.30.1 — set a connector credential once
 
-`ConnectorConfig` now resolves env-first, then the Colony encrypted secrets
+`ConnectorConfig` now resolves env-first, then the PacoMind encrypted secrets
 store (`connector/<name>/<key>`), then the default. A credential like an IMAP
-password or a private ICS URL is entered ONCE — `colony secrets set
+password or a private ICS URL is entered ONCE — `pacomind secrets set
 connector/calendar/ics_url <url>` or `POST /v1/host/secrets/set` — lives
 encrypted, survives service redeploys, and never has to be copied into a
 plist or unit file. An explicit env var still always wins, and enable flags
@@ -1556,7 +1564,7 @@ work through the same path (restart to register a newly-enabled connector).
 
 Every entry in docs/KNOWN-GAPS.md was prioritized and either fixed, wired
 real, or retired with its reason recorded. Boundary rule applied throughout:
-Colony is the cognitive substrate; sessions, tool execution, transport, and
+PacoMind is the cognitive substrate; sessions, tool execution, transport, and
 cron belong to the host agent framework.
 
 - **Goals unblock themselves**: `block_goal` accepts an external condition
@@ -1573,7 +1581,7 @@ cron belong to the host agent framework.
 - **World-model hygiene**: a real prune primitive (stale low-confidence
   entities; FK cascade + FTS-consistent; exact counts) on the config TTL
   knobs, and the daily task is back — doing the work it reports.
-- **Self-knowledge grounding**: questions about Colony itself get the
+- **Self-knowledge grounding**: questions about PacoMind itself get the
   identity-bootstrap corpus injected into assembled context.
 - **Retired**: ScheduleAdapter (contracts unimplementable on both ends;
   host-cron mutation crosses the framework boundary) and the orphaned
@@ -1611,7 +1619,7 @@ plugins. Headline items:
   off the event loop, briefing push deadlock removed.
 - **Boundary controls fail closed**: connector directive-blackout check no
   longer converts an internal error into permission.
-- **`colony autonomy status|cycle`** now really talks to the running sidecar.
+- **`pacomind autonomy status|cycle`** now really talks to the running sidecar.
 - **docs/KNOWN-GAPS.md**: an honest inventory of scaffolding that exists but
   is not wired, so status claims match reality.
 
@@ -1631,7 +1639,7 @@ minutes later. Resolution is now a first-class, cascading, learnable act:
   fulfill/cancel, and the new Hermes tools. The resolution {outcome, note, by,
   at} is recorded on the commitment and emitted as an event.
 - **Re-raise suppression**: a resolved concern's dedup_key is not re-raised
-  while the resolution is fresh (`COLONY_WORKSPACE_RESOLVED_TTL_HOURS`,
+  while the resolution is fresh (`PACOMIND_WORKSPACE_RESOLVED_TTL_HOURS`,
   default 24), so a resolve sticks even against a still-open source.
 - **Reverse cascade**: settling a commitment directly (agent tool, MCP, API)
   resolves any workspace concern raised from it.
@@ -1645,19 +1653,19 @@ minutes later. Resolution is now a first-class, cascading, learnable act:
   `GET /commitments/stats/resolution` exposes per-source outcome stats as the
   calibration signal. `POST /commitments` accepts `dedupe` to return an
   existing open twin instead of creating one.
-- **Agent surface**: Hermes plugin tools `colony_list_commitments`,
-  `colony_create_commitment` (dedupes), `colony_resolve_commitment` (with
-  outcome + reason) — any Colony agent can generate AND resolve items and
+- **Agent surface**: Hermes plugin tools `pacomind_list_commitments`,
+  `pacomind_create_commitment` (dedupes), `pacomind_resolve_commitment` (with
+  outcome + reason) — any PacoMind agent can generate AND resolve items and
   learns from what the owner rejects.
 - Hermes plugin repo/live drift healed: initiatives-based task handlers and
-  the `plugins.colony.autonomy_prompt` / `autonomy_deliver` deployment seam
+  the `plugins.pacomind.autonomy_prompt` / `autonomy_deliver` deployment seam
   are now in-repo alongside the sender-attribution redesign.
 
 ## v0.27.1 — autonomy-loop hardening + operator controls
 
 Fixes from live operation and the command-center build:
 - The autonomy loop can no longer be frozen by a slow or hung phase: the
-  whole tick is bounded (`COLONY_TICK_BUDGET_SECS`, default 80% of the tick
+  whole tick is bounded (`PACOMIND_TICK_BUDGET_SECS`, default 80% of the tick
   interval), the toolsmith/workspace phases carry per-phase budgets, the
   toolsmith's Docker sandbox calls moved off the event loop
   (`asyncio.to_thread`), and the benchmark's recall probes are individually
@@ -1688,11 +1696,11 @@ is better), so "does she predict well, and is it improving" becomes a real
 trend line. Predictions are generated from pending commitments, with
 confidence set by the agent's own historical fulfillment rate.
 
-New `colony_sidecar/self_model/expectations.py` (prediction store + engine
+New `pacomind/self_model/expectations.py` (prediction store + engine
 with a resolver registry). `GET /v1/host/self/expectations`, an autonomy
 phase that generates hourly and checks every couple of ticks (linking the
 workspace so surprises land), a `server-expectations` doctor check, and an
-Expectations panel on the Operator Deck. Gated by `COLONY_EXPECTATIONS`
+Expectations panel on the Operator Deck. Gated by `PACOMIND_EXPECTATIONS`
 (off | shadow | live, default off).
 
 
@@ -1712,12 +1720,12 @@ stuck (salience decays harder, so rumination fades on its own), or resolves
 initiative to the owner or propose a self-experiment, both through the
 existing gates; in shadow it only thinks and journals.
 
-New `colony_sidecar/self_model/workspace.py` (concern store + engine) and
+New `pacomind/self_model/workspace.py` (concern store + engine) and
 `thinker.py` (the model-agnostic LLM reflection, injected so the engine is
 testable). `GET /v1/host/self/workspace` exposes what is on her mind and
 drives the Operator Deck's on-her-mind panel. Doctor check
-`server-workspace`. Gated by `COLONY_WORKSPACE` (off | shadow | live,
-default off), `COLONY_SLEEP_WINDOW`, and capacity/half-life/budget env.
+`server-workspace`. Gated by `PACOMIND_WORKSPACE` (off | shadow | live,
+default off), `PACOMIND_SLEEP_WINDOW`, and capacity/half-life/budget env.
 
 
 ## v0.25.0 — toolsmith: the agent builds its own tools (Mind M1)
@@ -1734,15 +1742,15 @@ a new dynamic-tool provider on the tool executor and run in the sandbox
 when the model calls them. Tools that go unused or start failing retire
 themselves.
 
-New subsystem `colony_sidecar/toolsmith/` (persisted registry + journal
+New subsystem `pacomind/toolsmith/` (persisted registry + journal
 miner + engine), deliberately independent of the runtime `skills/`
 executor registry. Composes the shipped Docker sandbox, trust engine,
 action journal, and LLM router. Surfaces: `GET /v1/host/self/tools`,
 `GET .../tools/{id}`, `POST .../tools/{id}/graduate`, `.../retire`; a
-`server-toolsmith` doctor check. Gated by `COLONY_TOOLSMITH` (off | shadow
+`server-toolsmith` doctor check. Gated by `PACOMIND_TOOLSMITH` (off | shadow
 | live, default off) and requires the live Docker sandbox to verify and run
-tools. Related env: `COLONY_TOOLSMITH_MIN_OCCURRENCES`,
-`COLONY_TOOLSMITH_SHADOW_MIN`, `COLONY_TOOLSMITH_EXCLUDE_DOMAINS`.
+tools. Related env: `PACOMIND_TOOLSMITH_MIN_OCCURRENCES`,
+`PACOMIND_TOOLSMITH_SHADOW_MIN`, `PACOMIND_TOOLSMITH_EXCLUDE_DOMAINS`.
 
 Also fixed: `complete_job` now records a real duration (from claim time
 when the caller omits started_at), so job-latency metrics measure actual
@@ -1764,7 +1772,7 @@ against graph recall), queue job latency percentiles, and generic rollups
 of host-submitted samples (`POST /v1/host/self/benchmark/samples`, e.g. a
 voice gateway reporting TTFB). Surfaces: `GET /v1/host/self/benchmark`
 (ISO-week rollups + week-over-week trends), `POST .../compute`,
-`colony benchmark` CLI, a weekly autonomy phase that computes the previous
+`pacomind benchmark` CLI, a weekly autonomy phase that computes the previous
 week and delivers the scorecard to the owner, and a `server-benchmark`
 doctor check that WARNs on regressing non-latency trends.
 
@@ -1778,9 +1786,9 @@ parameter plus a global running cap. `GET/POST /v1/host/self/experiments`,
 `POST .../{id}/abort`, a daily decision phase with owner notices, every
 transition journaled.
 
-New env (all default-on, see .env.example): `COLONY_BENCHMARK_ENABLED`,
-`COLONY_BENCHMARK_REPORT`, `COLONY_BENCHMARK_PROBES`,
-`COLONY_EXPERIMENTS_ENABLED`, `COLONY_EXPERIMENTS_MAX_RUNNING`.
+New env (all default-on, see .env.example): `PACOMIND_BENCHMARK_ENABLED`,
+`PACOMIND_BENCHMARK_REPORT`, `PACOMIND_BENCHMARK_PROBES`,
+`PACOMIND_EXPERIMENTS_ENABLED`, `PACOMIND_EXPERIMENTS_MAX_RUNNING`.
 
 
 ## v0.23.2 — owner contact curation (link / merge / review proposals)
@@ -1811,8 +1819,8 @@ Fixes from a full-codebase gap audit. No new subsystems; closing holes.
 - **Safety gate reaches the send path.** ResponseGuard now runs on the
   proactive delivery path (secret-leak / disclosure-tier / injection /
   provenance) before a message leaves — shadow logs, enforce
-  (COLONY_GUARD_MODE=enforce) blocks. The request-path gate's L7 send-delay
-  is env-tunable (COLONY_GATE_SEND_DELAY_SECS; 0 = pass-through, now
+  (PACOMIND_GUARD_MODE=enforce) blocks. The request-path gate's L7 send-delay
+  is env-tunable (PACOMIND_GATE_SEND_DELAY_SECS; 0 = pass-through, now
   explicit) and boot logs the secondary-review posture; L6 fail-open is
   documented at the config.
 - **The comms ledger sees the whole conversation.** turns/sync now records
@@ -1830,7 +1838,7 @@ Fixes from a full-codebase gap audit. No new subsystems; closing holes.
 - **Attribution hardening.** /tom/extract validates the contact like the
   affect/facts POSTs; the ParticipantResolver recognizes a canonical
   contact id passed as user_id (the voice channel) instead of minting a
-  duplicate shadow; the wizard surfaces COLONY_IDENTITY_SHADOW_CONTACTS.
+  duplicate shadow; the wizard surfaces PACOMIND_IDENTITY_SHADOW_CONTACTS.
 - **Chain/remote-agent surface flagged experimental.** No consensus loop
   runs and the remote handshake is not verified end to end; the connect
   cert is now really signed when a key manager is present (the
@@ -1857,7 +1865,7 @@ spec: `docs/RELATIONSHIPS.md`.
   downstream: interactions, comms ledger, affect, facts, engagement,
   introspection.
 - **Machines are not people.** Senderless turns on machine channels
-  (`COLONY_IDENTITY_MACHINE_CHANNELS`) or with system-origin text attribute
+  (`PACOMIND_IDENTITY_MACHINE_CHANNELS`) or with system-origin text attribute
   to the reserved `system` sentinel: no interactions, no ToM writes, no
   psyche. The ToM APIs now validate contact ids against the store, so test
   strings can never mint affect/fact state again.
@@ -1888,12 +1896,12 @@ Hardening release from live testing of v0.22.0 on the reference deployment.
   machine-origin text and degenerate fragment subjects, and never piles up
   duplicates (both the deterministic and LLM-assisted paths); the keyword
   matcher raises the single-term "distinctive" bar and never treats the
-  product/agent name (or `COLONY_MATCH_COMMON_TERMS`) as a lone match signal.
+  product/agent name (or `PACOMIND_MATCH_COMMON_TERMS`) as a lone match signal.
   New `server-directives` doctor check flags fragments and duplicate piles.
 - **Contacts DB default anchored to the state dir** (was CWD-relative, the
   same failure class as the world-model store incident); doctor detects the
   empty-stub-next-to-real-store env-mismatch signature.
-- **colony-worker daemon output is line-buffered** (under launchd/systemd the
+- **pacomind-worker daemon output is line-buffered** (under launchd/systemd the
   log file stayed empty for hours); the launchd deploy template ships
   StandardOutPath/StandardErrorPath.
 - README architecture flowchart rewritten in GitHub-compatible mermaid.
@@ -1902,7 +1910,7 @@ Hardening release from live testing of v0.22.0 on the reference deployment.
 ## v0.22.0 — the cognition program: earned autonomy, one-knob posture, closed learning loops
 
 The seven-capability cognition program lands in full, alongside the autonomy preset, the
-plugin consolidation, and a public-docs refresh. Colony is now a sidecar that can *earn*
+plugin consolidation, and a public-docs refresh. PacoMind is now a sidecar that can *earn*
 agency rather than be granted it.
 
 - **Self-model / trust engine:** graduated, earned autonomy per action class —
@@ -1910,31 +1918,31 @@ agency rather than be granted it.
   auto-graduation with owner notification, circuit breakers that demote on failures or any
   audit violation, and an immutable floor (money movement, irreversible deletion, credential
   changes, bulk third-party messaging) that is never self-decidable. Every gate decision is
-  journaled in the unified ActionJournal (`colony-action-journal.db`), and the daily
+  journaled in the unified ActionJournal (`pacomind-action-journal.db`), and the daily
   proactive-delivery cap adapts to the delivery domain's track record.
-- **`COLONY_AUTONOMY_PRESET=passive|calibration|autonomous`:** one knob supplying defaults
+- **`PACOMIND_AUTONOMY_PRESET=passive|calibration|autonomous`:** one knob supplying defaults
   for all fourteen autonomy flags at once. Explicit env always wins; `calibration` (the
   wizard default) shadows everything and lets the trust engine graduate capability classes
   from their real track record; the sandbox never goes live from a preset.
   `GET /v1/host/autonomy/posture` returns the resolved posture of the running process.
 - **Projects (`projects/`):** goal persistence and sustained multi-tick pursuit — a planner
   decomposes goals and the ProjectEngine advances them across autonomy cycles
-  (`COLONY_PROJECTS_MODE`).
+  (`PACOMIND_PROJECTS_MODE`).
 - **Skills memory (`skills_memory/`):** compounding procedure learning — distill on
-  retry-success and novel diagnosis, retrieve into future prompts (`COLONY_SKILLS_DISTILL`).
+  retry-success and novel diagnosis, retrieve into future prompts (`PACOMIND_SKILLS_DISTILL`).
 - **Beliefs (`beliefs/`):** contradiction detection, resolution, and stale-belief decay
-  (`COLONY_BELIEFS_MODE`).
+  (`PACOMIND_BELIEFS_MODE`).
 - **Workers:** `task_queue/governor.py` WorkerGovernor enforces server-side — capability
   coverage, boundary compliance, and report audits are re-decided by the sidecar, never
-  taken on the worker's word — and `workers/colony_worker.py` ships as the installable
-  `colony-worker` daemon with systemd/launchd templates under `workers/deploy/`
-  (`COLONY_WORKERS_MODE`).
+  taken on the worker's word — and `workers/pacomind_worker.py` ships as the installable
+  `pacomind-worker` daemon with systemd/launchd templates under `workers/deploy/`
+  (`PACOMIND_WORKERS_MODE`).
 - **Sandbox (`sandbox/`):** gated Docker exploration sandbox — no network, no credentials,
-  capped resources, read-only rootfs (`COLONY_SANDBOX_MODE=off|dry_run|live`; live is
+  capped resources, read-only rootfs (`PACOMIND_SANDBOX_MODE=off|dry_run|live`; live is
   explicit-only).
 - **Connectors (`connectors/`):** read-only senses framework — `imap_email`,
   `caldav_calendar`, `fs_documents`, `webhook_pull` — feeding observations into the same
-  cognition path (`COLONY_CONNECTORS_MODE` + per-connector `COLONY_CONNECTOR_<NAME>_*`).
+  cognition path (`PACOMIND_CONNECTORS_MODE` + per-connector `PACOMIND_CONNECTOR_<NAME>_*`).
 - **Charter prompt architecture:** every LLM role shares one versioned agency doctrine
   (`cognition/charter.py`); the `PROMPT_VERSION` is journaled with every action.
 - **Closed learning loops:** the new AdaptiveParamStore (`self_model/params.py`) holds
@@ -1946,25 +1954,25 @@ agency rather than be granted it.
   on the skills that informed each run and retrieval ranks by that record; trust confidence
   now consumes stated-vs-realized calibration, so overconfident domains earn less trust.
 - **Mining (`mining/`):** escalation miner spots correction/consultation turns
-  (`COLONY_ESCALATION_MINING`) and the training-corpus exporter
+  (`PACOMIND_ESCALATION_MINING`) and the training-corpus exporter
   (`POST /v1/host/mining/corpus/export`) writes fine-tune JSONL under the state dir only.
-- **Feeds (`feeds/`):** spec-driven intelligence feed framework with the `colony feeds`
+- **Feeds (`feeds/`):** spec-driven intelligence feed framework with the `pacomind feeds`
   CLI, `docs/FEEDS.md`, and the `plugins/feeds-manage` Hermes plugin.
 - **Channels, persona, backup:** generic channel registration with auto-derived channel ids
   (`channels/`, `docs/CHANNEL_FRAMEWORK.md`), the persona deployment layer (`persona/`,
-  `colony persona` CLI), and full-state backup/restore (`colony backup` / `colony restore`).
+  `pacomind persona` CLI), and full-state backup/restore (`pacomind backup` / `pacomind restore`).
 - **Doctor:** ten new cognition checks that read the RUNNING server — autonomy posture,
   self-model + breakers, adaptive params, executor, projects, beliefs, worker governor,
   sandbox, connectors, mining — plus env-mismatch detection on contacts-db; 30 check
   results in a full run.
 - **Wizard:** preset-driven autonomy step; OpenClaw fully removed (menu, flags, validate
   path — support was removed in v0.21.14 but the wizard still offered it and silently
-  no-opped); `colony validate` now live-fires the sidecar's own LLM router.
-- **Plugin consolidation:** `plugins/colony-memory/` is the SINGLE canonical Hermes memory
-  provider (merged: reply thread-window, `colony_resolve_commitment`, the battle-tested
+  no-opped); `pacomind validate` now live-fires the sidecar's own LLM router.
+- **Plugin consolidation:** `plugins/pacomind-memory/` is the SINGLE canonical Hermes memory
+  provider (merged: reply thread-window, `pacomind_resolve_commitment`, the battle-tested
   sync architecture, and the `pre_llm_call` contact/time hook). `plugins/hermes-memory/`
   and `plugins/hermes-plugin/memory_provider/` are deleted; `install.sh` and the wizard
-  both deploy from it to `~/.hermes/plugins/colony-memory/`.
+  both deploy from it to `~/.hermes/plugins/pacomind-memory/`.
 - **Docs refresh + genericity:** README, CONTRIBUTING, harness guide, and `.env.example`
   rewritten to match the codebase; the Hermes install URL corrected everywhere to
   `https://github.com/NousResearch/hermes-agent`; remaining deployment-identity strings
@@ -1973,10 +1981,10 @@ agency rather than be granted it.
 ## v0.21.33 — InitiativeExecutorService: autonomous initiative processing
 
 A generic initiative executor closes the autonomy circuit without an external agent: it
-uses Colony's own ReasoningLoop (LLM + tools) to claim pending initiatives, reason about
+uses PacoMind's own ReasoningLoop (LLM + tools) to claim pending initiatives, reason about
 them, execute actions, and report results back to the store.
 
-- **Opt-in** via `COLONY_EXECUTOR_ENABLED=true`, with configurable LLM tier, initiative
+- **Opt-in** via `PACOMIND_EXECUTOR_ENABLED=true`, with configurable LLM tier, initiative
   types, cycle interval, and concurrency. Stats via `/v1/host/health` notes and
   `/v1/host/executor/status`.
 - **CI:** auth-coverage test walks the nested route tree and is compatible with
@@ -1986,27 +1994,27 @@ them, execute actions, and report results back to the store.
 
 Two steps toward zero-setup autonomy delivery (the first shipped untagged as v0.21.31):
 
-- **`colony-agent-bridge` console script:** one long-running daemon replaces the three
+- **`pacomind-agent-bridge` console script:** one long-running daemon replaces the three
   separate cron scripts (initiative-poller, queue-worker, skills-sync) and adds circuit
   health monitoring that catches silent failures — sidecar unreachable, autonomy loop
   stuck, initiatives never executed, jobs stuck in queue. `--once` for cron, `--dry-run`
   for validation; stdlib-only.
 - **Built-in AgentBridgeService:** an internal async service that closes the same circuit
   with no platform-specific setup at all (no cron, no LaunchAgent, no systemd). Auto-starts
-  at sidecar boot when `COLONY_BRIDGE_WEBHOOK_URL` is set, accessing the initiative store
+  at sidecar boot when `PACOMIND_BRIDGE_WEBHOOK_URL` is set, accessing the initiative store
   and task queue directly. Stats via `/v1/host/health` notes and `/v1/host/bridge/status`.
 
 ## v0.21.30 — official Hermes plugin moves into the repo (generic adapter)
 
-The Hermes "colony" plugin now lives in this repo at `plugins/hermes-plugin/` [corrected:
-this entry originally said `integrations/hermes/colony/`, which never existed] as the
+The Hermes "pacomind" plugin now lives in this repo at `plugins/hermes-plugin/` [corrected:
+this entry originally said `integrations/hermes/pacomind/`, which never existed] as the
 official, deployment-agnostic adapter, co-located with the API it calls so their contract
 can't silently drift.
 
-- **Generic plugin** (tools, ColonyClient, event subscriber, slash commands, hooks, autonomy
+- **Generic plugin** (tools, PacoMindClient, event subscriber, slash commands, hooks, autonomy
   bridge). All owner/persona specifics are removed: the autonomy bridge ships a generic
-  default prompt and reads `plugins.colony.autonomy_prompt` (inline or file path) +
-  `plugins.colony.autonomy_deliver` from Hermes config, so a deployment injects its persona
+  default prompt and reads `plugins.pacomind.autonomy_prompt` (inline or file path) +
+  `plugins.pacomind.autonomy_deliver` from Hermes config, so a deployment injects its persona
   and channel without touching the core.
 - **Contract test** (`tests/test_hermes_plugin_contract.py`): auto-discovers every
   `/v1/host/...` path the plugin references and asserts each is a registered route across the
@@ -2035,7 +2043,7 @@ saturates the per-cycle initiative cap they were generated but always cut. Verif
 loop reported "20 new proposals" every cycle and the intro never surfaced.
 
 - **Bounded social headroom:** the initiative cap now tops up to `_INTRO_HEADROOM`
-  (`COLONY_INTRO_HEADROOM`, default 2) introduction proposals from the cut tail, so an
+  (`PACOMIND_INTRO_HEADROOM`, default 2) introduction proposals from the cut tail, so an
   operational backlog can't permanently starve them. Owed deliverables remain unbounded.
 - **Refactor:** the cap + starvation guards moved into a testable `_apply_cap()` helper
   (behaviour unchanged for the deliverable exemption).
@@ -2056,7 +2064,7 @@ auto-executes it.
   "related work" signal) where BOTH sit at/above a trust floor; excludes the owner and soft-deleted
   contacts. Deployment-agnostic (pure contacts SQL, no graph dependency).
 - **Autonomy feed:** `_feed_introduction_candidates()` runs in the initiative phase, gated by
-  `COLONY_INTROS_ENABLED` (default true) with `COLONY_INTRO_TRUST_FLOOR` (default `regular`). Owner
+  `PACOMIND_INTROS_ENABLED` (default true) with `PACOMIND_INTRO_TRUST_FLOOR` (default `regular`). Owner
   exclusion fails closed.
 
 ## v0.21.26 — introduction capture (social-graph autonomy, Slice 1)
@@ -2085,7 +2093,7 @@ The `/health` endpoint flagged `prefetch` stale at 2h and forced the whole syste
 by inbound conversation turns — so any normal quiet period (overnight, focus time) tripped it.
 That both cried wolf and masked real degradation.
 
-- **Prefetch staleness threshold 2h → 24h** (`COLONY_STALE_PREFETCH_HOURS` default), matching
+- **Prefetch staleness threshold 2h → 24h** (`PACOMIND_STALE_PREFETCH_HOURS` default), matching
   the agent-snapshot views. 24h means "the host has not requested context in a full day" — the
   point where idle becomes a genuine integration-down signal. Internal-loop metrics (sync 2h,
   tick 24h, initiative 48h) are unchanged, so a stuck loop is still caught.
@@ -2147,8 +2155,8 @@ against a configured local LLM and records commitments directly — the path tha
 deployments where no host plugin consumes the `cognition.requested` event.
 
 - **Inline introspection** (`cognition/introspection.py`): on `/turns/sync`, when
-  `COLONY_INTROSPECT_ENABLED=true`, the sidecar judges the turn with an OpenAI-compatible
-  endpoint (`COLONY_INTROSPECT_BASE_URL` / `_MODEL` / `_API_KEY`) and records any durable
+  `PACOMIND_INTROSPECT_ENABLED=true`, the sidecar judges the turn with an OpenAI-compatible
+  endpoint (`PACOMIND_INTROSPECT_BASE_URL` / `_MODEL` / `_API_KEY`) and records any durable
   commitment or immediate owed deliverable directly via the commitment store. A focused,
   JSON-only few-shot prompt (so small/no-think local models comply). Disabled by default;
   deployment-agnostic.
@@ -2185,10 +2193,10 @@ off-box over an OpenAI/Jina-compatible `/v1/rerank` endpoint, the same way the
 embedder is served.
 
 - **Remote reranker:** new `openai_api` path in the reranker init. Set
-  `COLONY_RERANKER_PROVIDER=openai_api`, `COLONY_RERANKER_BASE_URL`,
-  `COLONY_RERANKER_API_KEY`, and `COLONY_RERANKER_MODEL`; without these env
+  `PACOMIND_RERANKER_PROVIDER=openai_api`, `PACOMIND_RERANKER_BASE_URL`,
+  `PACOMIND_RERANKER_API_KEY`, and `PACOMIND_RERANKER_MODEL`; without these env
   vars the local MLX/CUDA/CPU path is unchanged.
-- **Qwen3-Reranker correctness:** `COLONY_RERANKER_PROMPT_STYLE=qwen3` wraps
+- **Qwen3-Reranker correctness:** `PACOMIND_RERANKER_PROMPT_STYLE=qwen3` wraps
   rerank requests in the model's instruction template. Qwen3-Reranker scores
   from yes/no token logits that are only calibrated under that template —
   vLLM's `/v1/rerank` does not apply it server-side, and raw strings rank
@@ -2232,7 +2240,7 @@ refreshes the PyPI project page with the polished README.
 - **Commitments:** persist `due_at` as canonical UTC ISO so overdue detection (a
   string comparison) is reliable; mixed naive/offset values had broken it.
 - **Security:** the sidecar fails closed when bound to a non-loopback address with
-  no `COLONY_API_KEY` instead of serving open with only a warning; adds an auth
+  no `PACOMIND_API_KEY` instead of serving open with only a warning; adds an auth
   test over the full route table.
 - **Briefings:** reuse one shared async bridge pool instead of creating an
   executor per aggregator call.
@@ -2241,9 +2249,9 @@ refreshes the PyPI project page with the polished README.
 
 ## v0.21.1 — memory reliability + recall quality
 
-Fixes that make Colony memory production-reliable:
+Fixes that make PacoMind memory production-reliable:
 - **Recall quality**: embed retrieval queries with the asymmetric Qwen3 instruction
-  prefix (configurable via COLONY_EMBED_QUERY_INSTRUCTION). Without it, vector
+  prefix (configurable via PACOMIND_EMBED_QUERY_INSTRUCTION). Without it, vector
   retrieval was near-random (~0.9 cosine distance on everything) and the right
   memory never surfaced; with it, the correct memory ranks first.
 - **No silent memory loss**: refuse to store a memory when an embedding was
@@ -2262,43 +2270,43 @@ the pip package, the wizard schedules them, and the doctor detects when
 the queue worker is missing.
 
 ### Added
-- **`colony_sidecar.workers` package** (stdlib-only): the queue-worker
+- **`pacomind.workers` package** (stdlib-only): the queue-worker
   and skills-sync logic moved out of the loose
   `plugins/hermes-plugin/poller/` scripts into
-  `colony_sidecar.workers.queue_worker` / `.skills_sync`, shipped as the
-  `colony-queue-worker` and `colony-skills-sync` console scripts
+  `pacomind.workers.queue_worker` / `.skills_sync`, shipped as the
+  `pacomind-queue-worker` and `pacomind-skills-sync` console scripts
   (same env vars and behavior; both support `--dry-run`). The old
   script paths remain as thin back-compat wrappers (import-and-call
   with a repo-relative `sys.path` fallback).
-- **Wizard Step 10e "Scheduled agent workers"** (`colony init`,
+- **Wizard Step 10e "Scheduled agent workers"** (`pacomind init`,
   idempotent on re-run): asks whether the agent lives on this machine
   and installs crontab entries on macOS/Linux — `*/5 * * * *`
   queue worker + `0 9 * * *` skills sync, sourcing the wizard's `.env`
-  (`set -a`), logging to `$COLONY_HOME/logs/cron-<name>.log`. Merges
+  (`set -a`), logging to `$PACOMIND_HOME/logs/cron-<name>.log`. Merges
   with the existing crontab (never duplicates a worker referenced in
   either console-script or `python -m` form); prints the exact lines
   for manual install when declined or crontab is unavailable.
-- **`colony doctor` `server-worker-liveness` check**: WARNs when any
+- **`pacomind doctor` `server-worker-liveness` check**: WARNs when any
   QUEUED `agent_action` job is older than 15 minutes (queue worker
   appears absent — auto-approved jobs would sit QUEUED forever), with
   the cron-install remedy. Uses the existing authed
   `/v1/host/queue/jobs/pending` surface; skips when the sidecar or
   task queue is down. Skill-staleness remedies now point at the
-  `colony-skills-sync` console command.
+  `pacomind-skills-sync` console command.
 
 ## 0.19.0 (2026-06-10)
 
 Setup catches up with autonomy: the wizard configures the v0.16-v0.18
-surface, and `colony doctor` becomes a real configuration diagnostic.
+surface, and `pacomind doctor` becomes a real configuration diagnostic.
 
 ### Added
-- **Wizard Step 8 "Autonomy & approvals"** (`colony init`, idempotent on
+- **Wizard Step 8 "Autonomy & approvals"** (`pacomind init`, idempotent on
   re-run): owner contact creation written directly into the contact
-  store (+ `COLONY_OWNER_CONTACT_ID`), plain-language strict/graduated
+  store (+ `PACOMIND_OWNER_CONTACT_ID`), plain-language strict/graduated
   approval-policy choice, internal-thinking and skill-synthesis toggles,
   home-channel selection. The wizard now ends with a doctor pass
   (Step 12).
-- **`colony doctor` rebuilt as a config-aware check engine** (19 checks,
+- **`pacomind doctor` rebuilt as a config-aware check engine** (19 checks,
   `--json`, exit codes): every production footgun is detected with an
   exact remedy — LLM baseUrl missing `/v1` (the silent
   "all tiers exhausted" cognition killer), empty apiKey, `:memory:`
@@ -2320,10 +2328,10 @@ surface, and `colony doctor` becomes a real configuration diagnostic.
 ## 0.18.0 (2026-06-10)
 
 Graduated approvals (the owner only hears about destructive actions and
-unauthorized outreach) + the Hermes↔Colony skills bridge.
+unauthorized outreach) + the Hermes↔PacoMind skills bridge.
 
 ### Added
-- **Graduated approval policy** (`COLONY_APPROVAL_POLICY=graduated`;
+- **Graduated approval policy** (`PACOMIND_APPROVAL_POLICY=graduated`;
   default remains `strict` = v0.17 behavior). Under graduated: read-only
   and reversible-mutating actions auto-execute with an audit trail
   (`auto_approved_by_policy` job tags + `action_auto_approved` events);
@@ -2333,13 +2341,13 @@ unauthorized outreach) + the Hermes↔Colony skills bridge.
   contact with `interaction_allowed` — unknown targets fail closed.
 - **Standing approvals** — approve a blocked job with `{"always": true}`
   and that action class is pre-authorized from then on (per-action-class
-  approval records, persisted at `$COLONY_STATE_DIR/standing_approvals.json`;
+  approval records, persisted at `$PACOMIND_STATE_DIR/standing_approvals.json`;
   `GET /v1/host/queue/approvals/standing`, `DELETE .../{action_name}`).
 - **Hermes skill export** — approving a captured procedural skill also
-  renders a Hermes-format `SKILL.md` into `COLONY_HERMES_SKILLS_DIR`
-  (default `~/.hermes/skills/colony`), with provenance frontmatter and a
-  no-overwrite guard for non-Colony files. Gate:
-  `COLONY_EMIT_HERMES_SKILLS` (default off).
+  renders a Hermes-format `SKILL.md` into `PACOMIND_HERMES_SKILLS_DIR`
+  (default `~/.hermes/skills/pacomind`), with provenance frontmatter and a
+  no-overwrite guard for non-PacoMind files. Gate:
+  `PACOMIND_EMIT_HERMES_SKILLS` (default off).
 - **Agent skill-index sync** — the OpenClaw plugin scans the Hermes
   skills directory (startup + daily) and reports it into the new
   push-only `skills` observation domain; the self-directed thinking
@@ -2355,13 +2363,13 @@ unauthorized outreach) + the Hermes↔Colony skills bridge.
 
 ## 0.17.0 (2026-06-10)
 
-The autonomous engine: Colony now thinks, acts behind an enforceable
+The autonomous engine: PacoMind now thinks, acts behind an enforceable
 approval gate, and learns from what its agent does.
 
 ### Added
 - **Self-directed thinking (Phase 5b)** — on a slow cadence
-  (`COLONY_THINKING_INTERVAL_SECS`, default 1h; gated by
-  `COLONY_ENABLE_INTERNAL_THINKING`, default off) the autonomy loop hands
+  (`PACOMIND_THINKING_INTERVAL_SECS`, default 1h; gated by
+  `PACOMIND_ENABLE_INTERNAL_THINKING`, default off) the autonomy loop hands
   the LLM a situation report (goals, pending work, commitments, current
   initiatives) and lets it propose novel initiatives. Proposals are
   priority-capped (0.85), deduped across cycles, and can never carry an
@@ -2373,13 +2381,13 @@ approval gate, and learns from what its agent does.
   hand out blocked jobs; `GET /v1/host/queue/jobs/blocked`,
   `POST /v1/host/queue/jobs/{id}/approve`, `POST .../reject` (409 on
   non-blocked); initiative responses sync to the linked job; stale
-  approvals auto-fail after `COLONY_APPROVAL_TIMEOUT_HOURS` (72).
+  approvals auto-fail after `PACOMIND_APPROVAL_TIMEOUT_HOURS` (72).
 - **Job-completion memory writeback (Phase 6c)** — completed/failed
-  agent jobs become episodic memories (`source_uri colony://jobs/{id}`),
+  agent jobs become episodic memories (`source_uri pacomind://jobs/{id}`),
   advance their goals (`goals.on_job_completed` existed since v0.13 but
   was never called), close their linked initiatives, and broadcast
   events. Idempotent via the `memory_synced` job tag.
-- **Skill capture** (`COLONY_ENABLE_SKILL_SYNTHESIS`, default off) —
+- **Skill capture** (`PACOMIND_ENABLE_SKILL_SYNTHESIS`, default off) —
   successful novel agent work flows through the existing-but-dormant
   learning pipeline (novelty gate → pattern extraction → DRAFT skill
   package). Captured skills are DRAFT with deny-by-default capabilities
@@ -2391,8 +2399,8 @@ approval gate, and learns from what its agent does.
 ### Fixed
 - **Contact store now persists** — the server built it with the default
   `sqlite_path=":memory:"`, wiping all contacts (including the owner)
-  on every restart. Now resolves `COLONY_CONTACTS_DB` or
-  `$COLONY_STATE_DIR/colony-contacts.db`.
+  on every restart. Now resolves `PACOMIND_CONTACTS_DB` or
+  `$PACOMIND_STATE_DIR/pacomind-contacts.db`.
 - **contact_handles gateway constraint** — whatsapp/discord/slack were
   deliverable channels but unstorable handles.
 - Capability-gap / knowledge-acquisition / behavioral-correction
@@ -2409,12 +2417,12 @@ approval gate, and learns from what its agent does.
 Initiative pipeline fixes + autonomous work engine foundations.
 
 ### Fixed
-- **Remote embedding via `COLONY_EMBED_PROVIDER=openai_api` actually works** — the text-only startup path never called `provider.configure()`, leaving base_url/api_key empty; and the request payload always sent `dimensions`, which vllm rejects (HTTP 400) for non-matryoshka models such as Qwen3-Embedding-8B. Running in production against a remote CUDA endpoint since 2026-06-10 (parity cosine >0.9998 vs the native-MLX path).
+- **Remote embedding via `PACOMIND_EMBED_PROVIDER=openai_api` actually works** — the text-only startup path never called `provider.configure()`, leaving base_url/api_key empty; and the request payload always sent `dimensions`, which vllm rejects (HTTP 400) for non-matryoshka models such as Qwen3-Embedding-8B. Running in production against a remote CUDA endpoint since 2026-06-10 (parity cosine >0.9998 vs the native-MLX path).
 - **Auth middleware accepts `X-API-Key`** — the initiative poller and the new queue worker authenticate with `X-API-Key` (and advertise that header to agents in job payloads), but the middleware only honored `Authorization: Bearer`, so on keyed deployments every poller/worker call returned 401. Either header is now accepted with the same constant-time comparison.
 - **Initiative API: title is the action, not the reason** — serializer used `rationale` ("No contact for 14 days") as the title instead of `description` ("Check in with Jordan Example"). Rationale now travels inside the context dict.
 - **Initiative API: `entity_id` exposed** — the subject of an initiative (person, PR, commitment) is now returned; `target_agent_id` is populated from assignment instead of hardcoded `null`. Subject and executor stay distinct fields.
 - **Initiative API: context no longer empty** — the autonomy loop's per-initiative context snapshot is persisted to a new `context` column (idempotent migration; pre-migration rows return `{}`) and returned over the REST API, stamped with `context_captured_at`.
-- **Owner self-initiative filter** — replaced the broken `COLONY_HOST_CONTACT_ID`/`"owner"`-default equality check with an `IdentityResolver` backed by the contact store (CID ↔ Neo4j Person UUID ↔ display name ↔ handles). `COLONY_OWNER_CONTACT_ID` is canonical (legacy var still honored with a deprecation warning). Missing/unresolvable owner now fails **closed** (CRITICAL log, relationship generation disabled) instead of open. Filter is scoped to relationship generators only — the owner remains a valid subject for commitment/calendar/agent-action work.
+- **Owner self-initiative filter** — replaced the broken `PACOMIND_HOST_CONTACT_ID`/`"owner"`-default equality check with an `IdentityResolver` backed by the contact store (CID ↔ Neo4j Person UUID ↔ display name ↔ handles). `PACOMIND_OWNER_CONTACT_ID` is canonical (legacy var still honored with a deprecation warning). Missing/unresolvable owner now fails **closed** (CRITICAL log, relationship generation disabled) instead of open. Filter is scoped to relationship generators only — the owner remains a valid subject for commitment/calendar/agent-action work.
 - **`InitiativeResponse.status`** accepted `"in_progress"` but not `"assigned"`, breaking serialization of assigned initiatives.
 - **`POST /initiatives`** dropped the request `context`, lacked `entity_id`, and stored the 0–100 priority unscaled (clamping everything to 100).
 
@@ -2425,12 +2433,12 @@ Initiative pipeline fixes + autonomous work engine foundations.
 - **Per-entity context refresh** — `POST /v1/host/initiatives/{id}/context/refresh` routes to `engine.rebuild_context()` (relationship and commitment rebuilders shipped; volatile types without a rebuilder return 501 instead of stale data).
 - **New initiative types** — `COMMITMENT`, `CALENDAR`, `RESEARCH`, `TASK`, `PROJECT`, `SYSTEM` join the existing 12.
 - **COMMITMENT generator** — commitments surface as first-class durable initiatives (`dedup_key=commitment:{id}`, overdue escalation) instead of anonymous scheduling opportunities.
-- **Agent-as-sensor loop** — Colony never calls external APIs; the agent observes through its own Hermes connections and reports back:
+- **Agent-as-sensor loop** — PacoMind never calls external APIs; the agent observes through its own Hermes connections and reports back:
   - Observation store (`observations/`) + ingestion API (`POST/GET /v1/host/observations`) across six domains (coding, task, calendar, research, project, system)
-  - Autonomy loop posts read-only `agent_sync_<domain>` jobs to the task queue when a domain's observations go stale (`COLONY_SYNC_DOMAINS` scopes it)
+  - Autonomy loop posts read-only `agent_sync_<domain>` jobs to the task queue when a domain's observations go stale (`PACOMIND_SYNC_DOMAINS` scopes it)
   - Six observation-backed generators: failing-CI/review-requested PRs, stale tasks, events starting within 24h, unchecked research, milestones due with open work, unhealthy services
   - Volatile auto-close: `POST /initiatives/{id}/context/refresh` cancels initiatives whose condition has cleared (CI green, service recovered) with `stale_reason="condition_cleared"`
-  - Hermes plugin: `colony-queue-worker.py` claims agent jobs and hands them to the agent via the new `colony-jobs` webhook route with curl-able lifecycle URLs
+  - Hermes plugin: `pacomind-queue-worker.py` claims agent jobs and hands them to the agent via the new `pacomind-jobs` webhook route with curl-able lifecycle URLs
 - **Agent-brain framing sweep** — `notify_user` defaults replaced with `review_and_decide` (regression-tested); relationship hint changed to `evaluate_relationship`; webhook prompts rewritten around five agent decision verbs (execute/snooze/dismiss/communicate/request-approval).
 
 ## 0.15.1 (2026-05-23)
@@ -2492,7 +2500,7 @@ Memory governance & epistemic hygiene — source anchoring, confidence computati
 Audit-driven hardening — graph schema, silent-failure logging, stale-comment cleanup.
 
 ### Fixed
-- **Graph schema migrations now run on startup** — `run_migrations()` applied after `ColonyGraph` init so constraints/indexes exist before any queries execute
+- **Graph schema migrations now run on startup** — `run_migrations()` applied after `PacoMindGraph` init so constraints/indexes exist before any queries execute
 - **Timezone crash in goal completion** — `goals/store.py` `_parse_dt()` normalizes all datetimes to UTC, preventing `TypeError: can't compare offset-naive and offset-aware datetimes`
 - **WebSearchTool startup failure** — removed invalid `graph_client=` kwarg from constructor call in `reasoning/executor.py`
 - **SkillRegistry startup failure** — corrected constructor call (removed legacy `db_path=` and `.open()`)
@@ -2515,7 +2523,7 @@ Session context architecture — cross-session state bridge for agent continuity
   - `AgentSnapshotSystemState` schema — autonomy mode, running status, last tick age, stale flags
   - `ContextDigestSessionReport` schema — lightweight session summaries for agent context window
 - **`proactive_delivery_enabled` config flag** — gates all `push_initiative()` calls; defaults to `False` for backward compatibility
-  - Env var: `COLONY_PROACTIVE_DELIVERY_ENABLED`
+  - Env var: `PACOMIND_PROACTIVE_DELIVERY_ENABLED`
 - **`last_agent_outreach_at` telemetry field** — renamed from the agent-specific name for generic agent support
 
 ### Changed
@@ -2529,11 +2537,11 @@ Session context architecture — cross-session state bridge for agent continuity
 
 ## 0.13.0 (2026-05-21)
 
-Agent heartbeat and snapshot endpoints. Colony exposes state; the agent decides when to communicate.
+Agent heartbeat and snapshot endpoints. PacoMind exposes state; the agent decides when to communicate.
 
 ### Added
 - **Agent Snapshot API** (`/v1/host/agent-snapshot`):
-  - `GET /agent-snapshot` — comprehensive Colony state snapshot for agent evaluation
+  - `GET /agent-snapshot` — comprehensive PacoMind state snapshot for agent evaluation
     - Telemetry with silence hours and stale flags
     - Pending initiatives (top 20), recently completed (top 10), failed (top 10)
     - Autonomy mode, running status, last tick age
@@ -2545,7 +2553,7 @@ Agent heartbeat and snapshot endpoints. Colony exposes state; the agent decides 
 
 ### Changed
 - Replaces `OwnerCheckInTask` (removed in v0.12.1) with a state-exposure model
-- Colony never messages the owner directly; the agent evaluates the snapshot and decides on outreach
+- PacoMind never messages the owner directly; the agent evaluates the snapshot and decides on outreach
 
 ### Fixed
 - `silence_hours` null handling in flag computation (`None > 4` TypeError on fresh telemetry)
@@ -2565,12 +2573,12 @@ Agent work queue v0.13.0 — distributed job scheduling for autonomous agent exe
   - Safety: skips destructive actions when owner is in active session
   - Handles `agent_check_repo_status`, `agent_investigate_subsystem`, `agent_cleanup_orphans`
   - Graceful shutdown with SIGTERM/SIGINT deregistration
-- **Digest script** (`scripts/digest.py`) — generates Colony Digest initiative from completed/failed jobs
+- **Digest script** (`scripts/digest.py`) — generates PacoMind Digest initiative from completed/failed jobs
 - **Loop integration** — `_post_agent_action_to_queue()` routes `AGENT_ACTION` initiatives to task queue instead of delivery bridge
   - Destructive actions posted as `BLOCKED` with approval fallback to delivery bridge
   - Non-destructive actions posted as `QUEUED` for immediate worker claiming
 - **Initiative engine** — `_generate_agent_action_initiatives()` with 4h cooldown and dedup keys
-- **Provider schema** — `colony_claim_task` tool exposed to LLM with `worker_id` and `capabilities` params
+- **Provider schema** — `pacomind_claim_task` tool exposed to LLM with `worker_id` and `capabilities` params
 - **`job_id` field** on Initiative model + store updatable column for task-queue linkage
 
 ### Fixed
@@ -2583,7 +2591,7 @@ Agent work queue v0.13.0 — distributed job scheduling for autonomous agent exe
   - `queue_stats` called non-existent `queue.stats()`
   - `get_digest_jobs` referenced non-existent `completed_at` SQL column
   - Missing `/start` and `/release` endpoints
-  - `colony_claim_task` tool schema had empty properties
+  - `pacomind_claim_task` tool schema had empty properties
   - Skipped jobs stayed `CLAIMED` instead of returning to `QUEUED`
   - `repo_status` initiative generated every tick (no cooldown)
 
@@ -2614,10 +2622,10 @@ Silence-triggered owner check-in and telemetry fix.
 
 ### Added
 - **Owner Check-In scheduler task** — detects when the autonomy loop has not generated an initiative for a configurable period (default: 1 hour), then emits a `proactive_message` initiative asking the owner if anything is needed
-  - `OwnerCheckInTask` with file-backed persistence (`~/.colony/data/autonomy_checkin.json`) so state survives restarts
-  - Owner resolution: config override (`COLONY_OWNER_CONTACT_ID`) → identity manager → highest-scored non-stranger contact
+  - `OwnerCheckInTask` with file-backed persistence (`~/.pacomind/data/autonomy_checkin.json`) so state survives restarts
+  - Owner resolution: config override (`PACOMIND_OWNER_CONTACT_ID`) → identity manager → highest-scored non-stranger contact
   - Safety guards: quiet hours (23:00–07:00), cooldown (default 4h), disabled if telemetry missing
-  - Configurable via `COLONY_OWNER_CHECK_IN_ENABLED`, `COLONY_OWNER_CHECK_IN_SILENT_HOURS`, `COLONY_OWNER_CHECK_IN_COOLDOWN_HOURS`
+  - Configurable via `PACOMIND_OWNER_CHECK_IN_ENABLED`, `PACOMIND_OWNER_CHECK_IN_SILENT_HOURS`, `PACOMIND_OWNER_CHECK_IN_COOLDOWN_HOURS`
   - Runs as a scheduler task independent of the autonomy loop tick interval
 
 ### Fixed
@@ -2631,7 +2639,7 @@ Anti-spam initiative delivery and autonomy pipeline spec.
 - **Initiative dedup reactivation** — only FAILED initiatives are reactivated on duplicate `dedup_key`. Completed and cancelled initiatives stay terminal, eliminating infinite-loop follow-up spam.
 
 ### Added
-- **`plugins/hermes-plugin/examples/colony-initiative-poller.py`** — production poller with `dedup_key` tracking, `delivery_context` injection, and env-var configuration.
+- **`plugins/hermes-plugin/examples/pacomind-initiative-poller.py`** — production poller with `dedup_key` tracking, `delivery_context` injection, and env-var configuration.
 - **`plugins/hermes-plugin/examples/hook-handler.py`** — example Hermes hook handler with nested payload support.
 
 
@@ -2647,9 +2655,9 @@ Initiative dedup fix and Hermes turns/sync telemetry.
 - **Autonomy follow-up generator** now handles `priority=None` gracefully.
 
 ### Added
-- **ColonyClient.sync_turn()** — POSTs session summaries to `/v1/host/turns/sync`.
+- **PacoMindClient.sync_turn()** — POSTs session summaries to `/v1/host/turns/sync`.
 - **`agent:start` hook** in the Hermes plugin captures `session_id` for cross-turn state.
-- **`on_session_end` hook** extracts last user/assistant messages and syncs them to Colony automatically.
+- **`on_session_end` hook** extracts last user/assistant messages and syncs them to PacoMind automatically.
 - Zero Hermes core patches required — all telemetry is plugin-side.
 
 ## 0.7.21 (2026-05-12)
@@ -2695,12 +2703,12 @@ Native MLX embedding and reranker providers for Apple Silicon.
 Hermes integration suite, autonomy bridge, and initiative engine hardening.
 
 ### Added
-- **Colony-Hermes integration suite** — full plugin for Hermes agent context injection
+- **PacoMind-Hermes integration suite** — full plugin for Hermes agent context injection
   - Graph memory MCP server with Neo4j-backed entity/relationship queries
   - Contact reminders via Hermes todo system with neglected-contact detection
   - Context assembly endpoint for agent prompt enrichment
-  - Setup wizard (`colony setup --hermes`) for one-command installation
-- **Colony autonomy bridge** — Hermes-native initiative tools
+  - Setup wizard (`pacomind setup --hermes`) for one-command installation
+- **PacoMind autonomy bridge** — Hermes-native initiative tools
   - `initiatives_list` tool for querying pending initiatives
   - `initiative_acknowledge` / `initiative_complete` / `initiative_snooze` lifecycle tools
   - `autonomy_cycle` tool for triggering reactive autonomy ticks
@@ -2755,7 +2763,7 @@ Initiative engine graph context loading and comprehensive bug fixes.
 ### Added
 - `InitiativeEngine._load_graph_context()` — automatic graph + mind model queries before generation
 - Graph loaders: `_load_blocked_goals()`, `_load_neglected_contacts()`, `_load_health_trends()`, `_load_scheduling_opportunities()`, `_load_pending_signals()`, `_load_pending_research_tasks()`
-- `InitiativeConfig` dataclass with env var loading (`COLONY_INITIATIVE_*`)
+- `InitiativeConfig` dataclass with env var loading (`PACOMIND_INITIATIVE_*`)
 - 10-second graph context cache to avoid redundant queries within same tick
 - `clear_context()` resets `_last_graph_load` (Bug 37)
 - Priority blending: graph priority (40%) + time-based priority (60%) for follow-ups (Bug 20)
@@ -2763,7 +2771,7 @@ Initiative engine graph context loading and comprehensive bug fixes.
 - `max_initiatives` parameter to limit output (default 20, Bug 43)
 - In-memory initiative list with 1000-item cap (Bug 36)
 - 38 comprehensive unit tests for initiative generation
-- Environment variables: `COLONY_INITIATIVE_CONTACT_NEGLECT_DAYS`, `COLONY_INITIATIVE_GOAL_BLOCK_DAYS`, `COLONY_INITIATIVE_HEALTH_THRESHOLD`, `COLONY_INITIATIVE_GAP_THRESHOLD`, `COLONY_INITIATIVE_RESEARCH_AGE_DAYS`, `COLONY_INITIATIVE_SIGNAL_THRESHOLD`
+- Environment variables: `PACOMIND_INITIATIVE_CONTACT_NEGLECT_DAYS`, `PACOMIND_INITIATIVE_GOAL_BLOCK_DAYS`, `PACOMIND_INITIATIVE_HEALTH_THRESHOLD`, `PACOMIND_INITIATIVE_GAP_THRESHOLD`, `PACOMIND_INITIATIVE_RESEARCH_AGE_DAYS`, `PACOMIND_INITIATIVE_SIGNAL_THRESHOLD`
 
 ### Fixed
 - **Critical**: `mark_initiative_generated()` now called for ALL initiatives inside persistence loop (Bug 11)
@@ -2795,13 +2803,13 @@ Initiative deduplication and LLM feedback loop.
 - `GoalStore.complete_task()`, `snooze_task()`, `dismiss_task()`, `get_active_tasks()`, `mark_initiative_generated()`
 - Snooze fatigue: auto-dismiss after 3 snoozes
 - Initiative engine dedup via GoalStore cooldown (no in-memory state, persists across restarts)
-- MCP tools: `colony_task_complete`, `colony_task_snooze`, `colony_task_dismiss`, `colony_initiative_feedback`
+- MCP tools: `pacomind_task_complete`, `pacomind_task_snooze`, `pacomind_task_dismiss`, `pacomind_initiative_feedback`
 - API endpoints: `/tasks/{id}/complete`, `/tasks/{id}/snooze`, `/tasks/{id}/dismiss`, `/initiatives/{id}/respond`
 - Native tool definitions for task management in `tools/definitions.py`
 - `InitiativeConfig` dataclass with configurable cooldowns
 - `entity_type` field in initiative payload
 - Action hints in `formatInitiativeText()` for LLM task management
-- Environment variables: `COLONY_INITIATIVE_COOLDOWN_TASKS` (default 12h), `COLONY_INITIATIVE_COOLDOWN_CONTACTS` (default 72h)
+- Environment variables: `PACOMIND_INITIATIVE_COOLDOWN_TASKS` (default 12h), `PACOMIND_INITIATIVE_COOLDOWN_CONTACTS` (default 72h)
 
 ### Changed
 - `_feed_pending_tasks()` now uses `get_active_tasks()` with cooldown awareness
@@ -2812,7 +2820,7 @@ Initiative deduplication and LLM feedback loop.
 Fixed port conflict handling in foreground mode.
 
 ### Fixed
-- Foreground mode (`colony start`) now checks if port is in use before starting
+- Foreground mode (`pacomind start`) now checks if port is in use before starting
 - Exits with error if port occupied, with helpful message
 - `--force` flag works in both foreground and daemon modes to kill existing process
 
@@ -2841,7 +2849,7 @@ Harness integration refactor with new CLI flags.
 - `_show_openclaw_install_instructions()` - platform-specific install guide
 
 ### Fixed
-- Colony can now run completely standalone with no harness
+- PacoMind can now run completely standalone with no harness
 - Better guidance when harness not installed
 
 ## 0.6.19 (2026-04-23)
@@ -2857,7 +2865,7 @@ Fixed crash in wizard plugin setup.
 Wizard now uses `openclaw plugins install` for proper plugin registration.
 
 ### Changed
-- Use `openclaw plugins install @aevonix/colonyai` instead of `npm install -g`
+- Use `openclaw plugins install @aevonix/pacomind` instead of `npm install -g`
 - Check if plugin is already installed before reinstalling
 - Prompt to restart gateway after plugin install
 - Better error messages for permission/network failures
@@ -2893,8 +2901,8 @@ Improved OpenClaw plugin installation with better error handling.
 Fix: OpenClaw plugin auto-install via npm.
 
 ### Fixed
-- Wizard now checks if `@aevonix/colonyai` is installed globally
-- Auto-installs via `npm install -g @aevonix/colonyai` if missing
+- Wizard now checks if `@aevonix/pacomind` is installed globally
+- Auto-installs via `npm install -g @aevonix/pacomind` if missing
 - Better error messages when config settings fail
 
 ## 0.6.13 (2026-04-23)
@@ -2904,7 +2912,7 @@ Neo4j health check system with auto-recovery.
 ### New
 - `_neo4j_health_check()`: Connect + auth + query verification
 - `_neo4j_poll_health()`: Poll with timeout and progress messages
-- `COLONY_NEO4J_STARTUP_TIMEOUT` env var (default 30s)
+- `PACOMIND_NEO4J_STARTUP_TIMEOUT` env var (default 30s)
 
 ### Fixed
 - Neo4j now verified healthy before sidecar accepts requests
@@ -2924,15 +2932,15 @@ Fix: Neo4j auto-start now works in foreground mode.
 
 ### Fixed
 - Neo4j check moved before detach decision (was only in daemon mode)
-- Works for both `colony start` and `colony start -d`
+- Works for both `pacomind start` and `pacomind start -d`
 
 ## 0.6.11 (2026-04-23)
 
 Fix: Neo4j auto-start and validate EOF.
 
 ### Fixed
-- `colony start` now checks and starts Neo4j container if needed
-- `colony validate` handles EOF gracefully with helpful message
+- `pacomind start` now checks and starts Neo4j container if needed
+- `pacomind validate` handles EOF gracefully with helpful message
 - Neo4j container persisted across sidecar restarts
 
 ## 0.6.10 (2026-04-23)
@@ -2954,7 +2962,7 @@ Wizard fixes: Neo4j docker-run and multimodal EOF.
 
 ## 0.6.8 (2026-04-23)
 
-Colony init wizard: non-interactive mode and all piped input issues fixed.
+PacoMind init wizard: non-interactive mode and all piped input issues fixed.
 
 ### New
 - `--non-interactive` mode for headless/automated setup
@@ -2966,20 +2974,20 @@ Colony init wizard: non-interactive mode and all piped input issues fixed.
 - `--skip-model-download` to defer embedding model download
 - `--start` flag to start sidecar after init
 - `_check_neo4j_auth()` to detect if Neo4j requires authentication
-- `_write_config_yaml()` writes `~/.colony/config.yaml` alongside `.env`
+- `_write_config_yaml()` writes `~/.pacomind/config.yaml` alongside `.env`
 
 ### Fixed
 - Issue 1: `_prompt()` returns default on EOF instead of crashing
 - Issue 2: Tier selection no longer skipped silently when stdin exhausted
-- Issue 3: Config YAML now written to `~/.colony/config.yaml`
+- Issue 3: Config YAML now written to `~/.pacomind/config.yaml`
 - Issue 4: Bind address prompt added (interactive) + CLI args
 - Issue 5: Neo4j auth detection skips password prompt when auth disabled
-- Issue 6: SQLite DBs now stored in `~/.colony/data/` instead of `~/`
+- Issue 6: SQLite DBs now stored in `~/.pacomind/data/` instead of `~/`
 - Issue 8: `--skip-model-download` defers model download to first start
 
 ### Example
 ```bash
-colony init --non-interactive \\
+pacomind init --non-interactive \\
   --host-framework claude-code \\
   --contact-name owner \\
   --bind 0.0.0.0 \\
@@ -2993,10 +3001,10 @@ colony init --non-interactive \\
 Second code audit: MCP contract, Hermes integration, runtime crash, and security fixes.
 
 ### Fixed
-- C1: `colony_get_context` now always sends `incoming_message` (was conditionally omitted → 422)
+- C1: `pacomind_get_context` now always sends `incoming_message` (was conditionally omitted → 422)
 - C2: `TurnSyncRequest` has `user_message`/`assistant_message` fields; sidecar extracts from raw messages
-- C3: YAML harness config uses `${COLONY_API_KEY}` template (was baking raw key to disk)
-- C4: Synthesized skills get `ColonyRuntime` handle injected (was crashing with missing arg)
+- C3: YAML harness config uses `${PACOMIND_API_KEY}` template (was baking raw key to disk)
+- C4: Synthesized skills get `PacoMindRuntime` handle injected (was crashing with missing arg)
 - H1: `cancellation_reason` goes into `metadata` dict (was dropped by Pydantic)
 - H2: `context` param type changed to `dict` (was str → 422)
 - H3: WebSocket `onEvent` wrapped in try/catch (was unguarded → crash propagation)
@@ -3004,12 +3012,12 @@ Second code audit: MCP contract, Hermes integration, runtime crash, and security
 - H5: Initiative IDs use UUID (was collision-prone `hash() % 100000`)
 - H6: `datetime.now(timezone.utc)` everywhere (was mixing naive/aware → TypeError)
 - H7: Sandbox `__import__` wrapped with manifest whitelist enforcement
-- M1: `arousal` param defaults to 0.5 in `colony_record_affect`
-- M2: `expected` param is optional in `colony_record_surprise`
+- M1: `arousal` param defaults to 0.5 in `pacomind_record_affect`
+- M2: `expected` param is optional in `pacomind_record_surprise`
 - M6: `refreshSkillTools` debounced with in-flight promise (was racy)
 
 ### New
-- `sidecar/colony_sidecar/skills/runtime.py` — `ColonyRuntime` class for synthesized skill tool access
+- `sidecar/pacomind/skills/runtime.py` — `PacoMindRuntime` class for synthesized skill tool access
 - `allowed_imports` field on `SkillPermissions` for manifest-declared module whitelist
 
 ## 0.6.2 (2026-04-23)
@@ -3031,17 +3039,17 @@ Code audit fixes from Claude Code security scan.
 
 ## 0.6.1 (2026-04-22)
 
-Colony MCP Server: shared intelligence across agent and coding harnesses.
+PacoMind MCP Server: shared intelligence across agent and coding harnesses.
 
 ### New
 - MCP server exposing 14 tools, 4+ resources, 3 prompts to Claude Code, Codex, and Crush
-- `colony mcp` CLI: run (stdio/HTTP), detect, setup (selective, --dry-run), remove (--dry-run)
+- `pacomind mcp` CLI: run (stdio/HTTP), detect, setup (selective, --dry-run), remove (--dry-run)
 - `/mcp` HTTP endpoint on sidecar for streamable HTTP transport
 - Harness auto-detection (claude, codex, crush CLIs)
 - Selective harness setup: choose which harnesses connect, not all-or-nothing
-- Source tracking via COLONY_MCP_SOURCE env var, auto-injected by MCP server
+- Source tracking via PACOMIND_MCP_SOURCE env var, auto-injected by MCP server
 - Provenance field on all MCP writes (separate from sidecar's source enum)
-- Contact ID required during setup, set via COLONY_MCP_CONTACT_ID
+- Contact ID required during setup, set via PACOMIND_MCP_CONTACT_ID
 - Host framework selection in setup wizard (OpenClaw, Claude Code, Codex, Crush, Standalone)
 - `mcp[cli]>=1.0` as optional dependency
 - 51 MCP unit tests (27 server + 24 config)
@@ -3055,44 +3063,44 @@ Colony MCP Server: shared intelligence across agent and coding harnesses.
 
 New CLI commands for lifecycle management and E2E validation.
 
-- **Added:** `colony start -d` — daemon mode with PID tracking, port conflict detection, auto-kill stale processes
-- **Added:** `colony stop` — clean shutdown (SIGTERM → SIGKILL fallback)
-- **Added:** `colony status` — health check + E2E validation status
-- **Added:** `colony validate` — full pipeline test (seeds data, checks context assembly, optional LLM test)
-- **Added:** E2E validation stamp (`.colony-e2e-validated`) — persists across restarts
-- **Added:** `colony doctor` check #34: E2E pipeline validated
-- **Added:** Validation warnings in `colony status` and `colony start` until E2E is run
-- **Added:** Setup wizard prompts for `colony validate` after setup
-- **Fixed:** EOFError on `colony start -d` when stdin unavailable
+- **Added:** `pacomind start -d` — daemon mode with PID tracking, port conflict detection, auto-kill stale processes
+- **Added:** `pacomind stop` — clean shutdown (SIGTERM → SIGKILL fallback)
+- **Added:** `pacomind status` — health check + E2E validation status
+- **Added:** `pacomind validate` — full pipeline test (seeds data, checks context assembly, optional LLM test)
+- **Added:** E2E validation stamp (`.pacomind-e2e-validated`) — persists across restarts
+- **Added:** `pacomind doctor` check #34: E2E pipeline validated
+- **Added:** Validation warnings in `pacomind status` and `pacomind start` until E2E is run
+- **Added:** Setup wizard prompts for `pacomind validate` after setup
+- **Fixed:** EOFError on `pacomind start -d` when stdin unavailable
 
 ## 0.5.7 (2026-04-22)
 
 Setup wizard bug fixes and gateway restart flow.
 
-- **Fixed:** Neo4j connectivity test in wizard (uses raw driver, not ColonyGraph)
+- **Fixed:** Neo4j connectivity test in wizard (uses raw driver, not PacoMindGraph)
 - **Fixed:** Sidecar auto-start in wizard (writes to log file, start_new_session)
 - **Fixed:** TIER_TABLE → TIERS import (correct export name)
 - **Fixed:** Skip multimodal check when embeddings disabled
 - **Added:** Gateway restart verification — waits for restart, checks plugin loaded
-- **Added:** Warning that Colony won't receive messages until gateway restart
+- **Added:** Warning that PacoMind won't receive messages until gateway restart
 
 ## 0.5.6 (2026-04-22)
 
 Setup wizard fixes for fresh install experience.
 
-- **Added:** "Skip embeddings" option in tier selection (option 3) — Colony runs without vector search
+- **Added:** "Skip embeddings" option in tier selection (option 3) — PacoMind runs without vector search
 - **Fixed:** Sidecar auto-start in wizard now uses uvicorn instead of bare module
 - **Fixed:** ContactsStore init uses correct `sqlite_path` parameter
 - **Fixed:** Neo4j connectivity test uses driver session directly (bypasses query allowlist)
-- **Fixed:** `COLONY_EMBED_PROVIDER=skip` no longer crashes EmbeddingPipeline
-- **Validated:** Full `pip install colonyai` → `colony init` → sidecar start → health=ok flow
+- **Fixed:** `PACOMIND_EMBED_PROVIDER=skip` no longer crashes EmbeddingPipeline
+- **Validated:** Full `pip install pacomind` → `pacomind init` → sidecar start → health=ok flow
 
 ## 0.5.5 (2026-04-22)
 
 Critical packaging and startup fixes.
 
 - **Fixed:** SQL schema files (goals, contacts, task_queue, world_model) missing from pip wheel
-- **Fixed:** `COLONY_EMBED_PROVIDER=skip` now gracefully disables embeddings instead of crashing
+- **Fixed:** `PACOMIND_EMBED_PROVIDER=skip` now gracefully disables embeddings instead of crashing
 - **Fixed:** Affect in context assembly reads `current_valence`/`current_arousal` (AffectStore API)
 - **Fixed:** `build/` directory accidentally committed to git (removed, added to .gitignore)
 - **Added:** `package_data` in pyproject.toml to include SQL/JSON/YAML files in wheel
@@ -3153,7 +3161,7 @@ Neo4j graph database backend for the World Model, plus full CRUD API endpoints.
 - `GET /world/stats` — world model statistics
 
 ### Fixes
-- Default `neo4j_database` changed from `colony` to `neo4j` (Community edition compatibility)
+- Default `neo4j_database` changed from `pacomind` to `neo4j` (Community edition compatibility)
 - Stats query filters NULL entity_types from legacy data
 
 ## 0.5.2 (2026-04-22)
@@ -3175,7 +3183,7 @@ ToM Layer 3: LLM extraction for affect and shared facts.
 - TomExtractor: async LLM-backed extraction from conversation turns
 - Affect extraction: valence/arousal/trigger from conversation text (neutral readings skipped)
 - Fact extraction: knowledge items with source classification
-- Per-contact throttle (5 min default, configurable via COLONY_TOM_EXTRACTION_THROTTLE_MINUTES)
+- Per-contact throttle (5 min default, configurable via PACOMIND_TOM_EXTRACTION_THROTTLE_MINUTES)
 - Auto-fires on turn_sync when LLM router is wired
 - POST /v1/host/tom/extract for manual extraction
 - 21 new unit tests
@@ -3237,8 +3245,8 @@ Cognition substrate, commitment tracking, LLM compression tier 3, and native too
 - Context Assembly: Pending Commitments section (priority 72) injected per contact
 - Cognition Prompt + Trigger: `POST /v1/host/cognition/trigger`, throttle, `cognition.requested` event
 - Trigger Pipeline: turn sync + signal ingest auto-fire cognition triggers (non-blocking)
-- Config: `COLONY_COGNITION_ENABLED` (default false), `COLONY_COGNITION_MODEL`, `COLONY_COGNITION_THROTTLE_SECONDS` (default 30)
-- Config: `COLONY_COMMITMENTS_ENABLED` (default true), `COLONY_COMMITMENT_CHECK_INTERVAL_MINUTES` (default 30)
+- Config: `PACOMIND_COGNITION_ENABLED` (default false), `PACOMIND_COGNITION_MODEL`, `PACOMIND_COGNITION_THROTTLE_SECONDS` (default 30)
+- Config: `PACOMIND_COMMITMENTS_ENABLED` (default true), `PACOMIND_COMMITMENT_CHECK_INTERVAL_MINUTES` (default 30)
 
 ### LLM Compression Tier 3
 - `compress_sections_with_llm()` async wrapper for aggressive mode
@@ -3248,7 +3256,7 @@ Cognition substrate, commitment tracking, LLM compression tier 3, and native too
 ### DIGEST Delivery Channel
 - `build_digest_bundle()`, `consume_digest()`, `flush_digests_to_gateway()`
 - Scheduled daily via autonomy scheduler (configurable interval)
-- Config: `COLONY_DIGEST_HEADER`, `COLONY_DIGEST_INTERVAL_SECONDS` (default 86400)
+- Config: `PACOMIND_DIGEST_HEADER`, `PACOMIND_DIGEST_INTERVAL_SECONDS` (default 86400)
 
 ### LLM Entity Extractor
 - Fallback for ExtractionPipeline when format extractors return nothing
@@ -3269,7 +3277,7 @@ Security hardening, event journal, and adaptive context compression.
 
 ### Security
 - Auth: `hmac.compare_digest` for API key checks (timing-attack resistant)
-- `/v1/host/configure` blocked in dev mode (no COLONY_API_KEY)
+- `/v1/host/configure` blocked in dev mode (no PACOMIND_API_KEY)
 - Body size limit middleware (10MB default, configurable)
 - WebSocket frame size cap (1MB default)
 - Subprocess-isolated skill sandbox with `setrlimit` guards (mem/CPU/fds/nproc)
@@ -3299,7 +3307,7 @@ First release with all adapter shapes matching the real OpenClaw SDK contracts.
 
 ### Adapters
 
-- **MemoryPluginCapability** — `promptBuilder` (auto-inject instructions with citation hints) + `MemoryPluginRuntime` (`ColonyMemorySearchManager` backed by `/v1/host/memory/*` endpoints; `search`, `readFile`, `status`, `sync`, `probeEmbeddingAvailability`, `probeVectorAvailability`). Gated by `ownMemoryCapability` config flag (exclusive slot).
+- **MemoryPluginCapability** — `promptBuilder` (auto-inject instructions with citation hints) + `MemoryPluginRuntime` (`PacoMindMemorySearchManager` backed by `/v1/host/memory/*` endpoints; `search`, `readFile`, `status`, `sync`, `probeEmbeddingAvailability`, `probeVectorAvailability`). Gated by `ownMemoryCapability` config flag (exclusive slot).
 - **MemoryEmbeddingProviderAdapter** — `create()` factory with explicit `{provider: null}` when sidecar has no embedder. `embedQuery`/`embedBatch` delegate to `/v1/host/memory/embed` with 64-input chunking. Errors propagate (no silent zero-vectors).
 - **ContextEngine** — `info` + `ingest` (no-op) + `assemble` (calls `/v1/host/context/assemble`, folds sections into `systemPromptAddition`) + `compact` (delegated to OpenClaw runtime via `delegateCompactionToRuntime`). `ownsCompaction: false`.
 - **AgentHarness** — `supports()` with 3-layer gate (config flag + runtime match + capability probe), `runAttempt()` that never throws (always returns shaped `EmbeddedRunAttemptResult` with `promptError` on failure for harness-fallback routing), `reset` + `dispose` hooks. Currently 501 because reasoning endpoint isn't wired yet (Stage B).
@@ -3309,17 +3317,17 @@ First release with all adapter shapes matching the real OpenClaw SDK contracts.
 
 ### Infrastructure
 
-- `ColonySidecarClient` — typed HTTP/WS client with one method per `/v1/host/*` endpoint, AbortSignal support on `reasoningTurn`, first-message WebSocket auth.
+- `PacoMindSidecarClient` — typed HTTP/WS client with one method per `/v1/host/*` endpoint, AbortSignal support on `reasoningTurn`, first-message WebSocket auth.
 - `capabilityProbe` — single-flight lazy probe with `has()`, `hasProbedSuccessfully()`, `snapshot()` (synchronous accessor for `supports()`), auto-reset on failure.
 - `withDegradation` — shared error taxonomy (501/5xx → fallback, 4xx → re-throw, network → fallback).
-- `ColonyApiError`, `ColonyEmbedUnavailableError` — typed errors.
+- `PacoMindApiError`, `PacoMindEmbedUnavailableError` — typed errors.
 - `summarizeHostEvent` — diagnostic log formatter with safe default (no payload leak on unknown types).
 - Zod-validated config schema with `failSafetyClosed`, `ownMemoryCapability`, `ownReasoningLoop` flags.
 
 ### Tests
 
 - 116 unit tests across 8 test files.
-- 13 integration tests against a live colony-core sidecar (gated by `COLONY_SMOKE_URL` env var).
+- 13 integration tests against a live pacomind-core sidecar (gated by `PACOMIND_SMOKE_URL` env var).
 
 ### Type safety
 
@@ -3334,26 +3342,25 @@ Initial scaffold. Adapter shapes did not match the real SDK contracts. Supersede
 ## 0.1.1 (2026-04-21)
 
 ### Added
-- Context engine slot: `plugins.slots.contextEngine = "colony"` auto-configured by setup wizard and documented in README
-- Setup wizard now starts the sidecar, verifies health, checks LLM credentials, offers gateway restart, and runs `colony doctor`
+- Context engine slot: `plugins.slots.contextEngine = "pacomind"` auto-configured by setup wizard and documented in README
+- Setup wizard now starts the sidecar, verifies health, checks LLM credentials, offers gateway restart, and runs `pacomind doctor`
 - Node.js/npm guard in wizard — warns if missing before attempting plugin build
-- Full identity awareness through Colony's context engine (colony_id, node_id, trust_tier, Genesis status)
+- Full identity awareness through PacoMind's context engine (pacomind_id, node_id, trust_tier, Genesis status)
 - 22 E2E integration tests covering all subsystems (30 passed, 1 skipped in latest run)
 
 ### Changed
 - Naming cleanup: "safety" → "response gate" / "content classifier" across codebase
 - Setup wizard renumbered: 11 steps (was 10), now includes start + verify + doctor
-- README updated to reflect hardened wizard flow — one `colony init` and you're done
+- README updated to reflect hardened wizard flow — one `pacomind init` and you're done
 
 ### Fixed
 - 25+ API router bugfixes (method names, constructors, type coercion, sync/await mismatches)
 - VectorStore wiring: explicit `connect(dimensions)` + `ensure_collections()` after graph init
-- GoalStore persistence: `:memory:` → `colony-goals.db`
+- GoalStore persistence: `:memory:` → `pacomind-goals.db`
 - ResponseGate L1: passes when no session context (direct API calls)
 - API key auth middleware added (was completely missing)
 
 ## 0.1.2 (2026-04-21)
 
 ### Changed
-- Renamed PyPI package from `colony-sidecar` to `colonyai` for naming consistency across all registries
-- Updated README and CONTRIBUTING to reflect `pip install colonyai`
+- Updated README and CONTRIBUTING to reflect `pip install pacomind`

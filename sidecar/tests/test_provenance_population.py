@@ -3,10 +3,10 @@ its conversation context (channel_id), so cross-context leak detection has live 
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.api.schemas.host import (
+from pacomind.api.routers import host as host_mod
+from pacomind.api.schemas.host import (
     HostIdentity, HostMessage, HostTurnContext, TurnSyncRequest)
-from apsimo.gate.context_provenance import ContextProvenanceStore
+from pacomind.gate.context_provenance import ContextProvenanceStore
 
 
 @pytest.mark.asyncio
@@ -54,6 +54,6 @@ async def test_turn_sync_ner_populates_without_host_entities(monkeypatch):
         identity=HostIdentity(host_id="test-host"),
         context=HostTurnContext(session_id="s1", contact_id="c1", channel_id="rcs:conv-9"),
         user_message=HostMessage(role="user", content="have you heard from Robin Sanchez lately?"),
-    )  # NB: no body.entities — relies on Colony NER
+    )  # NB: no body.entities — relies on PacoMind NER
     await host_mod.turns_sync(body)
     assert store.contexts_for("Robin Sanchez")   # NER pulled it from the message text

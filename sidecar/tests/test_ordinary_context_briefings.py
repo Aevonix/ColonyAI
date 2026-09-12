@@ -6,8 +6,8 @@ from types import SimpleNamespace
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host
-from apsimo.briefings.models import Briefing, BriefingSection
+from pacomind.api.routers import host
+from pacomind.briefings.models import Briefing, BriefingSection
 from test_contact_fact_recall import contact_context
 from test_turn_source_evidence import source_app
 
@@ -17,7 +17,7 @@ from test_turn_source_evidence import source_app
 async def test_ordinary_recall_preserves_source_and_history_without_global_briefs(
         contact_context, monkeypatch, scoped_projection):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     if not scoped_projection:
         monkeypatch.setattr(host, '_p8_runtime', None)
     keys = json.loads(runtime.keyring.read_text())
@@ -45,10 +45,10 @@ async def test_ordinary_recall_preserves_source_and_history_without_global_brief
             'incoming_message': {'role': 'user', 'content': 'Which hydrofoil pickup gate?'}})
         assert response.status_code == 200, response.text
         sections = response.json()['sections']
-        assert 'colony-briefing' not in {s['id'] for s in sections}
+        assert 'pacomind-briefing' not in {s['id'] for s in sections}
         assert calls == [], 'ordinary recall still queried the global briefing store'
         assert 'Obsolete unrelated' not in response.text
-        memory = next(s for s in sections if s['id'] == 'colony-memory')
+        memory = next(s for s in sections if s['id'] == 'pacomind-memory')
         assert fact in memory['body']
         assert any(c['source_id'] == 'pickup-source' for c in memory['citations'])
 

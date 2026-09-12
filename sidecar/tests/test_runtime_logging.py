@@ -7,7 +7,7 @@ import sys
 
 def run(tmp_path, script):
     env = {key: os.environ[key] for key in ('PATH', 'LANG') if key in os.environ}
-    env.update(HOME=str(tmp_path), APSIMO_SKIP_DOTENV='1', COLONY_SKIP_DOTENV='1')
+    env.update(HOME=str(tmp_path), PACOMIND_SKIP_DOTENV='1')
     result = subprocess.run([sys.executable, '-I', '-c',
         'import sys;sys.path.insert(0,sys.argv[1]);\n'+script,
         str(Path(__file__).resolve().parents[1]), str(tmp_path)],
@@ -23,7 +23,7 @@ from pathlib import Path
 from urllib.request import Request,urlopen
 from urllib.error import HTTPError
 import uvicorn
-from apsimo.runtime_logging import configure_runtime_logging,RequestLogTiming,RuntimeFormatter
+from pacomind.runtime_logging import configure_runtime_logging,RequestLogTiming,RuntimeFormatter
 log=Path(sys.argv[2])/'service/sidecar.log'
 configure_runtime_logging(log)
 async def app(scope,receive,send):
@@ -79,7 +79,7 @@ def test_real_rotation_bounds_retention_and_captures_python_output(tmp_path):
     result = run(tmp_path, r'''
 import json,logging,os,threading
 from pathlib import Path
-from apsimo.runtime_logging import configure_runtime_logging,runtime_log_directory,MAX_RECORD_CHARS
+from pacomind.runtime_logging import configure_runtime_logging,runtime_log_directory,MAX_RECORD_CHARS
 path=Path(sys.argv[2])/'logs/sidecar.log'
 handler=configure_runtime_logging(path,max_bytes=1024,backups=2,redirect_stdio=True)
 assert configure_runtime_logging(path,max_bytes=1024,backups=2,redirect_stdio=True) is handler

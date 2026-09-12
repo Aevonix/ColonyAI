@@ -12,20 +12,18 @@ import sqlite3
 import stat
 import subprocess
 
-PROFILE = 'colony-reviews'
-TOOLSET = 'colony_review'
-TOOLS = frozenset({'colony_read_work_source', 'colony_review_report'})
+PROFILE = 'pacomind-reviews'
+TOOLSET = 'pacomind_review'
+TOOLS = frozenset({'pacomind_read_work_source', 'pacomind_review_report'})
 
 
 def validate_profile(config, home, owner):
-    from .naming import legacy_native_configuration
-    config = legacy_native_configuration(config)
-    lane = config.get('plugins', {}).get('colony', {}).get('native_reviews', {})
+    lane = config.get('plugins', {}).get('pacomind', {}).get('native_reviews', {})
     if (config.get('toolsets') != [TOOLSET]
             or config.get('platform_toolsets', {}).get('cli') != [TOOLSET]
             or config.get('agent', {}).get('disabled_toolsets') != ['kanban']
             or config.get('tools', {}).get('tool_search', {}).get('enabled') is not False
-            or config.get('plugins', {}).get('enabled') != ['colony']
+            or config.get('plugins', {}).get('enabled') != ['pacomind']
             or config.get('kanban', {}).get('dispatch_in_gateway') is not False
             or config.get('mcp_servers')
             or set(lane) != {'worker', 'source_home', 'owner_contact_id', 'log_directory'}
@@ -45,31 +43,26 @@ def refresh_profile(config, home, owner):
     if Path(manifest['hermes_home']).resolve() != home:
         raise ValueError('selected_review_instance_required')
     environment = dict(os.environ, **manifest.get('sidecar_environment', {}))
-    environment.update(APSIMO_SKIP_DOTENV='1', APSIMO_STATE_DIR=str(state),
-                       COLONY_SKIP_DOTENV='1', COLONY_STATE_DIR=str(state),
+    environment.update(PACOMIND_SKIP_DOTENV='1', PACOMIND_STATE_DIR=str(state),
                        PYTHONPATH=manifest['sidecar_module_root'])
     result = subprocess.run([manifest['sidecar_python'], '-B', '-m',
-        'apsimo.setup_native_reviews', '--refresh-role', str(state)],
+        'pacomind.setup_native_reviews', '--refresh-role', str(state)],
         env=environment, capture_output=True, text=True, timeout=30)
     if result.returncode:
         raise ValueError('review_planning_role_refresh_failed')
     import yaml
     path = home/'profiles'/PROFILE
-    from .naming import selected_name, preferred
     worker_config = yaml.safe_load((path/'config.yaml').read_bytes())
     validate_profile(worker_config, home, owner)
-    selected = selected_name(worker_config)
     # Missing adapter installation must fail before a task can become ready.
-    plugin_path = path/'plugins'/selected
-    if selected == 'apsimo' and not plugin_path.exists():
-        plugin_path = path/'plugins/colony'  # retained managed flat directory
+    plugin_path = path/'plugins/pacomind'
     if any(not (plugin_path/name).is_file() for name in ('__init__.py', 'plugin.yaml')):
         raise ValueError('read_only_review_adapter_required')
     environment = dict(os.environ, HERMES_HOME=str(path), HERMES_KANBAN_HOME=str(home))
     for key in ('HERMES_KANBAN_TASK', 'HERMES_KANBAN_RUN_ID', 'HERMES_KANBAN_CLAIM_LOCK'):
         environment.pop(key, None)
-    toolset = preferred(TOOLSET) if selected == 'apsimo' else TOOLSET
-    expected = {preferred(name) for name in TOOLS} if selected == 'apsimo' else TOOLS
+    toolset = TOOLSET
+    expected = TOOLS
     ready = subprocess.run([manifest['hermes_python'], '-I', '-B', '-c',
         'from model_tools import get_tool_definitions; '
         'names={x["function"]["name"] for x in get_tool_definitions('
@@ -95,7 +88,7 @@ def _log_configuration(path):
         if len(raw) > 16384:
             raise ValueError('bounded_configuration_required')
         value = json.loads(raw)
-        if (value.get('schema') != 'ApsimoRuntimeLoggingV1' or value.get('path') != str(path)
+        if (value.get('schema') != 'PacoMindRuntimeLoggingV1' or value.get('path') != str(path)
                 or value.get('handler') != 'logging.handlers.RotatingFileHandler'
                 or type(value.get('max_bytes')) is not int or value['max_bytes'] < 1024
                 or type(value.get('backup_count')) is not int or not 1 <= value['backup_count'] <= 100
@@ -148,9 +141,9 @@ class ReviewWorker:
             task = db.execute('SELECT * FROM tasks WHERE id=?', (os.environ.get('HERMES_KANBAN_TASK'),)).fetchone()
             run = db.execute('SELECT * FROM task_runs WHERE id=? AND task_id=?',
                              (os.environ.get('HERMES_KANBAN_RUN_ID'), os.environ.get('HERMES_KANBAN_TASK'))).fetchone()
-            if (not task or not run or task['created_by'] != 'colony-initiative'
+            if (not task or not run or task['created_by'] != 'pacomind-initiative'
                     or task['assignee'] != PROFILE or task['tenant'] != self.owner
-                    or not str(task['idempotency_key']).startswith('colony-initiative:')
+                    or not str(task['idempotency_key']).startswith('pacomind-initiative:')
                     or task['status'] != 'running' or run['status'] != 'running'
                     or task['current_run_id'] != run['id']
                     or not os.environ.get('HERMES_KANBAN_CLAIM_LOCK')
@@ -253,20 +246,17 @@ class ReviewWorker:
 
 def register_worker(ctx, lane):
     from hermes_cli.config import load_config
-    from .naming import NativeNames, selected_name
     worker = ReviewWorker(lane)
     config = load_config()
     validate_profile(config, worker.home, worker.owner)
-    if not isinstance(ctx, NativeNames):
-        ctx = NativeNames(ctx, selected_name(config) == 'apsimo')
     ctx.register_hook('pre_tool_call', worker.before_tool)
-    ctx.register_tool(name='colony_read_work_source', toolset=TOOLSET, handler=worker.read,
-        schema={'name': 'colony_read_work_source',
+    ctx.register_tool(name='pacomind_read_work_source', toolset=TOOLSET, handler=worker.read,
+        schema={'name': 'pacomind_read_work_source',
             'description': 'Read registered evidence: source 0 is the proposal observation; for log reviews, sources 1 through 5 select its largest_files list in order, each a redacted bounded tail.',
             'parameters': {'type': 'object', 'properties': {'source': {'type': 'integer', 'enum': [0, 1, 2, 3, 4, 5]}},
                            'required': ['source'], 'additionalProperties': False}})
-    ctx.register_tool(name='colony_review_report', toolset=TOOLSET, handler=worker.report,
-        schema={'name': 'colony_review_report',
+    ctx.register_tool(name='pacomind_review_report', toolset=TOOLSET, handler=worker.report,
+        schema={'name': 'pacomind_review_report',
             'description': 'Report evidence and limitations through the current native task lifecycle. This is the review profile interface to kanban_complete or kanban_block.',
             'parameters': {'type': 'object', 'properties': {
                 'disposition': {'type': 'string', 'enum': ['complete', 'blocked']},

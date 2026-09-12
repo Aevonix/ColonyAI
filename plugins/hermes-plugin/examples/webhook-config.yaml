@@ -1,6 +1,6 @@
 # Retired compatibility example.
 #
-# No Colony initiative or queue webhook is registered by the governed general
+# No PacoMind initiative or queue webhook is registered by the governed general
 # plugin. Model-driven effects must be immutable HermesToolActionIntentV1 submissions to
 # the separate action mediator. Keep this file empty so an old copy command
 # cannot install a direct-effect route.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Read-only inventory for a legacy Hermes patch registry.
 
-The governed Colony integration targets zero Hermes core patches.  This tool
+The governed PacoMind integration targets zero Hermes core patches.  This tool
 retains the old filename so deployment checks can inventory and hash any
 leftover patch files, but it never executes them and has no apply mode.
 """
@@ -60,7 +60,7 @@ def main() -> int:
     args = parser.parse_args()
     rows = [inspect(path) for path in discover(args.dir)]
     value = {
-        "schema": "ColonyLegacyHermesPatchInventoryV1",
+        "schema": "PacoMindLegacyHermesPatchInventoryV1",
         "directory": args.dir,
         "zero_patch_ready": not rows,
         "patches": rows,

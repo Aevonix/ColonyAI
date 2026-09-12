@@ -8,19 +8,19 @@ RUN apt-get update && \
     rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md LICENSE ./
-COPY apsimo/ ./apsimo/
+COPY pacomind/ ./pacomind/
 
 RUN pip install --no-cache-dir .
 
 # Create state directory
-RUN mkdir -p /var/lib/colony
-COPY docker-entrypoint.sh /usr/local/bin/apsimo-container
-RUN chmod 755 /usr/local/bin/apsimo-container
+RUN mkdir -p /var/lib/pacomind
+COPY docker-entrypoint.sh /usr/local/bin/pacomind-container
+RUN chmod 755 /usr/local/bin/pacomind-container
 
 EXPOSE 7777
 
 HEALTHCHECK --interval=15s --timeout=5s --start-period=60s --retries=3 \
     CMD curl -sf http://localhost:7777/v1/host/health || exit 1
 
-ENTRYPOINT ["apsimo-container"]
-CMD ["apsimo", "start"]
+ENTRYPOINT ["pacomind-container"]
+CMD ["pacomind", "start"]

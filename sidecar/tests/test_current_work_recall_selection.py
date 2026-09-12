@@ -7,14 +7,14 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import MemoryTimeQuery
-from apsimo.memory.selection import RecallSelector, current_work_query
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.idempotency import source_message_hash
-from apsimo.turns.source_annotations import expand
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import MemoryTimeQuery
+from pacomind.memory.selection import RecallSelector, current_work_query
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.idempotency import source_message_hash
+from pacomind.turns.source_annotations import expand
 from test_turn_source_evidence import source_app
 
 
@@ -54,7 +54,7 @@ def prepared(ledger, *, contact='contact-a', session='later', classify=True):
     ('What are you doing right now, and what procedure should I use to recover it?', False),
 ])
 async def test_four_query_kinds_keep_history_and_instructions(tmp_path, monkeypatch, pair, query, omitted):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     seed(ledger, pair=pair)
     rows = prepared(ledger)
@@ -170,8 +170,8 @@ async def test_owner_annotations_preserve_corrected_evidence(tmp_path, target):
 
 @pytest.mark.asyncio
 async def test_bundles_and_user_facts_survive_filter_before_reranking(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'on')
-    monkeypatch.delenv('COLONY_RECALL_RERANK_MIN_SCORE', raising=False)
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'on')
+    monkeypatch.delenv('PACOMIND_RECALL_RERANK_MIN_SCORE', raising=False)
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     seed(ledger)
     rows = prepared(ledger)
@@ -192,14 +192,14 @@ async def test_bundles_and_user_facts_survive_filter_before_reranking(tmp_path, 
     (True, True, True), (True, False, False), (False, True, False)])
 async def test_http_uses_actual_owner_authority_and_successful_work_read(
         source_app, tmp_path, monkeypatch, authenticated, work_available, omitted):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     seed(ledger)
     if authenticated:
         @source_app.middleware('http')
         async def auth(request, call_next):
-            request.state.colony_authority = RequestAuthority(principal_id='owner-host', credential_id='key',
+            request.state.pacomind_authority = RequestAuthority(principal_id='owner-host', credential_id='key',
                 scopes=frozenset({'context:read'}), viewer_person_id='contact-a',
                 person_ids=frozenset({'contact-a'}), audiences=frozenset({'owner'}), authenticated=True)
             return await call_next(request)
@@ -220,7 +220,7 @@ async def test_http_uses_actual_owner_authority_and_successful_work_read(
         mock.assert_not_awaited()
         return
     assert response.status_code == 200, response.text
-    memory = [s for s in response.json()['sections'] if s['id'] == 'colony-memory']
+    memory = [s for s in response.json()['sections'] if s['id'] == 'pacomind-memory']
     assert (STATUS not in str(memory)) is omitted
     citations = [ref['source_id'] for section in memory for ref in (section.get('citations') or [])]
     assert ('answer' not in citations) is omitted

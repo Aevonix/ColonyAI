@@ -8,7 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.cognition.goal_spine import (
+from pacomind.cognition.goal_spine import (
     CognitionSpine,
     CognitionSpineStore,
     ThoughtJobV1,
@@ -19,12 +19,12 @@ from apsimo.cognition.goal_spine import (
     cognition_spine_mode,
     parse_thought_output,
 )
-from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
-from apsimo.router.tiers import ModelTier
-from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
-from apsimo.task_queue.handlers.inference import InferenceHandler
-from apsimo.task_queue.models import Job, JobResult, JobStatus, JobType
-from apsimo.work_orders import QueueWorkOrderAdapter
+from pacomind.projects import Project, ProjectEngine, ProjectStore, Step
+from pacomind.router.tiers import ModelTier
+from pacomind.self_model.workspace import ConcernStore, WorkspaceEngine
+from pacomind.task_queue.handlers.inference import InferenceHandler
+from pacomind.task_queue.models import Job, JobResult, JobStatus, JobType
+from pacomind.work_orders import QueueWorkOrderAdapter
 
 
 class FakeQueue:
@@ -90,9 +90,9 @@ class ArtifactVerifier:
 
 @pytest.fixture(autouse=True)
 def spine_env(monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
 
 
 def concern(
@@ -211,12 +211,12 @@ def make_spine(tmp_path, *, boundary=None, charter=None, situation=None):
 
 
 def test_flag_defaults_off_and_live_is_exclusive(monkeypatch):
-    monkeypatch.delenv("COLONY_COGNITION_SPINE", raising=False)
+    monkeypatch.delenv("PACOMIND_COGNITION_SPINE", raising=False)
     assert cognition_spine_mode() == "off"
     assert not cognition_spine_exclusive()
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
     assert not cognition_spine_exclusive()
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     assert cognition_spine_exclusive()
 
 
@@ -661,7 +661,7 @@ async def test_verified_terminal_project_receipts_settle_concern(tmp_path):
 
 @pytest.mark.asyncio
 async def test_shadow_records_decisions_without_projects_or_settlement(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
     spine, concerns, _, projects, manager = make_spine(tmp_path)
     item = concern(concerns)
     queued = await spine.process_concern(item.concern_id)
@@ -726,7 +726,7 @@ async def test_non_action_thought_routes_once_without_execution(
 
 
 def _revisioned_runtime(spine, revision_state):
-    from apsimo.cognition.runtime import CognitionRuntimeContractV1
+    from pacomind.cognition.runtime import CognitionRuntimeContractV1
 
     spine._enforce_runtime_contract = True
     spine._runtime_contract_provider = lambda: CognitionRuntimeContractV1.compose(
@@ -860,7 +860,7 @@ async def test_malformed_output_retries_with_backoff_then_quarantines(
 async def test_shadow_goal_requires_exact_owner_promotion_before_live_project(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
     situation = {"allowed": True}
     spine, concerns, cognition, projects, manager = make_spine(
         tmp_path,
@@ -879,7 +879,7 @@ async def test_shadow_goal_requires_exact_owner_promotion_before_live_project(
     assert shadow["status"] == "shadow_project_candidate"
     assert projects.count() == 0
 
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     held = await spine.process_concern(item.concern_id)
     assert held["status"] == "shadow_goal_requires_owner_promotion"
     assert projects.count() == 0
@@ -929,7 +929,7 @@ async def test_shadow_goal_requires_exact_owner_promotion_before_live_project(
 async def test_shadow_promotion_terminal_rejection_requires_semantic_classification(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
     spine, concerns, cognition, projects, manager = make_spine(tmp_path)
     revisions = {"policy": "policy:v1", "situation": "situation:v1"}
     _revisioned_runtime(spine, revisions)
@@ -945,7 +945,7 @@ async def test_shadow_promotion_terminal_rejection_requires_semantic_classificat
         title="Existing equivalent goal",
         goal_fingerprint=proposal["goal_fingerprint"],
     ))
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     result = await spine.promote_goal_proposal(
         shadow["goal_proposal_id"],
         expected_thought_result_ref=shadow["thought_result_ref"],
@@ -1196,7 +1196,7 @@ def test_thought_model_output_binding_owns_authority_and_rejects_ambiguity(
 @pytest.mark.asyncio
 async def test_b689_persisted_rejections_reopen_and_recover_additively(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
     spine, concerns, cognition, projects, manager = make_spine(tmp_path)
     now = datetime(2026, 8, 5, 9, 15, tzinfo=timezone.utc)
     first_item = concern(concerns, key="b689-first")

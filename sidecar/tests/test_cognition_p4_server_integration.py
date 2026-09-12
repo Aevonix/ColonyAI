@@ -12,13 +12,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.self_model.params import (
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.self_model.params import (
     AdaptiveParamStore,
     register_core_params,
 )
-from apsimo.server import (
+from pacomind.server import (
     _initialize_controlled_learning,
     _wire_controlled_learning_pipeline,
 )
@@ -43,17 +43,17 @@ def _restore_host_globals():
 
 
 def _configure(monkeypatch, state_dir, *, mode="shadow"):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(state_dir))
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", mode)
-    monkeypatch.setenv("COLONY_BENCHMARK_ENABLED", "true")
-    monkeypatch.setenv("COLONY_EXPERIMENTS_ENABLED", "true")
-    monkeypatch.setenv("COLONY_EXPERIMENT_PREGRANTS_JSON", "")
-    monkeypatch.setenv("COLONY_SKIP_DOTENV", "1")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(state_dir))
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", mode)
+    monkeypatch.setenv("PACOMIND_BENCHMARK_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXPERIMENTS_ENABLED", "true")
+    monkeypatch.setenv("PACOMIND_EXPERIMENT_PREGRANTS_JSON", "")
+    monkeypatch.setenv("PACOMIND_SKIP_DOTENV", "1")
 
 
 def _params(state_dir):
     state_dir.mkdir(parents=True, exist_ok=True)
-    params = AdaptiveParamStore(str(state_dir / "colony-params.db"))
+    params = AdaptiveParamStore(str(state_dir / "pacomind-params.db"))
     register_core_params(params)
     host.set_adaptive_params(params)
     return params
@@ -104,7 +104,7 @@ def _app(tmp_path):
 def _headers(kind="manager"):
     return {
         "Authorization": f"Bearer {kind}-secret",
-        "X-Colony-Principal": f"p4-{kind}",
+        "X-PacoMind-Principal": f"p4-{kind}",
     }
 
 
@@ -134,7 +134,7 @@ def test_startup_uses_one_feedback_store_shared_authority_and_pipeline(
     state_dir = tmp_path / "state"
     _configure(monkeypatch, state_dir)
     monkeypatch.setenv(
-        "COLONY_EXPERIMENT_PREGRANTS_JSON",
+        "PACOMIND_EXPERIMENT_PREGRANTS_JSON",
         '{"recall.min_relevance":[0.0,0.25]}',
     )
     params = _params(state_dir)
@@ -177,8 +177,8 @@ def test_disabled_benchmark_and_experiments_create_no_feature_artifacts(
 ):
     state_dir = tmp_path / "state"
     _configure(monkeypatch, state_dir)
-    monkeypatch.setenv("COLONY_BENCHMARK_ENABLED", "false")
-    monkeypatch.setenv("COLONY_EXPERIMENTS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_BENCHMARK_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_EXPERIMENTS_ENABLED", "false")
     params = _params(state_dir)
 
     wiring = _initialize_controlled_learning(
@@ -186,11 +186,11 @@ def test_disabled_benchmark_and_experiments_create_no_feature_artifacts(
 
     # Corrections remain a durable learning input independent of benchmarking.
     assert wiring["corrections"] is host._learning_feedback_store
-    assert (state_dir / "colony-learning-feedback.db").exists()
+    assert (state_dir / "pacomind-learning-feedback.db").exists()
     assert wiring["benchmark"] is None
     assert wiring["experiments"] is None
-    assert not (state_dir / "colony-benchmark.db").exists()
-    assert not (state_dir / "colony-experiments.db").exists()
+    assert not (state_dir / "pacomind-benchmark.db").exists()
+    assert not (state_dir / "pacomind-experiments.db").exists()
     assert not (state_dir / "approval_authority.db").exists()
 
 

@@ -1,6 +1,6 @@
 # Phase C durable autonomy scheduler
 
-Phase C slice 2a hardens Colony's existing autonomy scheduler. It does not add
+Phase C slice 2a hardens PacoMind's existing autonomy scheduler. It does not add
 an evidence reducer, action authority, approval behavior, queue execution,
 voice behavior, or a new external integration. The public
 `register(name, callback, interval_seconds, metadata=None)` call remains

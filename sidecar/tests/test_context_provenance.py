@@ -5,12 +5,12 @@ public entities, are never flagged.
 
 import pytest
 
-from apsimo.gate.context_provenance import (
+from pacomind.gate.context_provenance import (
     ContextProvenanceStore,
     ProvenanceCrossContextGuard,
 )
-from apsimo.gate.response_guard import GuardMode, ResponseGuard
-from apsimo.intelligence.relationships.trust_tiers import TrustTier
+from pacomind.gate.response_guard import GuardMode, ResponseGuard
+from pacomind.intelligence.relationships.trust_tiers import TrustTier
 
 CONV_A = "rcs:conv-A"
 CONV_B = "rcs:conv-B"
@@ -96,7 +96,7 @@ async def test_end_to_end_through_response_guard(store, monkeypatch):
     # Written against legacy all-checks enforcement; the per-check enforce
     # allowlist (H6.3, default secret_leak) is covered in
     # test_guard_enforce_policy.py.
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
     store.record(CONV_A, ["Project Falcon"], contact_id="alice")
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,
                           cross_context=ProvenanceCrossContextGuard(store))

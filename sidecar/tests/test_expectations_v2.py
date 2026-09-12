@@ -7,7 +7,7 @@ import time
 
 import pytest
 
-from apsimo.self_model.expectations import (
+from pacomind.self_model.expectations import (
     ExpectationEngine,
     ExpectationStore,
     OutcomeObservationV1,

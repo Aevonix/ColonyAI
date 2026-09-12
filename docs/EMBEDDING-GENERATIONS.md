@@ -8,7 +8,7 @@ The runtime now binds its vector store to an immutable embedding identity:
 requested model alias, reported serving model, declared weights or deployment
 revision, dimension, document and query formats, normalization and quantization.
 The requested alias and serving model are separate fields. Missing revision or
-serving identity is recorded as `unknown`. `COLONY_EMBED_REVISION` is an operator
+serving identity is recorded as `unknown`. `PACOMIND_EMBED_REVISION` is an operator
 declaration, not verified weights attestation. An endpoint that silently changes
 weights behind the same alias without reporting a change cannot be detected
 from that alias alone; declare a new revision and rebuild after such a change.
@@ -29,7 +29,7 @@ managed runtime refuses to compare them with a newly configured model. Graph
 keyword recall and canonical lexical source recall remain available. The
 installer's optional vector dependency remains optional.
 
-The existing `apsimo migrate-tier` and `/v1/host/memory/migrate` operation rebuild
+The existing `pacomind migrate-tier` and `/v1/host/memory/migrate` operation rebuild
 all retained text collections into a separate Lance directory. The server now
 actually registers the same store used by graph recall with that operation.
 For graph memories, rebuilding reads current graph facts, including facts whose

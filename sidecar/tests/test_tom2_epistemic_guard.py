@@ -16,12 +16,12 @@ import time
 
 import pytest
 
-from apsimo.gate.guard_audit import GuardAuditStore
-from apsimo.gate.layers.tom2_epistemic import Tom2EpistemicGuard
-from apsimo.gate.response_guard import (
+from pacomind.gate.guard_audit import GuardAuditStore
+from pacomind.gate.layers.tom2_epistemic import Tom2EpistemicGuard
+from pacomind.gate.response_guard import (
     GuardMode, ResponseGuard, enforce_allowlist)
-from apsimo.gate.taint import TaintRegistry
-from apsimo.tom.facts import SharedFactsStore
+from pacomind.gate.taint import TaintRegistry
+from pacomind.tom.facts import SharedFactsStore
 
 CONV = "dm:cid-alice"
 OTHER_CONV = "dm:cid-carol"
@@ -96,7 +96,7 @@ async def test_internal_error_with_live_taint_is_not_clean(world):
 
 
 def test_default_allowlist_includes_tom2_epistemic(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     assert enforce_allowlist() == frozenset({"secret_leak",
                                              "tom2_epistemic"})
 
@@ -224,7 +224,7 @@ async def test_known_miss_paraphrase_escapes_the_lexical_net(world):
 
 @pytest.mark.asyncio
 async def test_guard_enforces_tom2_epistemic_by_default(world, monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     taints, facts, f = world
     _taint(taints, f)
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE,
@@ -261,7 +261,7 @@ async def test_registry_fault_marks_check_unavailable(world):
 # ---------------------------------------------------------------------------
 
 def _seed_enforce_rows(audit, gateway="dm", n=3):
-    from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+    from pacomind.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
     for _ in range(n):
         audit.record(conversation_key=f"{gateway}:x", mode="enforce",
@@ -272,7 +272,7 @@ def _seed_enforce_rows(audit, gateway="dm", n=3):
 
 
 def test_probe_false_even_with_current_policy_verdict_rows(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     audit = GuardAuditStore()
     _seed_enforce_rows(audit)
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE, audit_store=audit)
@@ -282,7 +282,7 @@ def test_probe_false_even_with_current_policy_verdict_rows(monkeypatch):
 
 
 def test_probe_false_when_check_not_allowlisted(monkeypatch):
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "secret_leak")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "secret_leak")
     audit = GuardAuditStore()
     _seed_enforce_rows(audit)
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE, audit_store=audit)
@@ -290,8 +290,8 @@ def test_probe_false_when_check_not_allowlisted(monkeypatch):
 
 
 def test_probe_false_when_breaker_open(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
-    monkeypatch.setenv("COLONY_GUARD_TRIP_BLOCKS", "1")
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_TRIP_BLOCKS", "1")
     audit = GuardAuditStore()
     _seed_enforce_rows(audit)
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE, audit_store=audit)
@@ -300,6 +300,6 @@ def test_probe_false_when_breaker_open(monkeypatch):
 
 
 def test_probe_false_without_audit_store(monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE)
     assert guard.evidence_probe()("dm") is False

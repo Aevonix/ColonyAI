@@ -2,9 +2,9 @@
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.skills.registry import SkillRegistry
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.routers import host
+from pacomind.skills.registry import SkillRegistry
+from pacomind.turns import TurnIdempotencyLedger
 from test_turn_source_evidence import source_app
 
 
@@ -12,7 +12,7 @@ from test_turn_source_evidence import source_app
 async def test_internal_executor_registry_is_not_advertised_in_turn_context(source_app, tmp_path, monkeypatch):
     registry = SkillRegistry()
     monkeypatch.setattr(host, '_skills_registry', registry)
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     names = registry.list_skills()
     assert 'behavioral_correction' in names and 'knowledge_acquisition' in names
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
@@ -31,5 +31,5 @@ async def test_internal_executor_registry_is_not_advertised_in_turn_context(sour
     sections = response.json()['sections']
     text = '\n'.join(section['body'] for section in sections)
     assert 'colored index tabs' in text  # Other useful context survives.
-    assert not any(section['id'] == 'colony-skills' for section in sections)
+    assert not any(section['id'] == 'pacomind-skills' for section in sections)
     assert not any(name in text for name in names)

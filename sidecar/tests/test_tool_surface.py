@@ -9,7 +9,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host as host_mod
+from pacomind.api.routers import host as host_mod
 
 
 @asynccontextmanager

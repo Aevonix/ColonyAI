@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host, followup_plans, transport
-from apsimo.commitments.store import CommitmentStore
-from apsimo.commitments.work import CommitmentWork
-from apsimo.contacts.comms import CommsLog
-from apsimo.initiatives.temporal_followup import TemporalFollowups
-from apsimo.turns import get_turn_idempotency_ledger, canonical_turn_digest
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host, followup_plans, transport
+from pacomind.commitments.store import CommitmentStore
+from pacomind.commitments.work import CommitmentWork
+from pacomind.contacts.comms import CommsLog
+from pacomind.initiatives.temporal_followup import TemporalFollowups
+from pacomind.turns import get_turn_idempotency_ledger, canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 
 
@@ -36,8 +36,8 @@ def comms(tmp_path):
 ])
 async def test_bound_plan_current_source_and_changed_task(
         tmp_path, monkeypatch, comms, coverage_case, expected_reason):
-    monkeypatch.setenv('COLONY_STATE_DIR',str(tmp_path))
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID','cid-owner')
+    monkeypatch.setenv('PACOMIND_STATE_DIR',str(tmp_path))
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID','cid-owner')
     source = get_turn_idempotency_ledger(tmp_path)
     messages = [{'role':'user','content':'Obtain this response and follow up once if needed.'}]
     sid='task-instruction:fixture'; version=canonical_turn_digest(messages)

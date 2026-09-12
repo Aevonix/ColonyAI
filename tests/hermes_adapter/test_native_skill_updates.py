@@ -17,29 +17,29 @@ if sys.argv[3]:sys.path.insert(0,sys.argv[3])
 deferred=sys.argv[4]=='deferred'
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['pacomind'],'pacomind':{
     'owner_contact_id':'fixture-owner','attested_system_platforms':['cli'],
     'turn_outbox_path':str(home/'outbox.db')}},'tools':{'tool_search':{
         'enabled':'on' if deferred else 'off','defer':['skills_list','skill_view','skill_manage']}}}))
 def no_network(*args,**kwargs):raise AssertionError('Skill update fixture is local')
 socket.socket.connect=no_network;socket.create_connection=no_network
-import apsimo_hermes
+import pacomind_hermes
 class Reply:
     status_code=200
     def json(self):return {}
     def raise_for_status(self):pass
-apsimo_hermes.ColonyClient.post=lambda *args,**kwargs:Reply()
-apsimo_hermes.ColonyClient.get=lambda *args,**kwargs:Reply()
+pacomind_hermes.PacoMindClient.post=lambda *args,**kwargs:Reply()
+pacomind_hermes.PacoMindClient.get=lambda *args,**kwargs:Reply()
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['apsimo'].enabled
+assert get_plugin_manager()._plugins['pacomind'].enabled
 from hermes_state import SessionDB
 from run_agent import AIAgent
 import run_agent
 from tools.skills_tool import skills_list
 from agent.prompt_builder import build_skills_system_prompt
 
-name='apsimo-cache-fixture';removed='apsimo-retired-fixture';local='manual-index-local'
+name='pacomind-cache-fixture';removed='pacomind-retired-fixture';local='manual-index-local'
 body_addition=''
 def skill_text(version,target=name):
     return ('---\nname: '+target+'\ndescription: Index manuals using revision '+version+'.\n---\n'
@@ -53,7 +53,7 @@ retired=home/'skills'/removed/'SKILL.md';retired.parent.mkdir()
 retired.write_text('---\nname: '+removed+'\ndescription: Index obsolete manuals with paper tabs.\n---\n'
     'Use the retired paper-tab procedure.\n')
 for path in (current,retired):
-    (path.parent/'.apsimo-owned.json').write_text(json.dumps({'owner':'apsimo-hermes',
+    (path.parent/'.pacomind-owned.json').write_text(json.dumps({'owner':'pacomind-hermes',
         'version':1,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}))
 def change(version):
     for path,target in ((current,name),(ordinary,local)):
@@ -194,11 +194,11 @@ print(json.dumps({'same_process_skill_edit':True,'saved_conversation_skill_edit'
 
 @pytest.mark.parametrize('mode',['direct','deferred'])
 def test_native_skill_updates_reach_running_and_saved_conversations(artifacts, tmp_path, mode):
-    native = os.environ.get('COLONY_TEST_HERMES_PATH') or os.environ.get('HERMES_TEST_SOURCE', '')
+    native = os.environ.get('PACOMIND_TEST_HERMES_PATH') or os.environ.get('HERMES_TEST_SOURCE', '')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native skill update integration')
     env = environment(tmp_path)
-    env.update(COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
+    env.update(PACOMIND_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = run_python('-I', '-B', '-c', PROBE, artifacts[3], ROOT/'sidecar', native, mode,
         cwd=tmp_path, env=env)
     assert '"saved_conversation_skill_edit": true' in result.stdout

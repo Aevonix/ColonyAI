@@ -27,7 +27,7 @@ import httpx
 from hermes_constants import set_hermes_home_override, reset_hermes_home_override
 from plugins.memory import load_memory_provider, discover_plugin_cli_commands
 from agent.memory_manager import MemoryManager
-from apsimo_memory.provider import ColonyMemoryProvider
+from pacomind_memory.provider import PacoMindMemoryProvider
 
 root = Path(os.environ["HERMES_HOME"])
 root.mkdir(mode=0o700, exist_ok=True)
@@ -40,19 +40,19 @@ for index in range(2):
     homes.append(home)
     (home / "config.yaml").write_text(json.dumps({
         "plugins": {"enabled": []},
-        "memory": {"provider": "apsimo-memory", "config": {
+        "memory": {"provider": "pacomind-memory", "config": {
             "url": "http://old-instance.test", "contact_id": "old-contact",
-            "turn_writer": "disabled", "api_key": "${COLONY_API_KEY}",
+            "turn_writer": "disabled", "api_key": "${PACOMIND_API_KEY}",
         }},
     }))
-    (home / ".env").write_text(f"COLONY_API_KEY=test-profile-key-{index}\n")
+    (home / ".env").write_text(f"PACOMIND_API_KEY=test-profile-key-{index}\n")
     (home / ".handoff_brief.md").write_text(f"Resume private thread {index}.")
     token = set_hermes_home_override(home)
     try:
-        setup = ColonyMemoryProvider()
+        setup = PacoMindMemoryProvider()
         setup.save_config({"url": f"http://instance-{index}.test", "contact_id": f"person-{index}"}, str(home))
         # Native registration constructs a new provider as a fresh agent would.
-        provider = load_memory_provider("apsimo-memory")
+        provider = load_memory_provider("pacomind-memory")
         assert provider is not None
         assert provider.is_available()
         manager = MemoryManager()
@@ -138,7 +138,7 @@ def test_native_profile_restart_and_outage_recovery(artifacts, tmp_path):
     env.update({
         "HERMES_HOME": str(tmp_path / "profiles"),
         "HERMES_BUNDLED_PLUGINS": str(tmp_path / "bundled"),
-        "COLONY_API_KEY": "wrong-process-key",
+        "PACOMIND_API_KEY": "wrong-process-key",
     })
     result = run_python("-I", "-c", PROFILE_PROBE, installed, cwd=tmp_path, env=env)
     assert json.loads(result.stdout.splitlines()[-1]) == {"profiles": 2, "recovered": True}

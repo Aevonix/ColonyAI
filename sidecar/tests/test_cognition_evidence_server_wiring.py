@@ -3,16 +3,16 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.api.authority import required_scope
-from apsimo.cognition.evidence_pipeline import CognitionEvidenceStore
-from apsimo.execution_results import ExecutionResultV1
-from apsimo.projects.models import Project, Step
-from apsimo.projects.store import ProjectStore
-from apsimo.self_model.expectations import ExpectationEngine, ExpectationStore
-from apsimo.self_model.store import CompetenceStore, SelfModel
-from apsimo.server import _attach_cognition_evidence
-from apsimo.work_orders import WorkOrderV1
+from pacomind.api.routers import host
+from pacomind.api.authority import required_scope
+from pacomind.cognition.evidence_pipeline import CognitionEvidenceStore
+from pacomind.execution_results import ExecutionResultV1
+from pacomind.projects.models import Project, Step
+from pacomind.projects.store import ProjectStore
+from pacomind.self_model.expectations import ExpectationEngine, ExpectationStore
+from pacomind.self_model.store import CompetenceStore, SelfModel
+from pacomind.server import _attach_cognition_evidence
+from pacomind.work_orders import WorkOrderV1
 
 
 class FakeScheduler:
@@ -33,9 +33,9 @@ class FakeScheduler:
 
 @pytest.fixture(autouse=True)
 def isolate_host(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_RETENTION", "500")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_RETENTION", "500")
     originals = {
         name: getattr(host, name)
         for name in (
@@ -53,7 +53,7 @@ def isolate_host(monkeypatch, tmp_path):
 def test_default_off_keeps_only_passthrough_cursor_and_drains_project_outbox(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.delenv("COLONY_COGNITION_EVIDENCE", raising=False)
+    monkeypatch.delenv("PACOMIND_COGNITION_EVIDENCE", raising=False)
     projects = ProjectStore(str(tmp_path / "projects.db"))
     scheduler = FakeScheduler()
 
@@ -70,7 +70,7 @@ def test_default_off_keeps_only_passthrough_cursor_and_drains_project_outbox(
     assert wiring["projector"] is host._project_event_projector
     assert "cognition_evidence_reduce" in scheduler.callbacks
     assert "project_event_outbox" not in scheduler.callbacks
-    assert (tmp_path / "colony-cognition-evidence.db").exists()
+    assert (tmp_path / "pacomind-cognition-evidence.db").exists()
     assert "project_event_outbox" in host.supported_capabilities()
     assert "cognition_evidence" not in host.supported_capabilities()
     assert required_scope(
@@ -82,7 +82,7 @@ def test_default_off_keeps_only_passthrough_cursor_and_drains_project_outbox(
 def test_shadow_attaches_observer_without_competence_authority(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "shadow")
     projects = ProjectStore(str(tmp_path / "projects.db"))
     scheduler = FakeScheduler()
 
@@ -99,7 +99,7 @@ def test_shadow_attaches_observer_without_competence_authority(
     assert wiring["initial_status"]["enabled"] is True
     assert "cognition_evidence_reduce" in scheduler.callbacks
     assert "project_event_outbox" not in scheduler.callbacks
-    assert (tmp_path / "colony-cognition-evidence.db").exists()
+    assert (tmp_path / "pacomind-cognition-evidence.db").exists()
     assert "cognition_evidence" in host.supported_capabilities()
     wiring["store"].close()
 
@@ -107,7 +107,7 @@ def test_shadow_attaches_observer_without_competence_authority(
 def test_live_rejects_missing_canonical_self_model_before_db_creation(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
     projects = ProjectStore(str(tmp_path / "projects.db"))
 
     with pytest.raises(RuntimeError, match="canonical SelfModel"):
@@ -121,11 +121,11 @@ def test_live_rejects_missing_canonical_self_model_before_db_creation(
     assert host._cognition_evidence_store is None
     assert host._cognition_evidence_reducer is None
     assert host._project_event_projector is None
-    assert not (tmp_path / "colony-cognition-evidence.db").exists()
+    assert not (tmp_path / "pacomind-cognition-evidence.db").exists()
 
 
 def test_live_rejects_missing_periodic_scheduler(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
     projects = ProjectStore(str(tmp_path / "projects.db"))
     competence = CompetenceStore(str(tmp_path / "competence.db"))
 
@@ -138,13 +138,13 @@ def test_live_rejects_missing_periodic_scheduler(tmp_path, monkeypatch):
         )
 
     assert host._project_event_projector is None
-    assert not (tmp_path / "colony-cognition-evidence.db").exists()
+    assert not (tmp_path / "pacomind-cognition-evidence.db").exists()
 
 
 def test_live_attaches_one_reducer_and_scheduler_failure_is_atomic(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_EVIDENCE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_EVIDENCE", "live")
     projects = ProjectStore(str(tmp_path / "projects.db"))
     competence = CompetenceStore(str(tmp_path / "competence.db"))
     model = SelfModel(competence)
@@ -225,7 +225,7 @@ def test_live_attaches_one_reducer_and_scheduler_failure_is_atomic(
     assert competence.events("project") == []
     assert expectation_store.get(prediction.prediction_id).outcome == "pending"
     reopened = CognitionEvidenceStore(
-        str(tmp_path / "colony-cognition-evidence.db")
+        str(tmp_path / "pacomind-cognition-evidence.db")
     )
     assert reopened.cursor("cognition-evidence-v1") is None
     reopened.close()

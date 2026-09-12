@@ -12,12 +12,12 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.channels.presence import ConversationPresenceStore
-from apsimo.tom.eligibility import (
+from pacomind.channels.presence import ConversationPresenceStore
+from pacomind.tom.eligibility import (
     EligibilityDecision, eligible_inferences, evaluate_inference,
     l2_approval_mode, mutual_window_days)
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.tom2 import Tom2Store, render_inference_for_contact
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.tom2 import Tom2Store, render_inference_for_contact
 
 OWNER = "cid-owner"
 READER = "cid-alice"
@@ -69,9 +69,9 @@ class World:
 
 @pytest.fixture()
 def world(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
-    monkeypatch.delenv("COLONY_TOM2_L2_APPROVAL", raising=False)
-    monkeypatch.delenv("COLONY_TOM2_MUTUAL_WINDOW_DAYS", raising=False)
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.delenv("PACOMIND_TOM2_L2_APPROVAL", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_MUTUAL_WINDOW_DAYS", raising=False)
     return World()
 
 
@@ -80,18 +80,18 @@ def world(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_approval_mode_default_required(monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_L2_APPROVAL", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_L2_APPROVAL", raising=False)
     assert l2_approval_mode() == "required"
-    monkeypatch.setenv("COLONY_TOM2_L2_APPROVAL", "off")
+    monkeypatch.setenv("PACOMIND_TOM2_L2_APPROVAL", "off")
     assert l2_approval_mode() == "off"
-    monkeypatch.setenv("COLONY_TOM2_L2_APPROVAL", "banana")
+    monkeypatch.setenv("PACOMIND_TOM2_L2_APPROVAL", "banana")
     assert l2_approval_mode() == "required"       # unknown => fail closed
 
 
 def test_mutual_window_default(monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_MUTUAL_WINDOW_DAYS", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_MUTUAL_WINDOW_DAYS", raising=False)
     assert mutual_window_days() == 30.0
-    monkeypatch.setenv("COLONY_TOM2_MUTUAL_WINDOW_DAYS", "junk")
+    monkeypatch.setenv("PACOMIND_TOM2_MUTUAL_WINDOW_DAYS", "junk")
     assert mutual_window_days() == 30.0
 
 
@@ -154,10 +154,10 @@ async def test_subject_present_fails_closed(world):
 @pytest.mark.asyncio
 async def test_ref_visibility_delegates_to_h35(world, monkeypatch):
     # master flag off => the H3.5 gate refuses => ineligible
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "0")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "0")
     d = await world.evaluate()
     assert d.failed_check == "ref-visibility"
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
     # a fact the reader does not own => refused
     foreign = world.facts.create_fact(contact_id="cid-carol",
                                       fact="carol's private thing",
@@ -205,7 +205,7 @@ async def test_approval_required_by_default(world):
 
 @pytest.mark.asyncio
 async def test_approval_off_skips_hook(world, monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_L2_APPROVAL", "off")
+    monkeypatch.setenv("PACOMIND_TOM2_L2_APPROVAL", "off")
     d = await world.evaluate(approval_check=None)
     assert d.eligible is True
     assert "approval" in d.checks_passed
@@ -274,8 +274,8 @@ async def test_property_content_never_new(monkeypatch):
     """Across randomized store states, an eligible inference's rendered line
     never contains fact text the reader does not already hold. Level 2 is
     epistemic topology over the reader's OWN facts — by construction."""
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
-    monkeypatch.setenv("COLONY_TOM2_L2_APPROVAL", "off")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_L2_APPROVAL", "off")
     rng = random.Random(20260709)
     cids = [f"cid-p{i}" for i in range(5)]
 

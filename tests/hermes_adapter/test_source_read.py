@@ -6,8 +6,8 @@ def test_native_source_reader_pages_and_reconciles_actual_tool_outputs(artifacts
     probe = annotation.PROBE
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
     assert probe.count(old) == 1
-    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='apsimo_memory_annotate'"))
-    old = "name='apsimo_memory_annotate',arguments=json.dumps(args)"
+    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='pacomind_memory_annotate'"))
+    old = "name='pacomind_memory_annotate',arguments=json.dumps(args)"
     assert probe.count(old) == 1
     probe = probe.replace(old, "name=tool,arguments=json.dumps(args)")
     old = "return json.JSONDecoder().raw_decode(results[0]['content'])[0]"
@@ -28,7 +28,7 @@ messages=[{'role':'user','content':compose_user_api_content('',recalled,'')}]
 args=dict(long_ref); pages=[]; count=0
 while True:
     opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
-                    call='source-read-'+str(count),tool='apsimo_memory_read_source')
+                    call='source-read-'+str(count),tool='pacomind_memory_read_source')
     assert 'error' not in opened,opened
     assert opened['reported_at']=='2024-02-03T04:05:06+00:00'
     assert opened['recorded_at']!=opened['reported_at'] and opened['evidence_basis']=='retained_record'
@@ -59,8 +59,8 @@ def test_native_observation_directory_admits_only_returned_refs_and_opens_curren
     probe = annotation.PROBE
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
     assert probe.count(old) == 1
-    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='apsimo_memory_annotate'"))
-    old = "name='apsimo_memory_annotate',arguments=json.dumps(args)"
+    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='pacomind_memory_annotate'"))
+    old = "name='pacomind_memory_annotate',arguments=json.dumps(args)"
     assert probe.count(old) == 1
     probe = probe.replace(old, "name=tool,arguments=json.dumps(args)")
     old = "return json.JSONDecoder().raw_decode(results[0]['content'])[0]"
@@ -69,8 +69,8 @@ def test_native_observation_directory_admits_only_returned_refs_and_opens_curren
     old = "print(json.dumps({'native_dispatch':True"
     assert probe.count(old) == 1
     check = r'''
-from apsimo.turns.tool_observations import ToolObservation, identity_id, record
-from apsimo.turns.source_attribution import correct
+from pacomind.turns.tool_observations import ToolObservation, identity_id, record
+from pacomind.turns.source_attribution import correct
 import hashlib
 instruction='Inspect the Corvus export bundle and resolve its checksum before marking it ready.'
 ledger.record_source('corvus-task',contact_id='person',session_id='original',
@@ -100,7 +100,7 @@ def open_source(selector):
     global count
     count+=1
     return dispatch(selector,session='reader',task='reader-task',turn='reader-turn',
-        call='opening-'+str(count),tool='apsimo_memory_read_source')
+        call='opening-'+str(count),tool='pacomind_memory_read_source')
 def carry():
     result=dict(dispatch.last_result);messages.append(result)
     checked=apply_llm_request_middleware({'messages':messages},session_id='reader',

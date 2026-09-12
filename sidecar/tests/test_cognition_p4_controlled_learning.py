@@ -12,25 +12,25 @@ import sqlite3
 
 import pytest
 
-from apsimo.api.authority import required_scope
-from apsimo.contacts.comms import CommsLog
-from apsimo.initiatives.approval_authority import ApprovalAuthorityStore
-from apsimo.intelligence.learning.feedback_store import (
+from pacomind.api.authority import required_scope
+from pacomind.contacts.comms import CommsLog
+from pacomind.initiatives.approval_authority import ApprovalAuthorityStore
+from pacomind.intelligence.learning.feedback_store import (
     FeedbackStore,
     UserCorrection,
 )
-from apsimo.intelligence.cognition.strategy_adjuster import StrategyAdjuster
-from apsimo.intelligence.cognition.gap_detector import (
+from pacomind.intelligence.cognition.strategy_adjuster import StrategyAdjuster
+from pacomind.intelligence.cognition.gap_detector import (
     Gap,
     GapDetector,
     GapType,
 )
-from apsimo.intelligence.cognition.types import GapSeverity
-from apsimo.intelligence.cognition.performance_index import (
+from pacomind.intelligence.cognition.types import GapSeverity
+from pacomind.intelligence.cognition.performance_index import (
     CognitivePerformanceIndex as LegacyCPI,
     PerformanceIndexComputer,
 )
-from apsimo.self_model.benchmark import (
+from pacomind.self_model.benchmark import (
     BenchmarkStore,
     MetricDefinition,
     SelfhoodBenchmark,
@@ -38,12 +38,12 @@ from apsimo.self_model.benchmark import (
     legacy_cpi_payload,
     week_window,
 )
-from apsimo.self_model.experiments import (
+from pacomind.self_model.experiments import (
     ExperimentApprovalRequired,
     ExperimentEngine,
     ExperimentStore,
 )
-from apsimo.self_model.params import AdaptiveParamStore
+from pacomind.self_model.params import AdaptiveParamStore
 
 
 METRIC = MetricDefinition(
@@ -58,7 +58,7 @@ METRIC = MetricDefinition(
 
 
 def _engine(tmp_path, monkeypatch, *, mode="shadow", pregranted=True):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", mode)
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", mode)
     params = AdaptiveParamStore(str(tmp_path / "params.db"))
     params.register("answer.temperature", 0.2, 0.0, 1.0, "test knob")
     bstore = BenchmarkStore(str(tmp_path / "benchmark.db"))
@@ -122,7 +122,7 @@ def _record_balanced(engine, exp_id, *, control=0.5, variant=0.9):
 
 
 def test_p4_flag_is_default_off(monkeypatch):
-    monkeypatch.delenv("COLONY_COGNITION_P4_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_COGNITION_P4_MODE", raising=False)
     assert cognition_p4_mode() == "off"
 
 
@@ -313,7 +313,7 @@ def test_one_receipt_cannot_inflate_multiple_exposures(tmp_path, monkeypatch):
 def test_live_mutation_requires_pregrant_or_bounded_owner_approval(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", "live")
     params = AdaptiveParamStore(str(tmp_path / "params.db"))
     params.register("answer.temperature", 0.2, 0.0, 1.0)
     bstore = BenchmarkStore(str(tmp_path / "benchmark.db"))
@@ -388,7 +388,7 @@ def test_experiment_engine_is_the_only_p4_parameter_writer(
 async def test_legacy_gap_detector_can_only_persist_a_typed_proposal(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", "shadow")
 
     class Proposer:
         def __init__(self):
@@ -487,7 +487,7 @@ class _DeliveryEvidence:
 
 
 def test_commitment_metric_uses_one_due_date_cohort(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", "live")
     start, end = week_window("2026-W26")
     inside = start + timedelta(days=2)
     rows = [
@@ -520,7 +520,7 @@ def test_commitment_metric_uses_one_due_date_cohort(tmp_path, monkeypatch):
 def test_initiative_acceptance_requires_exact_message_reaction(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", "live")
     start, end = week_window("2026-W26")
     deliveries = _DeliveryEvidence([
         {"id": 1, "ts": start.timestamp() + 100, "outcome": "success",
@@ -553,7 +553,7 @@ def test_initiative_acceptance_requires_exact_message_reaction(
 def test_correction_rate_binds_to_receipt_backed_outbound_cohort(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", "live")
     start, end = week_window("2026-W26")
     comms = CommsLog(str(tmp_path / "comms.db"))
     for index in (1, 2):
@@ -585,7 +585,7 @@ def test_correction_rate_binds_to_receipt_backed_outbound_cohort(
 
 @pytest.mark.asyncio
 async def test_recall_probe_is_subject_scoped(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_P4_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_P4_MODE", "live")
 
     class Facts:
         def list_facts(self, **kwargs):

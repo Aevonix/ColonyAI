@@ -16,8 +16,8 @@ from typing import Any, Dict, List
 import pathlib
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
-from apsimo.intelligence.graph.client import (
-    ColonyGraph,
+from pacomind.intelligence.graph.client import (
+    PacoMindGraph,
     GraphConfig,
     EpistemicState,
     MemorySourceType,
@@ -39,7 +39,7 @@ def fail(step: str, exc: Exception) -> None:
     traceback.print_exception(type(exc), exc, exc.__traceback__)
 
 
-async def cleanup(graph: ColonyGraph) -> None:
+async def cleanup(graph: PacoMindGraph) -> None:
     """Remove all test nodes created by this script."""
     async with graph.driver.session(database=graph.database) as session:
         await session.run(
@@ -76,20 +76,20 @@ async def cleanup(graph: ColonyGraph) -> None:
         )
 
 
-async def step_connect() -> ColonyGraph:
+async def step_connect() -> PacoMindGraph:
     log("Connecting to Neo4j...")
     config = GraphConfig(
         uri="bolt://localhost:7687",
         database="neo4j",
         auth=("neo4j", SecretStr("***")),
     )
-    graph = ColonyGraph(config)
+    graph = PacoMindGraph(config)
     await graph.connect()
     log("  Connected ✓")
     return graph
 
 
-async def step_store_memory_basic(graph: ColonyGraph) -> str:
+async def step_store_memory_basic(graph: PacoMindGraph) -> str:
     log("store_memory (basic inference)...")
     mid = await graph.store_memory(
         content=f"{TEST_PREFIX}basic_inference",
@@ -108,7 +108,7 @@ async def step_store_memory_basic(graph: ColonyGraph) -> str:
     return mid
 
 
-async def step_store_memory_file_anchor(graph: ColonyGraph) -> str:
+async def step_store_memory_file_anchor(graph: PacoMindGraph) -> str:
     log("store_memory (file source + FileAnchor)...")
     mid = await graph.store_memory(
         content=f"{TEST_PREFIX}file_derived",
@@ -142,7 +142,7 @@ async def step_store_memory_file_anchor(graph: ColonyGraph) -> str:
     return mid
 
 
-async def step_store_memory_user_assertion(graph: ColonyGraph) -> str:
+async def step_store_memory_user_assertion(graph: PacoMindGraph) -> str:
     log("store_memory (user_assertion + importance clamping)...")
     mid = await graph.store_memory(
         content=f"{TEST_PREFIX}user_assertion",
@@ -160,7 +160,7 @@ async def step_store_memory_user_assertion(graph: ColonyGraph) -> str:
     return mid
 
 
-async def step_compute_effective_confidence(graph: ColonyGraph) -> None:
+async def step_compute_effective_confidence(graph: PacoMindGraph) -> None:
     log("compute_effective_confidence...")
     now = datetime.now(timezone.utc)
     created = now
@@ -238,7 +238,7 @@ async def step_compute_effective_confidence(graph: ColonyGraph) -> None:
     log("  All confidence signals ✓")
 
 
-async def step_touch_memory(graph: ColonyGraph, mid: str) -> None:
+async def step_touch_memory(graph: PacoMindGraph, mid: str) -> None:
     log("touch_memory...")
     mem_before = await graph.get_memory(mid)
     recalls_before = int(mem_before.get("recalls", 0))
@@ -249,7 +249,7 @@ async def step_touch_memory(graph: ColonyGraph, mid: str) -> None:
     log(f"  Recalls {recalls_before} → {recalls_after} ✓")
 
 
-async def step_decay_memories(graph: ColonyGraph, mid_weak: str) -> None:
+async def step_decay_memories(graph: PacoMindGraph, mid_weak: str) -> None:
     log("decay_memories...")
     # Ensure the weak memory has old accessed_at by manipulating directly
     async with graph.driver.session(database=graph.database) as session:
@@ -274,7 +274,7 @@ async def step_decay_memories(graph: ColonyGraph, mid_weak: str) -> None:
     log(f"  Strength {strength_before:.4f} → {strength_after:.4f} ✓")
 
 
-async def step_verify_memory(graph: ColonyGraph, mid: str) -> None:
+async def step_verify_memory(graph: PacoMindGraph, mid: str) -> None:
     log("verify_memory...")
     # Set low confidence first
     async with graph.driver.session(database=graph.database) as session:
@@ -294,7 +294,7 @@ async def step_verify_memory(graph: ColonyGraph, mid: str) -> None:
     log(f"  State observed → verified, confidence floored ✓")
 
 
-async def step_transition_epistemic_state(graph: ColonyGraph, mid: str) -> None:
+async def step_transition_epistemic_state(graph: PacoMindGraph, mid: str) -> None:
     log("transition_epistemic_state...")
     await graph.transition_epistemic_state(mid, "stale")
     mem = await graph.get_memory(mid)
@@ -302,7 +302,7 @@ async def step_transition_epistemic_state(graph: ColonyGraph, mid: str) -> None:
     log(f"  State → stale ✓")
 
 
-async def step_prune_weak_memories(graph: ColonyGraph) -> str:
+async def step_prune_weak_memories(graph: PacoMindGraph) -> str:
     log("prune_weak_memories...")
     # Create a very weak inferred memory
     mid_weak = await graph.store_memory(
@@ -331,7 +331,7 @@ async def step_prune_weak_memories(graph: ColonyGraph) -> str:
     return mid_weak
 
 
-async def step_archive_memories(graph: ColonyGraph) -> str:
+async def step_archive_memories(graph: PacoMindGraph) -> str:
     log("archive_memories...")
     # Create a stale old memory
     mid_old = await graph.store_memory(
@@ -373,7 +373,7 @@ async def step_archive_memories(graph: ColonyGraph) -> str:
     return mid_old
 
 
-async def step_recall_filters_terminal(graph: ColonyGraph) -> None:
+async def step_recall_filters_terminal(graph: PacoMindGraph) -> None:
     log("recall filters terminal states...")
     # Create a deprecated memory
     mid_dep = await graph.store_memory(

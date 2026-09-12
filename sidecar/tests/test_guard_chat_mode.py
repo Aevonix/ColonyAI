@@ -11,7 +11,7 @@ _PLUGIN_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 
 
 def _load_plugin():
-    name = "colony_hermes_plugin_guard_mode_test"
+    name = "pacomind_hermes_plugin_guard_mode_test"
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(
         name,
@@ -27,18 +27,18 @@ def _load_plugin():
 
 def test_mode_defaults_and_legacy_shadow_inheritance(monkeypatch):
     module = _load_plugin()
-    monkeypatch.delenv("COLONY_GUARD_CHAT_MODE", raising=False)
-    monkeypatch.delenv("COLONY_GUARD_CHAT_SHADOW", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_CHAT_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_CHAT_SHADOW", raising=False)
     assert module._guard_chat_mode() == "off"
-    monkeypatch.setenv("COLONY_GUARD_CHAT_SHADOW", "1")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_SHADOW", "1")
     assert module._guard_chat_mode() == "shadow"
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "off")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "off")
     assert module._guard_chat_mode() == "off"
 
 
 def test_explicit_enforce_is_not_downgraded_by_obsolete_post_hook_probe(monkeypatch):
     module = _load_plugin()
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     assert module._guard_chat_mode() == "enforce"
     assert not hasattr(module, "_effective_guard_chat_mode")
     assert not hasattr(module, "_host_supports_post_reply_mutation")
@@ -46,10 +46,10 @@ def test_explicit_enforce_is_not_downgraded_by_obsolete_post_hook_probe(monkeypa
 
 def test_invalid_explicit_mode_uses_legacy_default(monkeypatch):
     module = _load_plugin()
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "invalid")
-    monkeypatch.delenv("COLONY_GUARD_CHAT_SHADOW", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "invalid")
+    monkeypatch.delenv("PACOMIND_GUARD_CHAT_SHADOW", raising=False)
     assert module._guard_chat_mode() == "off"
-    monkeypatch.setenv("COLONY_GUARD_CHAT_SHADOW", "yes")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_SHADOW", "yes")
     assert module._guard_chat_mode() == "shadow"
 
 

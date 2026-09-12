@@ -1,9 +1,9 @@
-"""Contract test: the Hermes colony plugin's endpoints must exist in the host API.
+"""Contract test: the Hermes pacomind plugin's endpoints must exist in the host API.
 
 The plugin (plugins/hermes-plugin) lives in this repo precisely so its
 tool->endpoint mappings stay in lockstep with the API. This test auto-discovers
 every `/v1/host/...` path the plugin references and asserts each one matches a
-registered route. It exists because a `colony_task_*` tool quietly called a
+registered route. It exists because a `pacomind_task_*` tool quietly called a
 removed `/v1/host/tasks/...` endpoint for a long time, failing silently in
 production — exactly the drift this catches at test time.
 """
@@ -13,14 +13,14 @@ import re
 
 import pytest
 
-from apsimo.api.routers.host import router as host_router
-from apsimo.api.routers.observations import router as observations_router
-from apsimo.api.routers.task_queue import router as task_queue_router
-from apsimo.api.routers.executions import router as executions_router
-from apsimo.api.routers.commitment_work import router as commitment_work_router
-from apsimo.api.routers.initiative_work import router as initiative_work_router
+from pacomind.api.routers.host import router as host_router
+from pacomind.api.routers.observations import router as observations_router
+from pacomind.api.routers.task_queue import router as task_queue_router
+from pacomind.api.routers.executions import router as executions_router
+from pacomind.api.routers.commitment_work import router as commitment_work_router
+from pacomind.api.routers.initiative_work import router as initiative_work_router
 
-from apsimo.api.routers import social_state, temporal_followups, transport, followup_plans
+from pacomind.api.routers import social_state, temporal_followups, transport, followup_plans
 
 # Every router the app mounts under /v1/host — the plugin may hit any of them.
 _HOST_ROUTERS = (host_router, task_queue_router, observations_router, executions_router, commitment_work_router, initiative_work_router, social_state.router, temporal_followups.router, transport.router, followup_plans.router)
@@ -70,7 +70,7 @@ def _api_paths() -> set[str]:
 
 
 def test_integration_dir_present():
-    assert _INTEGRATION.is_dir(), f"colony Hermes integration missing at {_INTEGRATION}"
+    assert _INTEGRATION.is_dir(), f"pacomind Hermes integration missing at {_INTEGRATION}"
 
 
 def test_plugin_endpoints_all_exist_in_host_api():
@@ -79,7 +79,7 @@ def test_plugin_endpoints_all_exist_in_host_api():
     api = _api_paths()
     missing = sorted(p for p in plugin if p not in api)
     assert not missing, (
-        "Hermes colony plugin references endpoints that are NOT registered in the host "
+        "Hermes pacomind plugin references endpoints that are NOT registered in the host "
         f"API (contract drift — these will 404/405 silently in production):\n  {missing}\n"
         f"Plugin paths checked: {sorted(plugin)}"
     )

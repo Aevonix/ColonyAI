@@ -1,6 +1,6 @@
 """Recall ranking pipeline (U8+): ANN oversample -> filter -> trim.
 
-The regression lock here is that with COLONY_RECALL_OVERSAMPLE unset (or 1)
+The regression lock here is that with PACOMIND_RECALL_OVERSAMPLE unset (or 1)
 the vector path is byte-identical to the legacy behavior: the ANN fetch uses
 exactly the requested limit, relevance == vector_score * effective_confidence,
 and ordering is relevance-descending.
@@ -13,7 +13,7 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from apsimo.intelligence.graph import client as client_mod
+from pacomind.intelligence.graph import client as client_mod
 
 
 # --- fakes -------------------------------------------------------------------
@@ -82,13 +82,13 @@ class _FakeDriver:
 
 
 class RecallFixture:
-    """ColonyGraph wired to a fake ANN store + fake Neo4j hydration."""
+    """PacoMindGraph wired to a fake ANN store + fake Neo4j hydration."""
 
     def __init__(self, hits, node_props):
         self.queries = []
         self.node_props = node_props
         self.vector = _FakeVectorStore(hits)
-        g = client_mod.ColonyGraph.__new__(client_mod.ColonyGraph)
+        g = client_mod.PacoMindGraph.__new__(client_mod.PacoMindGraph)
         g.driver = _FakeDriver(self)
         g.database = "neo4j"
         g._vector_store = self.vector
@@ -123,7 +123,7 @@ def _node(mid, strength=1.0, confidence=None, state="inferred", **extra):
 
 @pytest.mark.asyncio
 async def test_default_fetch_uses_exact_limit(monkeypatch):
-    monkeypatch.delenv("COLONY_RECALL_OVERSAMPLE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECALL_OVERSAMPLE", raising=False)
     fx = RecallFixture(
         hits=[_Hit("a", 0.9), _Hit("b", 0.8)],
         node_props=[_node("a", confidence=0.7), _node("b", confidence=0.6)],
@@ -137,8 +137,8 @@ async def test_default_fetch_uses_exact_limit(monkeypatch):
 async def test_default_relevance_formula_and_ordering(monkeypatch):
     """Legacy formula lock: relevance = vector_score * effective_confidence,
     sorted descending — strength does NOT participate in ranking."""
-    monkeypatch.delenv("COLONY_RECALL_OVERSAMPLE", raising=False)
-    monkeypatch.delenv("COLONY_RECALL_STRENGTH_RANKING", raising=False)
+    monkeypatch.delenv("PACOMIND_RECALL_OVERSAMPLE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECALL_STRENGTH_RANKING", raising=False)
     fx = RecallFixture(
         hits=[_Hit("a", 0.9), _Hit("b", 0.8), _Hit("c", 0.5)],
         node_props=[
@@ -158,7 +158,7 @@ async def test_default_relevance_formula_and_ordering(monkeypatch):
 @pytest.mark.asyncio
 async def test_default_filters_unchanged(monkeypatch):
     """Strength floor, terminal states, and min_confidence still drop hits."""
-    monkeypatch.delenv("COLONY_RECALL_OVERSAMPLE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECALL_OVERSAMPLE", raising=False)
     fx = RecallFixture(
         hits=[_Hit("weak", 0.9), _Hit("stale", 0.9),
               _Hit("lowconf", 0.9), _Hit("ok", 0.9)],
@@ -177,7 +177,7 @@ async def test_default_filters_unchanged(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_oversample_widens_fetch_and_trims_to_limit(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
     hits = [_Hit(f"m{i}", 0.9 - i * 0.01) for i in range(6)]
     nodes = []
     for i in range(6):
@@ -195,7 +195,7 @@ async def test_oversample_widens_fetch_and_trims_to_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_oversample_fetch_capped_at_100(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "50")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "50")
     fx = RecallFixture(hits=[], node_props=[])
     await fx.recall("q", limit=10)
     assert fx.vector.search_calls[0]["limit"] == 100
@@ -204,7 +204,7 @@ async def test_oversample_fetch_capped_at_100(monkeypatch):
 @pytest.mark.asyncio
 async def test_oversample_never_shrinks_below_limit(monkeypatch):
     """A caller limit above the cap must not be reduced by the cap."""
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "2")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "2")
     fx = RecallFixture(hits=[], node_props=[])
     await fx.recall("q", limit=150)
     assert fx.vector.search_calls[0]["limit"] == 150
@@ -212,7 +212,7 @@ async def test_oversample_never_shrinks_below_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_oversample_invalid_value_falls_back_to_legacy(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "banana")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "banana")
     fx = RecallFixture(hits=[], node_props=[])
     await fx.recall("q", limit=9)
     assert fx.vector.search_calls[0]["limit"] == 9
@@ -222,7 +222,7 @@ async def test_oversample_invalid_value_falls_back_to_legacy(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_strength_ranking_on_blends_strength(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_STRENGTH_RANKING", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_STRENGTH_RANKING", "on")
     fx = RecallFixture(
         hits=[_Hit("fresh", 0.8), _Hit("faded", 0.8)],
         node_props=[
@@ -241,8 +241,8 @@ async def test_strength_ranking_on_blends_strength(monkeypatch):
 async def test_strength_ranking_keeps_hard_floor(monkeypatch):
     """Blending demotes ABOVE the floor; below it stays excluded (never
     'demote instead of exclude' — junk-only matches would inject junk)."""
-    monkeypatch.setenv("COLONY_RECALL_STRENGTH_RANKING", "on")
-    monkeypatch.delenv("COLONY_RECALL_MIN_STRENGTH", raising=False)
+    monkeypatch.setenv("PACOMIND_RECALL_STRENGTH_RANKING", "on")
+    monkeypatch.delenv("PACOMIND_RECALL_MIN_STRENGTH", raising=False)
     fx = RecallFixture(
         hits=[_Hit("junk", 0.99), _Hit("ok", 0.5)],
         node_props=[
@@ -256,7 +256,7 @@ async def test_strength_ranking_keeps_hard_floor(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_min_strength_env_governs_default_floor(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_MIN_STRENGTH", "0.5")
+    monkeypatch.setenv("PACOMIND_RECALL_MIN_STRENGTH", "0.5")
     fx = RecallFixture(
         hits=[_Hit("mid", 0.9), _Hit("strong", 0.9)],
         node_props=[
@@ -270,7 +270,7 @@ async def test_min_strength_env_governs_default_floor(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_explicit_caller_min_strength_beats_env(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_MIN_STRENGTH", "0.5")
+    monkeypatch.setenv("PACOMIND_RECALL_MIN_STRENGTH", "0.5")
     fx = RecallFixture(
         hits=[_Hit("mid", 0.9)],
         node_props=[_node("mid", strength=0.3, confidence=0.9)],
@@ -282,7 +282,7 @@ async def test_explicit_caller_min_strength_beats_env(monkeypatch):
 @pytest.mark.asyncio
 async def test_min_strength_default_unchanged(monkeypatch):
     """Regression lock: env unset -> floor is the historical 0.1."""
-    monkeypatch.delenv("COLONY_RECALL_MIN_STRENGTH", raising=False)
+    monkeypatch.delenv("PACOMIND_RECALL_MIN_STRENGTH", raising=False)
     fx = RecallFixture(
         hits=[_Hit("under", 0.9), _Hit("at", 0.9)],
         node_props=[

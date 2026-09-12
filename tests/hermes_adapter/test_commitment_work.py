@@ -18,7 +18,7 @@ from urllib.request import urlopen
 sys.path.insert(0, sys.argv[1])
 home = Path(os.environ['HERMES_HOME']); home.mkdir(mode=0o700)
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home / 'config.yaml').write_text(json.dumps({'plugins': {'enabled': ['apsimo'], 'apsimo': {
+(home / 'config.yaml').write_text(json.dumps({'plugins': {'enabled': ['pacomind'], 'pacomind': {
     'url': sys.argv[2], 'owner_contact_id': 'owner', 'attested_system_platforms': ['cli'],
     'turn_outbox_path': str(home / 'turns.sqlite3')}}}))
 from hermes_cli.plugins import get_plugin_manager
@@ -26,13 +26,13 @@ from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import run_tool_execution_middleware
 from model_tools import handle_function_call
 manager = get_plugin_manager(); manager.discover_and_load()
-assert manager._plugins['apsimo'].enabled, manager._plugins['apsimo'].error
-assert 'apsimo_commitment_work' in manager._plugins['apsimo'].tools_registered
+assert manager._plugins['pacomind'].enabled, manager._plugins['pacomind'].error
+assert 'pacomind_commitment_work' in manager._plugins['pacomind'].tools_registered
 def start(session):
     invoke_hook('pre_llm_call', session_id=session, task_id=session, turn_id=session,
                 platform='cli', sender_id='', user_message='Inspect the same obligation')
 def work(session, operation):
-    return json.loads(handle_function_call('apsimo_commitment_work', {'commitment_id': sys.argv[3], 'operation': operation},
+    return json.loads(handle_function_call('pacomind_commitment_work', {'commitment_id': sys.argv[3], 'operation': operation},
         session_id=session, task_id=session, turn_id=session, tool_call_id='call-' + session))
 for session in ('chat', 'voice'): start(session)
 with ThreadPoolExecutor(max_workers=2) as pool:
@@ -64,7 +64,7 @@ child_result = run_tool_execution_middleware('read_file', {}, lambda args: 'must
     session_id='child-rotated', task_id='child-task', turn_id='child-turn')
 assert json.loads(child_result)['effect_performed'] is False
 # Explicit stop is local after an authoritative stale response, including child rotation.
-stopped = json.loads(handle_function_call('apsimo_commitment_work', {'commitment_id': sys.argv[3], 'operation': 'release'},
+stopped = json.loads(handle_function_call('pacomind_commitment_work', {'commitment_id': sys.argv[3], 'operation': 'release'},
     session_id='child-rotated', task_id='child-task', turn_id='child-turn'))
 assert stopped['detached']
 assert run_tool_execution_middleware('read_file', {}, lambda args: 'executed',
@@ -79,8 +79,8 @@ def test_native_sessions_share_one_undertaking(artifacts, tmp_path, monkeypatch)
     # Only the test HTTP server imports the source store. The isolated native
     # process receives the wheel alone and has no sidecar on its import path.
     monkeypatch.syspath_prepend(str(ROOT / 'sidecar'))
-    from apsimo.commitments.store import CommitmentStore
-    from apsimo.commitments.work import CommitmentWork
+    from pacomind.commitments.store import CommitmentStore
+    from pacomind.commitments.work import CommitmentWork
     store = CommitmentStore(tmp_path / 'commitments.db')
     obligation = store.create('owner', 'Inspect one failing fixture')
     now = [1000.0]
@@ -103,7 +103,7 @@ def test_native_sessions_share_one_undertaking(artifacts, tmp_path, monkeypatch)
     _, _, _, installed = artifacts
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path / 'profile'), HERMES_BUNDLED_PLUGINS=str(tmp_path / 'bundled'),
-        COLONY_GENERAL_PLUGIN_ACTIVE='1', COLONY_MEMORY_WORKER_TOOLS='0', COLONY_MEMORY_TURN_WRITER='disabled')
+        PACOMIND_GENERAL_PLUGIN_ACTIVE='1', PACOMIND_MEMORY_WORKER_TOOLS='0', PACOMIND_MEMORY_TURN_WRITER='disabled')
     try:
         result = run_python('-I', '-c', PROBE, installed, 'http://127.0.0.1:' + str(server.server_port), obligation['id'], cwd=tmp_path, env=env)
         assert json.loads(result.stdout.splitlines()[-1])['native_race'] is True

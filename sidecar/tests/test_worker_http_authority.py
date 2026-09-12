@@ -17,17 +17,17 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.authority import KeyringError, load_keyring, required_scope
-from apsimo.api.routers import task_queue as queue_router
-from apsimo.task_queue.models import (
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.authority import KeyringError, load_keyring, required_scope
+from pacomind.api.routers import task_queue as queue_router
+from pacomind.task_queue.models import (
     Job,
     JobCapabilityRequirement,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.queue_manager import TaskQueueManager
 
 
 def _worker_principal(
@@ -43,7 +43,7 @@ def _worker_principal(
         "principal": principal,
         "status": "active",
         # api:access keeps the migration test meaningful before exact route
-        # scopes are selected by COLONY_WORKER_AUTHORITY_MODE=enforce.
+        # scopes are selected by PACOMIND_WORKER_AUTHORITY_MODE=enforce.
         "scopes": [
             "api:access",
             "workers:contract",
@@ -87,7 +87,7 @@ def _app(keyring, *, legacy_key: str | None = None) -> FastAPI:
 def _headers(secret: str, principal: str | None = None) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {secret}"}
     if principal:
-        headers["X-Colony-Principal"] = principal
+        headers["X-PacoMind-Principal"] = principal
     return headers
 
 
@@ -108,8 +108,8 @@ async def _research_job(manager: TaskQueueManager) -> Job:
 
 @pytest.mark.asyncio
 async def test_job_post_cannot_forge_authority_tags(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     app = _app(None, legacy_key="legacy-key")
     try:
@@ -142,10 +142,10 @@ async def test_job_post_cannot_forge_authority_tags(tmp_path, monkeypatch):
 async def test_action_attestation_requires_separate_scoped_verifier(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "strict")
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "strict")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
     manager = await _manager(tmp_path)
     job = Job(
         job_type=JobType.AGENT_ACTION,
@@ -327,8 +327,8 @@ def test_attestation_principal_cannot_also_execute(tmp_path, extra):
 async def test_public_agent_action_uses_registry_and_cannot_spoof_work_order(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     app = _app(None, legacy_key="legacy-key")
     try:
@@ -382,8 +382,8 @@ async def test_public_agent_action_uses_registry_and_cannot_spoof_work_order(
 async def test_public_agent_action_cannot_select_or_weaken_server_routes(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     app = _app(None, legacy_key="legacy-key")
     base = {
@@ -448,8 +448,8 @@ async def test_public_agent_action_cannot_select_or_weaken_server_routes(
 @pytest.mark.asyncio
 async def test_http_claim_fails_closed_without_scheduler_readiness(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     await _research_job(manager)
     manager.queue.set_execution_ready(False, "scheduler_test_failure")
@@ -476,8 +476,8 @@ async def test_http_claim_fails_closed_without_scheduler_readiness(
 async def test_enforce_claim_is_principal_node_bound_and_body_can_only_narrow(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_worker_principal("worker-a-principal", "a-key", "worker-a")])
     manager = await _manager(tmp_path)
@@ -548,11 +548,11 @@ async def test_enforce_claim_is_principal_node_bound_and_body_can_only_narrow(
 async def test_restricted_worker_uses_exact_routes_but_not_api_fallback(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_RELEASE_COMMIT", "1" * 40)
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_RELEASE_COMMIT", "1" * 40)
     monkeypatch.setenv(
-        "COLONY_RELEASE_ARTIFACT_MANIFEST_SHA256", "2" * 64,
+        "PACOMIND_RELEASE_ARTIFACT_MANIFEST_SHA256", "2" * 64,
     )
     keyring = tmp_path / "restricted-worker.json"
     _write_keyring(keyring, [_worker_principal(
@@ -608,8 +608,8 @@ async def test_restricted_worker_uses_exact_routes_but_not_api_fallback(
 async def test_shadow_keeps_legacy_worker_usable_but_records_denied_future_posture(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     await _research_job(manager)
     app = _app(None, legacy_key="legacy-key")
@@ -642,8 +642,8 @@ async def test_shadow_keeps_legacy_worker_usable_but_records_denied_future_postu
 async def test_shadow_scoped_worker_records_body_expansion_without_breaking_it(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_worker_principal("worker-a-principal", "a-key", "worker-a")])
     manager = await _manager(tmp_path)
@@ -674,8 +674,8 @@ async def test_shadow_scoped_worker_records_body_expansion_without_breaking_it(
 async def test_shadow_scoped_worker_uses_grant_defaults_for_realistic_canary(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_worker_principal("worker-a-principal", "a-key", "worker-a")])
     manager = await _manager(tmp_path)
@@ -703,8 +703,8 @@ async def test_shadow_scoped_worker_uses_grant_defaults_for_realistic_canary(
 async def test_enforce_lifecycle_requires_exact_authenticated_claimant(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [
         _worker_principal("worker-a-principal", "a-key", "worker-a"),
@@ -771,8 +771,8 @@ async def test_enforce_lifecycle_requires_exact_authenticated_claimant(
 async def test_enforce_claim_applies_server_concurrency_ceiling_atomically(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     keyring = tmp_path / "keys.json"
     principal = _worker_principal("worker-a-principal", "a-key", "worker-a")
     principal["worker_grants"][0]["max_concurrent"] = 1
@@ -805,8 +805,8 @@ async def test_enforce_claim_applies_server_concurrency_ceiling_atomically(
 
 @pytest.mark.asyncio
 async def test_completion_ignores_untrusted_future_started_at(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_worker_principal("worker-a-principal", "a-key", "worker-a")])
     manager = await _manager(tmp_path)
@@ -852,7 +852,7 @@ async def test_completion_ignores_untrusted_future_started_at(tmp_path, monkeypa
 async def test_completed_durations_excludes_legacy_poisoned_evidence(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     jobs = [await _research_job(manager) for _ in range(3)]
     assert manager.queue._db is not None
@@ -883,7 +883,7 @@ async def test_completed_durations_excludes_legacy_poisoned_evidence(
 async def test_failed_transition_cannot_rollback_another_workers_success(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     job = await _research_job(manager)
     claimed = await manager.queue.claim_job(
@@ -941,7 +941,7 @@ async def test_failed_transition_cannot_rollback_another_workers_success(
 
 @pytest.mark.asyncio
 async def test_queue_transitions_are_claimant_and_state_bound(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     job = await _research_job(manager)
     try:
@@ -991,9 +991,9 @@ async def test_queue_transitions_are_claimant_and_state_bound(tmp_path, monkeypa
 
 
 def test_worker_route_scopes_switch_only_at_explicit_enforcement(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "shadow")
     assert required_scope("POST", "/v1/host/queue/jobs/claim") == "api:access"
-    monkeypatch.setenv("COLONY_WORKER_AUTHORITY_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_WORKER_AUTHORITY_MODE", "enforce")
     assert required_scope("POST", "/v1/host/queue/jobs/claim") == "workers:claim"
     assert required_scope(
         "POST", "/v1/host/queue/jobs/id/start"
@@ -1079,7 +1079,7 @@ def test_keyring_accepts_bounded_external_credential_ids(tmp_path, credential_id
 async def test_heartbeat_does_not_create_evidence_for_another_claimant(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     job = await _research_job(manager)
     try:

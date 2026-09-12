@@ -5,7 +5,7 @@ import tempfile
 
 import pytest
 
-from apsimo.tom.facts import SharedFactsStore
+from pacomind.tom.facts import SharedFactsStore
 
 
 @pytest.fixture
@@ -22,11 +22,11 @@ class TestSharedFactsCreate:
     def test_create_basic(self, store):
         result = store.create_fact(
             contact_id="owner",
-            fact="Colony v0.3.0 shipped today",
+            fact="PacoMind v0.3.0 shipped today",
             source="told_to_contact",
         )
         assert result["contact_id"] == "owner"
-        assert result["fact"] == "Colony v0.3.0 shipped today"
+        assert result["fact"] == "PacoMind v0.3.0 shipped today"
         assert result["source"] == "told_to_contact"
         assert result["confidence"] == 0.8
         assert result["id"]

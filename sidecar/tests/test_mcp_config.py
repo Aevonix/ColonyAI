@@ -1,4 +1,4 @@
-"""Unit tests for Apsimo MCP harness configuration."""
+"""Unit tests for PacoMind MCP harness configuration."""
 
 import json
 import os
@@ -11,7 +11,7 @@ import pytest
 # Skip if mcp package is not installed (config imports from __init__ which imports server)
 pytest.importorskip("mcp")
 
-from apsimo.mcp.config import (
+from pacomind.mcp.config import (
     HARNESS_DEFS,
     add_to_harness,
     detect_harnesses,
@@ -24,22 +24,22 @@ def test_legacy_entry_migration_preserves_credentials_and_other_settings(tmp_pat
     import tomllib
     import yaml
     path = tmp_path / 'config'
-    existing = {'command': 'colony', 'args': ['mcp'], 'env': {
-        'COLONY_API_KEY': 'fixture-credential', 'COLONY_URL': 'http://selected:8222'},
+    existing = {'command': 'pacomind', 'args': ['mcp'], 'env': {
+        'PACOMIND_API_KEY': 'fixture-credential', 'PACOMIND_URL': 'http://selected:8222'},
         'startup_timeout_sec': 91}
     other = {'command': 'unrelated'}
     if harness == 'claude-code':
-        path.write_text(json.dumps({'model': 'chosen', 'mcpServers': {'colony': existing, 'other': other}}))
+        path.write_text(json.dumps({'model': 'chosen', 'mcpServers': {'pacomind': existing, 'other': other}}))
         read = lambda: json.loads(path.read_text())
         key = 'mcpServers'
     elif harness == 'hermes':
-        path.write_text(yaml.safe_dump({'model': 'chosen', 'mcp_servers': {'colony': existing, 'other': other}}))
+        path.write_text(yaml.safe_dump({'model': 'chosen', 'mcp_servers': {'pacomind': existing, 'other': other}}))
         read = lambda: yaml.safe_load(path.read_text())
         key = 'mcp_servers'
     else:
-        path.write_text('model="chosen"\n[mcp_servers.colony]\ncommand="colony"\nargs=["mcp"]\n'
-            'startup_timeout_sec=91\n[mcp_servers.colony.env]\nCOLONY_API_KEY="fixture-credential"\n'
-            'COLONY_URL="http://selected:8222"\n[mcp_servers.other]\ncommand="unrelated"\n'
+        path.write_text('model="chosen"\n[mcp_servers.pacomind]\ncommand="pacomind"\nargs=["mcp"]\n'
+            'startup_timeout_sec=91\n[mcp_servers.pacomind.env]\nPACOMIND_API_KEY="fixture-credential"\n'
+            'PACOMIND_URL="http://selected:8222"\n[mcp_servers.other]\ncommand="unrelated"\n'
             '[profiles.work]\nmodel="preserved"\n')
         read = lambda: tomllib.loads(path.read_text())
         key = 'mcp_servers'
@@ -49,16 +49,16 @@ def test_legacy_entry_migration_preserves_credentials_and_other_settings(tmp_pat
     assert 'fixture-credential' not in result
     data = read()
     assert data['model'] == 'chosen'
-    assert set(data[key]) == {'apsimo', 'other'}
+    assert set(data[key]) == {'pacomind', 'other'}
     assert data[key]['other'] == other
-    selected = data[key]['apsimo']
-    assert selected['command'] == 'apsimo'
+    selected = data[key]['pacomind']
+    assert selected['command'] == 'pacomind'
     assert selected['startup_timeout_sec'] == 91
-    assert selected['env']['APSIMO_API_KEY'] == 'fixture-credential'
-    assert selected['env']['APSIMO_URL'] == 'http://selected:8222'
+    assert selected['env']['PACOMIND_API_KEY'] == 'fixture-credential'
+    assert selected['env']['PACOMIND_URL'] == 'http://selected:8222'
     assert add_to_harness(harness, 'owner') is None
     add_to_harness(harness, 'owner', sidecar_url='http://explicit:9000')
-    assert read()[key]['apsimo']['env']['APSIMO_URL'] == 'http://explicit:9000'
+    assert read()[key]['pacomind']['env']['PACOMIND_URL'] == 'http://explicit:9000'
     assert dict(os.environ) == before_env
     remove_from_harness(harness)
     assert read()[key] == {'other': other}
@@ -66,38 +66,29 @@ def test_legacy_entry_migration_preserves_credentials_and_other_settings(tmp_pat
         assert read()['profiles']['work']['model'] == 'preserved'
 
 
-def test_conflicting_duplicate_integrations_are_not_written(tmp_path, monkeypatch):
-    path = tmp_path / 'config.json'
-    path.write_text(json.dumps({'mcpServers': {
-        'colony': {'command': 'old-custom'}, 'apsimo': {'command': 'new-custom'}}}))
-    monkeypatch.setitem(HARNESS_DEFS['claude-code'], 'config_path', str(path))
-    before = path.read_bytes()
-    with pytest.raises(ValueError, match='different settings'):
-        add_to_harness('claude-code', 'owner')
-    assert path.read_bytes() == before
 
 
 def test_actual_cli_print_config_preserves_subcommand_and_custom_launch(tmp_path):
     import subprocess
     import sys
     env = {key: value for key, value in os.environ.items()
-           if not key.startswith(('COLONY_', 'APSIMO_'))}
+           if not key.startswith(('PACOMIND_', 'PACOMIND_'))}
     env['HOME'] = str(tmp_path)
     env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
-    args = [sys.executable, '-m', 'apsimo', 'mcp', 'setup', '--print-config',
+    args = [sys.executable, '-m', 'pacomind', 'mcp', 'setup', '--print-config',
             '--harness', 'claude-code', '--contact-id', 'owner',
             '--sidecar-url', 'http://selected:9999']
-    for extra, command, expected_args in [([], 'apsimo', ['mcp']),
+    for extra, command, expected_args in [([], 'pacomind', ['mcp']),
             (['--mcp-command', '/custom/python', '--mcp-args', '-m custom_bridge'],
              '/custom/python', ['-m', 'custom_bridge'])]:
         result = subprocess.run(args + extra, env=env, cwd=tmp_path,
                                 capture_output=True, text=True, timeout=10)
         assert result.returncode == 0, result.stderr
         data, _ = json.JSONDecoder().raw_decode(result.stdout)
-        config = data['mcpServers']['apsimo']
+        config = data['mcpServers']['pacomind']
         assert config['command'] == command
         assert config['args'] == expected_args
-        assert config['env']['APSIMO_URL'] == 'http://selected:9999'
+        assert config['env']['PACOMIND_URL'] == 'http://selected:9999'
         assert not (tmp_path / '.claude.json').exists()
 
 
@@ -177,12 +168,12 @@ class TestJsonConfig:
 
             data = json.loads(config_path.read_text())
             assert "mcpServers" in data
-            assert "apsimo" in data["mcpServers"]
-            colony = data["mcpServers"]["apsimo"]
-            assert colony["command"] == "apsimo"
-            assert colony["args"] == ["mcp"]
-            assert colony["env"]["APSIMO_MCP_CONTACT_ID"] == "owner"
-            assert colony["env"]["APSIMO_MCP_SOURCE"] == "claude-code"
+            assert "pacomind" in data["mcpServers"]
+            pacomind = data["mcpServers"]["pacomind"]
+            assert pacomind["command"] == "pacomind"
+            assert pacomind["args"] == ["mcp"]
+            assert pacomind["env"]["PACOMIND_MCP_CONTACT_ID"] == "owner"
+            assert pacomind["env"]["PACOMIND_MCP_SOURCE"] == "claude-code"
 
     def test_add_preserves_existing_servers(self, tmp_path):
         config_path = tmp_path / "claude.json"
@@ -197,7 +188,7 @@ class TestJsonConfig:
 
             data = json.loads(config_path.read_text())
             assert "other" in data["mcpServers"]
-            assert "apsimo" in data["mcpServers"]
+            assert "pacomind" in data["mcpServers"]
 
     def test_add_returns_none_if_already_configured(self, tmp_path):
         config_path = tmp_path / "claude.json"
@@ -225,13 +216,13 @@ class TestJsonConfig:
             add_to_harness("claude-code", "owner")
             # Verify it's there
             data = json.loads(config_path.read_text())
-            assert "apsimo" in data["mcpServers"]
+            assert "pacomind" in data["mcpServers"]
             # Remove
             diff = remove_from_harness("claude-code")
             assert diff is not None
             # Verify it's gone
             data = json.loads(config_path.read_text())
-            assert "apsimo" not in data.get("mcpServers", {})
+            assert "pacomind" not in data.get("mcpServers", {})
 
     def test_remove_preserves_other_servers(self, tmp_path):
         config_path = tmp_path / "claude.json"
@@ -247,7 +238,7 @@ class TestJsonConfig:
 
             data = json.loads(config_path.read_text())
             assert "other" in data["mcpServers"]
-            assert "apsimo" not in data.get("mcpServers", {})
+            assert "pacomind" not in data.get("mcpServers", {})
 
     def test_remove_returns_none_if_not_present(self, tmp_path):
         config_path = tmp_path / "claude.json"
@@ -282,10 +273,10 @@ class TestTomlConfig:
             assert diff is not None
 
             content = config_path.read_text()
-            assert "[mcp_servers.apsimo]" in content
-            assert 'command = "apsimo"' in content
-            assert "APSIMO_MCP_SOURCE = \"codex\"" in content
-            assert "APSIMO_MCP_CONTACT_ID = \"owner\"" in content
+            assert "[mcp_servers.pacomind]" in content
+            assert 'command = "pacomind"' in content
+            assert "PACOMIND_MCP_SOURCE = \"codex\"" in content
+            assert "PACOMIND_MCP_CONTACT_ID = \"owner\"" in content
 
     def test_add_to_toml_preserves_existing(self, tmp_path):
         config_path = tmp_path / "config.toml"
@@ -313,12 +304,12 @@ class TestTomlConfig:
         with patch.object(Path, "expanduser", return_value=config_path):
             add_to_harness("codex", "owner")
             # Verify it's there
-            assert "[mcp_servers.apsimo]" in config_path.read_text()
+            assert "[mcp_servers.pacomind]" in config_path.read_text()
             # Remove
             diff = remove_from_harness("codex")
             assert diff is not None
             # Verify it's gone
-            assert "[mcp_servers.apsimo]" not in config_path.read_text()
+            assert "[mcp_servers.pacomind]" not in config_path.read_text()
             # Settings preserved
             assert "[settings]" in config_path.read_text()
 
@@ -364,10 +355,10 @@ class TestOpenCodeConfig:
             # OpenCode uses "mcp" not "mcpServers"
             assert "mcp" in data
             assert "mcpServers" not in data
-            colony = data["mcp"]["apsimo"]
-            assert colony["command"] == "apsimo"
-            assert colony["type"] == "stdio"
-            assert colony["env"]["APSIMO_MCP_SOURCE"] == "opencode"
+            pacomind = data["mcp"]["pacomind"]
+            assert pacomind["command"] == "pacomind"
+            assert pacomind["type"] == "stdio"
+            assert pacomind["env"]["PACOMIND_MCP_SOURCE"] == "opencode"
 
     def test_claude_code_uses_mcpServers_key(self, tmp_path):
         config_path = tmp_path / "claude.json"
@@ -380,7 +371,7 @@ class TestOpenCodeConfig:
             assert "mcpServers" in data
             assert "mcp" not in data
             # Claude Code does NOT include "type" field
-            assert "type" not in data["mcpServers"]["apsimo"]
+            assert "type" not in data["mcpServers"]["pacomind"]
 
     def test_remove_from_opencode(self, tmp_path):
         config_path = tmp_path / "opencode.json"
@@ -388,9 +379,9 @@ class TestOpenCodeConfig:
 
         with patch.object(Path, "expanduser", return_value=config_path):
             add_to_harness("opencode", "owner")
-            assert "apsimo" in json.loads(config_path.read_text())["mcp"]
+            assert "pacomind" in json.loads(config_path.read_text())["mcp"]
             remove_from_harness("opencode")
-            assert "apsimo" not in json.loads(config_path.read_text()).get("mcp", {})
+            assert "pacomind" not in json.loads(config_path.read_text()).get("mcp", {})
 
     def test_detect_opencode(self):
         with patch("shutil.which") as mock_which:

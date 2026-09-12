@@ -17,7 +17,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host
+from pacomind.api.routers import host
 
 
 # ---------------------------------------------------------------------------
@@ -25,7 +25,7 @@ from apsimo.api.routers import host
 # ---------------------------------------------------------------------------
 
 class _DeadBackendGraph:
-    """A wired ColonyGraph whose backing store is unreachable.
+    """A wired PacoMindGraph whose backing store is unreachable.
 
     Mirrors the live failure: the client object exists (so the sidecar
     considers memory "wired") but every operation raises, and
@@ -57,7 +57,7 @@ class _DeadBackendGraph:
 
 @pytest.fixture
 def dead_graph(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     graph = _DeadBackendGraph()
     monkeypatch.setattr(host, "_graph", graph)
     monkeypatch.setattr(host, "_presence_store", None)
@@ -110,10 +110,10 @@ async def test_turns_sync_does_not_greenlight_failed_ingestion(app, dead_graph):
 
 @pytest.mark.asyncio
 async def test_builtin_skills_actually_execute():
-    from apsimo.skills.executor import SkillExecutor
-    from apsimo.skills.registry import SkillRegistry
-    from apsimo.skills.security.guards import CapabilityGuard
-    from apsimo.skills.security.scanner import ASTScanner
+    from pacomind.skills.executor import SkillExecutor
+    from pacomind.skills.registry import SkillRegistry
+    from pacomind.skills.security.guards import CapabilityGuard
+    from pacomind.skills.security.scanner import ASTScanner
 
     registry = SkillRegistry()
     assert "subsystem_health" in registry.list_skills()
@@ -134,7 +134,7 @@ async def test_builtin_skills_actually_execute():
 
 @pytest.mark.asyncio
 async def test_briefings_returned_and_failures_surface(app, monkeypatch):
-    from apsimo.briefings.models import (
+    from pacomind.briefings.models import (
         Briefing, BriefingSection, BriefingType,
     )
 
@@ -219,7 +219,7 @@ async def test_health_canonical_memory_does_not_probe_graph(app, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_health_does_not_claim_unavailable_canonical_memory(app, monkeypatch):
-    from apsimo import turns
+    from pacomind import turns
     def unavailable(*args): raise OSError('fixture unavailable')
     monkeypatch.setattr(turns, 'get_turn_idempotency_ledger', unavailable)
     async with _client(app) as client:
@@ -237,7 +237,7 @@ async def test_health_does_not_claim_unavailable_canonical_memory(app, monkeypat
 
 @pytest.mark.asyncio
 async def test_invalid_job_type_is_400_not_500(monkeypatch):
-    from apsimo.api.routers import task_queue
+    from pacomind.api.routers import task_queue
 
     monkeypatch.setattr(task_queue, "_get_queue", lambda: object())
     app = FastAPI()
@@ -283,10 +283,10 @@ async def test_world_extract_plain_text_is_clear_400(app, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_doctor_flags_unavailable_source_store(monkeypatch):
-    from apsimo import doctor
+    from pacomind import doctor
 
     assert "server-source-memory" in doctor.SERVER_CHECK_NAMES
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "contact-fixture")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "contact-fixture")
 
     def _fake(url, api_key="", timeout=10.0):
         assert url.endswith("/v1/host/memory/sources/claims/status?contact_id=contact-fixture")

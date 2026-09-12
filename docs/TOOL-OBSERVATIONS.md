@@ -1,8 +1,8 @@
 # Remembering useful tool observations
 
-Apsimo can retain the original result of an explicitly nominated tool call for
+PacoMind can retain the original result of an explicitly nominated tool call for
 later automatic recollection. The ordinary agent can use
-`apsimo_memory_retain_observation(call_id, reason)` after a tool result supplies
+`pacomind_memory_retain_observation(call_id, reason)` after a tool result supplies
 concrete information with future value. The owner does not need to invoke the
 memory tool by name. The reason explains why the result is useful; it is not a
 replacement for its contents.

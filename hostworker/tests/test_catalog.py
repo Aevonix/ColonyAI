@@ -2,7 +2,7 @@
 
 import pytest
 
-from apsimo_hostworker.catalog import (
+from pacomind_hostworker.catalog import (
     ACTION_MODEL_TOOL_SCHEMAS,
     ACTION_TOOL_NAMES,
     GRANT_AUTHORIZABLE_TOOL_NAMES,
@@ -11,22 +11,22 @@ from apsimo_hostworker.catalog import (
     ToolCatalogError,
     validate_tool_args,
 )
-from apsimo_hostworker.contract import GovernedContractError, sha256_json_ascii
+from pacomind_hostworker.contract import GovernedContractError, sha256_json_ascii
 
 
 def test_catalog_contains_exactly_the_governed_tools():
     assert ACTION_TOOL_NAMES == frozenset(
         {
-            "colony_autonomy_disable",
-            "colony_autonomy_enable",
-            "colony_create_commitment",
-            "colony_initiative_feedback",
-            "colony_record_insight",
-            "colony_research",
-            "colony_resolve_commitment",
-            "colony_task_complete",
-            "colony_task_dismiss",
-            "colony_task_snooze",
+            "pacomind_autonomy_disable",
+            "pacomind_autonomy_enable",
+            "pacomind_create_commitment",
+            "pacomind_initiative_feedback",
+            "pacomind_record_insight",
+            "pacomind_research",
+            "pacomind_resolve_commitment",
+            "pacomind_task_complete",
+            "pacomind_task_dismiss",
+            "pacomind_task_snooze",
         }
     )
 
@@ -44,20 +44,20 @@ def test_autonomy_tools_are_non_grantable():
     # Owner decision: autonomy posture must always be a per-message owner
     # approval and can never be authorized by a standing grant.
     assert NON_GRANTABLE_TOOL_NAMES == frozenset(
-        {"colony_autonomy_enable", "colony_autonomy_disable"}
+        {"pacomind_autonomy_enable", "pacomind_autonomy_disable"}
     )
     # This must stay the exact complement used by the deployed worker's grant
     # allowlist (_GRANT_AUTHORIZABLE_TOOLS).
     assert GRANT_AUTHORIZABLE_TOOL_NAMES == frozenset(
         {
-            "colony_create_commitment",
-            "colony_initiative_feedback",
-            "colony_record_insight",
-            "colony_research",
-            "colony_resolve_commitment",
-            "colony_task_complete",
-            "colony_task_dismiss",
-            "colony_task_snooze",
+            "pacomind_create_commitment",
+            "pacomind_initiative_feedback",
+            "pacomind_record_insight",
+            "pacomind_research",
+            "pacomind_resolve_commitment",
+            "pacomind_task_complete",
+            "pacomind_task_dismiss",
+            "pacomind_task_snooze",
         }
     )
 
@@ -85,7 +85,7 @@ def test_every_endpoint_tool_has_a_golden_valid_vector(golden_vectors):
 
 def test_unknown_tool_is_refused():
     with pytest.raises(ToolCatalogError):
-        validate_tool_args("colony_send_message", {})
+        validate_tool_args("pacomind_send_message", {})
     with pytest.raises(ToolCatalogError):
         validate_tool_args(None, {})
 
@@ -97,50 +97,50 @@ def test_validators_reject_non_mapping_args():
 
 
 def test_approval_display_matches_deployed_worker_wording():
-    display = TOOL_CATALOG["colony_task_snooze"].approval_display(
+    display = TOOL_CATALOG["pacomind_task_snooze"].approval_display(
         {"task_id": "task-1", "hours": 3}
     )
     assert display == {
-        "summary": 'Snooze Colony task "task-1" for 3 hours',
-        "target": "Private Colony task or initiative ledger",
+        "summary": 'Snooze PacoMind task "task-1" for 3 hours',
+        "target": "Private PacoMind task or initiative ledger",
         "risk": (
             "Defers one internal task or initiative until the bounded "
             "snooze expires"
         ),
     }
-    display = TOOL_CATALOG["colony_autonomy_enable"].approval_display({})
+    display = TOOL_CATALOG["pacomind_autonomy_enable"].approval_display({})
     assert display == {
-        "summary": "Enable Colony autonomous scheduling",
-        "target": "Colony autonomy scheduler",
+        "summary": "Enable PacoMind autonomous scheduling",
+        "target": "PacoMind autonomy scheduler",
         "risk": (
-            "Colony may begin bounded autonomous work under its configured "
+            "PacoMind may begin bounded autonomous work under its configured "
             "policies"
         ),
     }
     # Long values are ellipsized at 300 characters exactly like the deployed
     # worker's _preview (299 characters + one ellipsis, JSON-quoted ASCII).
-    display = TOOL_CATALOG["colony_create_commitment"].approval_display(
+    display = TOOL_CATALOG["pacomind_create_commitment"].approval_display(
         {"description": "d" * 400}
     )
     assert display["summary"] == (
-        'Create Colony commitment "%s\\u2026"' % ("d" * 299)
+        'Create PacoMind commitment "%s\\u2026"' % ("d" * 299)
     )
 
 
 def test_every_tool_has_display_metadata():
     samples = {
-        "colony_autonomy_disable": {},
-        "colony_autonomy_enable": {},
-        "colony_create_commitment": {"description": "x"},
-        "colony_initiative_feedback": {
+        "pacomind_autonomy_disable": {},
+        "pacomind_autonomy_enable": {},
+        "pacomind_create_commitment": {"description": "x"},
+        "pacomind_initiative_feedback": {
             "initiative_id": "i-1", "action": "actioned",
         },
-        "colony_record_insight": {"content": "x", "insight_type": "fact"},
-        "colony_research": {"topic": "x"},
-        "colony_resolve_commitment": {"commitment_id": "c-1"},
-        "colony_task_complete": {"task_id": "t-1"},
-        "colony_task_dismiss": {"task_id": "t-1"},
-        "colony_task_snooze": {"task_id": "t-1"},
+        "pacomind_record_insight": {"content": "x", "insight_type": "fact"},
+        "pacomind_research": {"topic": "x"},
+        "pacomind_resolve_commitment": {"commitment_id": "c-1"},
+        "pacomind_task_complete": {"task_id": "t-1"},
+        "pacomind_task_dismiss": {"task_id": "t-1"},
+        "pacomind_task_snooze": {"task_id": "t-1"},
     }
     assert set(samples) == set(ACTION_TOOL_NAMES)
     for name, args in samples.items():

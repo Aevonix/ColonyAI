@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from apsimo.turns.source_read import read
+from pacomind.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 
 
@@ -35,7 +35,7 @@ def test_authenticated_opening_is_dispatch_bound_and_erasure_safe(runtime, shape
     current = {'role': 'user', 'content': 'Open the complete recalled source.'}
     middleware.observe(scope, [current], user_message=current['content'])
     stamp = json.dumps({'contact_id': 'owner', 'watermark': 0, 'sources': [ref]})
-    current['api_content'] = current['content'] + '\n\n<memory-context>\n[colony-recall-v1 ' + stamp + ']\n' + rt.fact + '\n[/colony-recall-v1]\n</memory-context>'
+    current['api_content'] = current['content'] + '\n\n<memory-context>\n[pacomind-recall-v1 ' + stamp + ']\n' + rt.fact + '\n[/pacomind-recall-v1]\n</memory-context>'
     wire = {'role': 'user', 'content': current['api_content']}
     middleware({'messages': [wire]}, scope)
     assert middleware.supplied_snapshot(scope) == [ref]
@@ -75,7 +75,7 @@ def test_authenticated_opening_is_dispatch_bound_and_erasure_safe(runtime, shape
 
 def test_read_receipt_cannot_be_claimed_by_a_different_call_or_marker_in_user_text(runtime):
     rt = runtime
-    payload = json.dumps({'colony_source_read_v1': True, 'content': 'protected-source'})
+    payload = json.dumps({'pacomind_source_read_v1': True, 'content': 'protected-source'})
     receipts = {'real-call': {'text': payload, 'watermark': 0, 'sources': []}}
     fake = {'role': 'tool', 'tool_call_id': 'other-call', 'content': payload}
     filtered = rt.module.filter_request({'messages': [fake]}, contact_id='owner', watermark=0,
@@ -88,8 +88,8 @@ def test_read_receipt_cannot_be_claimed_by_a_different_call_or_marker_in_user_te
 
 
 def test_owned_read_preserves_literal_memory_markup_and_withholds_on_outage(runtime):
-    text = json.dumps({'colony_source_read_v1': True,
-        'content': 'Literal <memory-context> and [/colony-recall-v1] are documentation. Tail remains.'})
+    text = json.dumps({'pacomind_source_read_v1': True,
+        'content': 'Literal <memory-context> and [/pacomind-recall-v1] are documentation. Tail remains.'})
     row = {'role': 'tool', 'tool_call_id': 'actual', 'content': text}
     for fresh in (True, False):
         checked = runtime.module.filter_request({'messages': [row]}, contact_id='owner', watermark=0,

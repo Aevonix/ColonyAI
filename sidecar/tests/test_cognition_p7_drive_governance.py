@@ -15,8 +15,8 @@ import threading
 
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.cognition.drive_governance import (
+from pacomind.api.authority import RequestAuthority
+from pacomind.cognition.drive_governance import (
     CharterRevisionV1,
     DriveGovernance,
     DriveGovernanceError,
@@ -29,11 +29,11 @@ from apsimo.cognition.drive_governance import (
     ScopeV1,
     drive_governance_mode,
 )
-from apsimo.cognition.goal_spine import (
+from pacomind.cognition.goal_spine import (
     CognitionSpineStore,
     PolicyDecisionV1,
 )
-from apsimo.initiatives.approval_authority import (
+from pacomind.initiatives.approval_authority import (
     ApprovalAuthorityError,
     ApprovalAuthorityStore,
     ApprovalSubjectBinding,
@@ -266,15 +266,15 @@ def signal(item, candidate, value, *, suffix="1", state="active", scope=None):
 
 
 def test_mode_is_default_off_and_invalid_values_fail_off(monkeypatch):
-    monkeypatch.delenv("COLONY_DRIVE_GOVERNANCE_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_DRIVE_GOVERNANCE_MODE", raising=False)
     assert drive_governance_mode() == "off"
-    monkeypatch.setenv("COLONY_DRIVE_GOVERNANCE_MODE", "surprise")
+    monkeypatch.setenv("PACOMIND_DRIVE_GOVERNANCE_MODE", "surprise")
     assert drive_governance_mode() == "off"
-    monkeypatch.setenv("COLONY_DRIVE_GOVERNANCE_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_DRIVE_GOVERNANCE_MODE", "shadow")
     assert drive_governance_mode() == "shadow"
-    monkeypatch.setenv("COLONY_DRIVE_GOVERNANCE_MODE", "live")
+    monkeypatch.setenv("PACOMIND_DRIVE_GOVERNANCE_MODE", "live")
     assert drive_governance_mode() == "live"
-    monkeypatch.setenv("COLONY_DRIVE_GOVERNANCE_MODE", "bootstrap")
+    monkeypatch.setenv("PACOMIND_DRIVE_GOVERNANCE_MODE", "bootstrap")
     assert drive_governance_mode() == "bootstrap"
 
 
@@ -447,7 +447,7 @@ def test_typed_projection_hides_arbitrary_and_orphan_authority_rows(tmp_path):
         canonical["request_id"],
     ]
     assert projections[0]["schema"] ==\
-        "ColonyCharterTransitionApprovalProjectionV1"
+        "PacoMindCharterTransitionApprovalProjectionV1"
     assert "scope" not in projections[0]
     assert projections[0]["authority_evidence"] is None
     assert inventory["invalid_hidden_count"] == 1
@@ -736,7 +736,7 @@ def test_charter_cannot_broaden_a_private_drive_scope(tmp_path):
         owner_authority(scope=False),
         RequestAuthority(
             principal_id="legacy",
-            credential_id="COLONY_API_KEY",
+            credential_id="PACOMIND_API_KEY",
             scopes=frozenset({"*"}),
             viewer_person_id=None,
             person_ids=frozenset(),

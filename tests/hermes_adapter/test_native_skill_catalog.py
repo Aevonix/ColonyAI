@@ -20,23 +20,23 @@ skill=home/'skills'/'manual-index';skill.mkdir(parents=True)
 (skill/'SKILL.md').write_text('---\nname: manual-index\ndescription: Organize printed manuals with colored tabs.\n---\nUse one color for each manual category.\n')
 def no_network(*args,**kwargs):raise AssertionError('Skill catalog test is local')
 socket.socket.connect=no_network;socket.create_connection=no_network
-from apsimo.api.routers import host
-from apsimo.api.schemas.host import ContextAssembleRequest
-from apsimo.skills.registry import SkillRegistry
-from apsimo_memory.provider import ApsimoMemoryProvider
+from pacomind.api.routers import host
+from pacomind.api.schemas.host import ContextAssembleRequest
+from pacomind.skills.registry import SkillRegistry
+from pacomind_memory.provider import PacoMindMemoryProvider
 host._skills_registry=SkillRegistry()
 body=ContextAssembleRequest.model_validate({'identity':{'host_id':'fixture-host'},
     'context':{'session_id':'fixture-session','contact_id':'fixture-person'},
     'incoming_message':{'role':'user','content':'How should I index the manuals?'}})
 response=asyncio.run(host.context_assemble(body))
 sections=[section.model_dump() for section in response.sections]
-context=ApsimoMemoryProvider.__new__(ApsimoMemoryProvider)._format_sections(sections)
+context=PacoMindMemoryProvider.__new__(PacoMindMemoryProvider)._format_sections(sections)
 assert 'behavioral_correction' not in context and 'Available Skills' not in context,context
 from agent.prompt_builder import build_skills_system_prompt
 from tools.skills_tool import skills_list,skill_view
 # Derive availability from native selected schemas, including an explicit
 # deferral override. A bridge or a group summary alone grants no skill tool.
-from apsimo_hermes.skill_context import SkillContext, _tool_names
+from pacomind_hermes.skill_context import SkillContext, _tool_names
 from model_tools import get_tool_definitions
 from tools.tool_search import ToolSearchConfig, assemble_tool_defs, bridge_tool_schemas
 definitions=get_tool_definitions(enabled_toolsets=['skills'],quiet_mode=True,skip_tool_search_assembly=True)
@@ -65,15 +65,15 @@ assert not missing.get('success'),missing
 # existing profile. Exercise discovery and real native tool-result delivery.
 from types import SimpleNamespace as NS
 from unittest.mock import MagicMock, patch
-from apsimo import setup
-from apsimo.setup_skills import BUNDLE_PREFIX
-from apsimo.setup_hermes import _adapter_resources
+from pacomind import setup
+from pacomind.setup_skills import BUNDLE_PREFIX
+from pacomind.setup_hermes import _adapter_resources
 from agent.skill_utils import parse_frontmatter
 assert setup.run_init(None, NS(skills_only=True, hermes_home=str(home), adapter_wheel=sys.argv[4])) == 0
 bundled={name[len(BUNDLE_PREFIX):-len('/SKILL.md')]:content.decode()
     for name,content in _adapter_resources(sys.argv[4]).items()
     if name.startswith(BUNDLE_PREFIX) and name.endswith('/SKILL.md')}
-assert 'apsimo-deep-research' in bundled
+assert 'pacomind-deep-research' in bundled
 from agent.prompt_builder import clear_skills_system_prompt_cache
 # This process already built a catalog above. An ordinary fresh process has
 # an empty cache; installation intentionally does not mutate a live gateway.
@@ -130,11 +130,11 @@ print(json.dumps({'sidecar_internal_catalog_absent':True,'actual_native_skill_in
 
 
 def test_native_skill_index_and_view_remain_authoritative(artifacts, tmp_path):
-    native = os.environ.get('COLONY_TEST_HERMES_PATH') or os.environ.get('HERMES_TEST_SOURCE', '')
+    native = os.environ.get('PACOMIND_TEST_HERMES_PATH') or os.environ.get('HERMES_TEST_SOURCE', '')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native skill catalog integration')
     env = environment(tmp_path)
-    env.update(COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
+    env.update(PACOMIND_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = run_python('-I', '-B', '-c', PROBE, artifacts[3], ROOT/'sidecar', native, artifacts[1], cwd=tmp_path, env=env)
     assert '"actual_native_skill_list_and_view": true' in result.stdout
     assert '"bundled_skill_delivered_to_native_request": true' in result.stdout

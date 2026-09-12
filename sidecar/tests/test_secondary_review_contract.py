@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apsimo.gate.config import GateConfig
-from apsimo.gate.layers.l6_review import SecondaryReviewer
-from apsimo.gate.models import GatePayload
-from apsimo.gate.pipeline import ResponseGate
-from apsimo.intelligence.relationships.trust_tiers import TrustTier
+from pacomind.gate.config import GateConfig
+from pacomind.gate.layers.l6_review import SecondaryReviewer
+from pacomind.gate.models import GatePayload
+from pacomind.gate.pipeline import ResponseGate
+from pacomind.intelligence.relationships.trust_tiers import TrustTier
 
 
 def payload():

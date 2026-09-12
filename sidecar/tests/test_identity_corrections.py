@@ -3,10 +3,10 @@ import json
 
 import pytest
 
-from apsimo.contacts.comms import CommsLog
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.identity.participants import ParticipantResolver
+from pacomind.contacts.comms import CommsLog
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.identity.participants import ParticipantResolver
 
 
 @pytest.fixture
@@ -112,8 +112,8 @@ async def test_migration_retires_only_name_guesses_and_preserves_candidate_evide
 
 
 async def test_pending_correction_reconciles_after_restart_without_another_queue(store, tmp_path):
-    from apsimo.turns.idempotency import TurnIdempotencyLedger
-    from apsimo.turns.source_attribution import correct
+    from pacomind.turns.idempotency import TurnIdempotencyLedger
+    from pacomind.turns.source_attribution import correct
     old, new = await store.create(display_name='First'), await store.create(display_name='Second')
     await store.add_handle(old.contact_id, 'email', 'reply@example.test')
     args = dict(operation_id='resume', performed_by='owner-test', gateway='email', address='reply@example.test',
@@ -138,8 +138,8 @@ async def test_pending_correction_reconciles_after_restart_without_another_queue
 
 
 async def test_conflicted_receipt_does_not_block_later_identity_reconciliation(store, tmp_path):
-    from apsimo.turns.idempotency import TurnIdempotencyLedger, SourceErased
-    from apsimo.turns.source_attribution import correct
+    from pacomind.turns.idempotency import TurnIdempotencyLedger, SourceErased
+    from pacomind.turns.source_attribution import correct
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     old, new = await store.create(display_name='First'), await store.create(display_name='Second')
     for sid in ('erased', 'survives'):

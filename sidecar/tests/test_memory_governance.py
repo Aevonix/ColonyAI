@@ -16,15 +16,15 @@ from unittest.mock import AsyncMock, MagicMock, patch as mock_patch
 
 import pytest
 
-from apsimo.intelligence.graph.client import (
-    ColonyGraph,
+from pacomind.intelligence.graph.client import (
+    PacoMindGraph,
     EpistemicState,
     GraphConfig,
     MAX_IMPORTANCE,
     MemorySourceType,
     SOURCE_RELIABILITY,
 )
-from apsimo.intelligence.graph.reconciler import FileReconciler
+from pacomind.intelligence.graph.reconciler import FileReconciler
 
 
 # ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ from apsimo.intelligence.graph.reconciler import FileReconciler
 class TestComputeEffectiveConfidence:
     def test_user_assertion_max_confidence(self):
         now = datetime.now(timezone.utc)
-        conf = ColonyGraph.compute_effective_confidence(
+        conf = PacoMindGraph.compute_effective_confidence(
             base_confidence=1.0,
             source_reliability=SOURCE_RELIABILITY[MemorySourceType.USER_ASSERTION],
             corroboration_count=0,
@@ -49,7 +49,7 @@ class TestComputeEffectiveConfidence:
 
     def test_inference_lower_confidence(self):
         now = datetime.now(timezone.utc)
-        conf = ColonyGraph.compute_effective_confidence(
+        conf = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.7,
             source_reliability=SOURCE_RELIABILITY[MemorySourceType.INFERENCE],
             corroboration_count=0,
@@ -64,7 +64,7 @@ class TestComputeEffectiveConfidence:
 
     def test_corroboration_vs_contradiction(self):
         now = datetime.now(timezone.utc)
-        conf_corro = ColonyGraph.compute_effective_confidence(
+        conf_corro = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.5,
             source_reliability=0.9,
             corroboration_count=3,
@@ -75,7 +75,7 @@ class TestComputeEffectiveConfidence:
             epistemic_state=EpistemicState.INFERRED.value,
             now=now,
         )
-        conf_contra = ColonyGraph.compute_effective_confidence(
+        conf_contra = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.5,
             source_reliability=0.9,
             corroboration_count=0,
@@ -91,7 +91,7 @@ class TestComputeEffectiveConfidence:
 
     def test_contradiction_penalty(self):
         now = datetime.now(timezone.utc)
-        conf_base = ColonyGraph.compute_effective_confidence(
+        conf_base = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.8,
             source_reliability=0.9,
             corroboration_count=0,
@@ -102,7 +102,7 @@ class TestComputeEffectiveConfidence:
             epistemic_state=EpistemicState.INFERRED.value,
             now=now,
         )
-        conf_penalty = ColonyGraph.compute_effective_confidence(
+        conf_penalty = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.8,
             source_reliability=0.9,
             corroboration_count=0,
@@ -117,7 +117,7 @@ class TestComputeEffectiveConfidence:
 
     def test_recall_reinforcement(self):
         now = datetime.now(timezone.utc)
-        conf_0 = ColonyGraph.compute_effective_confidence(
+        conf_0 = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.8,
             source_reliability=0.9,
             corroboration_count=0,
@@ -128,7 +128,7 @@ class TestComputeEffectiveConfidence:
             epistemic_state=EpistemicState.INFERRED.value,
             now=now,
         )
-        conf_10 = ColonyGraph.compute_effective_confidence(
+        conf_10 = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.8,
             source_reliability=0.9,
             corroboration_count=0,
@@ -144,7 +144,7 @@ class TestComputeEffectiveConfidence:
     def test_recency_discount(self):
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=365)
-        conf_old = ColonyGraph.compute_effective_confidence(
+        conf_old = PacoMindGraph.compute_effective_confidence(
             base_confidence=1.0,
             source_reliability=1.0,
             corroboration_count=0,
@@ -155,7 +155,7 @@ class TestComputeEffectiveConfidence:
             epistemic_state=EpistemicState.INFERRED.value,
             now=now,
         )
-        conf_new = ColonyGraph.compute_effective_confidence(
+        conf_new = PacoMindGraph.compute_effective_confidence(
             base_confidence=1.0,
             source_reliability=1.0,
             corroboration_count=0,
@@ -170,7 +170,7 @@ class TestComputeEffectiveConfidence:
 
     def test_verification_boost(self):
         now = datetime.now(timezone.utc)
-        conf_no_verify = ColonyGraph.compute_effective_confidence(
+        conf_no_verify = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.8,
             source_reliability=0.9,
             corroboration_count=0,
@@ -181,7 +181,7 @@ class TestComputeEffectiveConfidence:
             epistemic_state=EpistemicState.INFERRED.value,
             now=now,
         )
-        conf_verified = ColonyGraph.compute_effective_confidence(
+        conf_verified = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.8,
             source_reliability=0.9,
             corroboration_count=0,
@@ -197,7 +197,7 @@ class TestComputeEffectiveConfidence:
     def test_verified_state_floor(self):
         now = datetime.now(timezone.utc)
         old = now - timedelta(days=365 * 5)
-        conf = ColonyGraph.compute_effective_confidence(
+        conf = PacoMindGraph.compute_effective_confidence(
             base_confidence=0.5,
             source_reliability=0.5,
             corroboration_count=0,
@@ -212,7 +212,7 @@ class TestComputeEffectiveConfidence:
 
     def test_stale_state_penalty(self):
         now = datetime.now(timezone.utc)
-        conf = ColonyGraph.compute_effective_confidence(
+        conf = PacoMindGraph.compute_effective_confidence(
             base_confidence=1.0,
             source_reliability=1.0,
             corroboration_count=0,
@@ -227,7 +227,7 @@ class TestComputeEffectiveConfidence:
 
     def test_deprecated_state_penalty(self):
         now = datetime.now(timezone.utc)
-        conf = ColonyGraph.compute_effective_confidence(
+        conf = PacoMindGraph.compute_effective_confidence(
             base_confidence=1.0,
             source_reliability=1.0,
             corroboration_count=0,

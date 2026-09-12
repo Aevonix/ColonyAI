@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.cognition.external_events import ExternalCognitionEventV1
-from apsimo.self_model.situation import (
+from pacomind.cognition.external_events import ExternalCognitionEventV1
+from pacomind.self_model.situation import (
     AppropriatenessGate,
     JournalSituationAdapter,
     SituationObservationV1,
@@ -194,7 +194,7 @@ def test_negative_service_state_remains_visible_to_policy():
 
 
 def test_external_service_projection_is_revalidated_and_unpacked(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     authority = SimpleNamespace(
         authenticated=True,
         legacy=False,
@@ -254,7 +254,7 @@ def test_external_service_projection_is_revalidated_and_unpacked(monkeypatch):
 
 
 def test_external_service_projection_rejects_invalid_typed_state(monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
     authority = SimpleNamespace(
         authenticated=True,
         legacy=False,
@@ -290,7 +290,7 @@ def test_external_service_projection_rejects_invalid_typed_state(monkeypatch):
 async def test_task_queue_resource_observation_uses_fresh_worker_truth(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "person-owner")
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "person-owner")
 
     class Queue:
         def execution_readiness(self):
@@ -388,8 +388,8 @@ def test_current_outreach_channel_field_is_supported():
 
 
 def test_reducer_replays_journal_atomically_and_advances_cursor(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_SITUATION_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_SITUATION_BOOTSTRAP", "replay")
     event = journal_event(seq=1)
 
     def replay(*, after_seq, limit):
@@ -416,8 +416,8 @@ def test_reducer_replays_journal_atomically_and_advances_cursor(tmp_path, monkey
 
 
 def test_situation_reducer_stops_on_corrupt_journal(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_SITUATION_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_SITUATION_BOOTSTRAP", "replay")
     event = journal_event(seq=1)
 
     def replay(*, after_seq, limit):
@@ -442,8 +442,8 @@ def test_situation_reducer_stops_on_corrupt_journal(tmp_path, monkeypatch):
 
 
 def test_situation_reducer_stops_on_journal_rewind(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_SITUATION_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_SITUATION_BOOTSTRAP", "replay")
     s = store(tmp_path)
     s.initialize_cursor(
         "situation-spine-v1", 5, bootstrap_mode="replay",
@@ -472,8 +472,8 @@ def test_situation_reducer_stops_on_journal_rewind(tmp_path, monkeypatch):
 def test_situation_internal_gap_requires_explicit_acknowledgement(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_SITUATION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_SITUATION_BOOTSTRAP", "replay")
+    monkeypatch.setenv("PACOMIND_SITUATION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_SITUATION_BOOTSTRAP", "replay")
     events = [journal_event(seq=1), journal_event(seq=3)]
     events[1]["occurredAt"] = "2027-01-15T08:00:02+00:00"
     events[1]["recordedAt"] = "2027-01-15T08:00:03+00:00"
@@ -498,7 +498,7 @@ def test_situation_internal_gap_requires_explicit_acknowledgement(
     assert stopped["processed"] == 1
     assert s.cursor(reducer.consumer_id) == 1
 
-    monkeypatch.setenv("COLONY_SITUATION_GAP_POLICY", "acknowledge")
+    monkeypatch.setenv("PACOMIND_SITUATION_GAP_POLICY", "acknowledge")
     resumed = reducer.run_once()
     assert "error" not in resumed, resumed
     assert resumed["processed"] == 1

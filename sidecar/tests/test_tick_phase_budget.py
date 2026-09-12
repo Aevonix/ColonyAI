@@ -18,9 +18,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop, LoopStats
-from apsimo.autonomy.config import AutonomyConfig
-from apsimo.intelligence.graph import client as client_mod
+from pacomind.autonomy.loop import AutonomyLoop, LoopStats
+from pacomind.autonomy.config import AutonomyConfig
+from pacomind.intelligence.graph import client as client_mod
 
 
 # --- one write per batch --------------------------------------------------------
@@ -74,7 +74,7 @@ class _ConfidenceFixture:
             for i in range(count)
         ]
         self.queries = []
-        g = client_mod.ColonyGraph.__new__(client_mod.ColonyGraph)
+        g = client_mod.PacoMindGraph.__new__(client_mod.PacoMindGraph)
         g.driver = _Driver(self)
         g.database = "neo4j"
         self.graph = g

@@ -9,8 +9,8 @@ from unittest.mock import Mock
 import pytest
 from fastapi.testclient import TestClient
 
-from apsimo.sessions.reports import SessionReport, SessionReportStore
-from apsimo.api.schemas.host import (
+from pacomind.sessions.reports import SessionReport, SessionReportStore
+from pacomind.api.schemas.host import (
     SessionReportRequest,
     ContextDigestResponse,
     AgentSnapshotSystemState,
@@ -113,19 +113,19 @@ class TestSessionReportEndpoint:
 
     @pytest.fixture
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-        from apsimo.api.routers.host import (
+        from pacomind.api.routers.host import (
             set_telemetry,
             set_autonomy_loop,
             set_session_report_store,
             set_initiative_store,
         )
-        from apsimo.server import create_app
-        from apsimo.telemetry import TelemetryStore
-        from apsimo.initiatives.store import InitiativeStore
+        from pacomind.server import create_app
+        from pacomind.telemetry import TelemetryStore
+        from pacomind.initiatives.store import InitiativeStore
 
-        from apsimo.api.routers import host as host_mod
+        from pacomind.api.routers import host as host_mod
 
-        monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+        monkeypatch.setenv("PACOMIND_API_KEY", "test-api-key")
 
         # Save module globals — leaking a Mock autonomy loop poisons
         # other test modules (e.g. test_sidecar's not-wired tests).
@@ -196,7 +196,7 @@ class TestSessionReportEndpoint:
 
     def test_store_store_not_ready(self, client: TestClient, monkeypatch):
         """Return 501 if the store global is None."""
-        import apsimo.api.routers.host as host_router
+        import pacomind.api.routers.host as host_router
 
         monkeypatch.setattr(host_router, "_session_report_store", None)
         resp = client.post(
@@ -216,19 +216,19 @@ class TestContextDigestEndpoint:
 
     @pytest.fixture
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
-        from apsimo.api.routers.host import (
+        from pacomind.api.routers.host import (
             set_telemetry,
             set_autonomy_loop,
             set_session_report_store,
             set_initiative_store,
         )
-        from apsimo.server import create_app
-        from apsimo.telemetry import TelemetryStore
-        from apsimo.initiatives.store import InitiativeStore
+        from pacomind.server import create_app
+        from pacomind.telemetry import TelemetryStore
+        from pacomind.initiatives.store import InitiativeStore
 
-        from apsimo.api.routers import host as host_mod
+        from pacomind.api.routers import host as host_mod
 
-        monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+        monkeypatch.setenv("PACOMIND_API_KEY", "test-api-key")
 
         # Save module globals — leaking a Mock autonomy loop poisons
         # other test modules (e.g. test_sidecar's not-wired tests).

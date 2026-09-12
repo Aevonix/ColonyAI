@@ -10,12 +10,12 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.schemas.host import MemoryReadRequest
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.documents import disposition
-from apsimo.turns.idempotency import source_message_hash
-from apsimo.turns.source_read import read
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.schemas.host import MemoryReadRequest
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.documents import disposition
+from pacomind.turns.idempotency import source_message_hash
+from pacomind.turns.source_read import read
 from test_native_request_erasure import runtime, freshness_response
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_documents import pdf_bytes
@@ -85,8 +85,8 @@ def all_content(original, **changes):
 
 
 def test_page_chunks_keep_original_page_numbers_without_parsing_or_returning_original_bytes(original, monkeypatch):
-    from apsimo.turns.media import SourceMedia
-    from apsimo.turns import documents
+    from pacomind.turns.media import SourceMedia
+    from pacomind.turns import documents
     def forbidden(*args, **kwargs):
         raise AssertionError('readback must not invoke a parser or generic asset read')
     monkeypatch.setattr(SourceMedia, 'read', forbidden)
@@ -170,7 +170,7 @@ def test_canonical_handle_cannot_borrow_another_owner_and_erase_respects_shared_
 
 
 def test_derivative_change_racing_readback_is_withheld(original, monkeypatch):
-    module = importlib.import_module('apsimo.turns.source_read')
+    module = importlib.import_module('pacomind.turns.source_read')
     previous = module._document_page
     changed = False
     def racing(*args, **kwargs):
@@ -187,8 +187,8 @@ def test_derivative_change_racing_readback_is_withheld(original, monkeypatch):
 
 @pytest.mark.parametrize('damage', ['missing', 'corrupt', 'oversized'])
 def test_missing_or_corrupt_original_never_serves_normal_document_evidence(original, damage):
-    from apsimo.turns.documents import MAX_DOCUMENT_BYTES
-    from apsimo.turns.media import SourceMedia
+    from pacomind.turns.documents import MAX_DOCUMENT_BYTES
+    from pacomind.turns.media import SourceMedia
     first = opened(original, page=3)
     path = SourceMedia(original[0]).store._original_path(ASSET, 'application/pdf')
     if damage == 'missing':
@@ -252,7 +252,7 @@ def document_runtime(runtime):
     current = {'role': 'user', 'content': 'Open the original numbered PDF page.'}
     rt.middleware.observe(rt.scope, [current], user_message=current['content'])
     stamp = json.dumps({'contact_id': 'owner', 'watermark': 0, 'sources': [rt.ref]})
-    current['api_content'] = current['content'] + '\n\n<memory-context>\n[colony-recall-v1 ' + stamp + ']\n' + ASSET + '\n[/colony-recall-v1]\n</memory-context>'
+    current['api_content'] = current['content'] + '\n\n<memory-context>\n[pacomind-recall-v1 ' + stamp + ']\n' + ASSET + '\n[/pacomind-recall-v1]\n</memory-context>'
     rt.wire = {'role': 'user', 'content': current['api_content']}
     rt.middleware({'messages': [rt.wire]}, rt.scope)
     rt.helper = importlib.import_module(rt.module.__package__ + '.source_read')
@@ -272,7 +272,7 @@ def test_native_dispatch_revalidates_actual_document_derivative_and_corrections(
         request = {'input': [rt.wire, {'type': 'function_call_output', 'call_id': 'actual-document', 'output': result}]}
     elif shape == 'anthropic':
         request = {'messages': [rt.wire, {'role': 'assistant', 'content': [{'type': 'tool_use',
-            'id': 'actual-document', 'name': 'colony_memory_read_source', 'input': args}]},
+            'id': 'actual-document', 'name': 'pacomind_memory_read_source', 'input': args}]},
             {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'actual-document', 'content': result}]}]}
     else:
         request = {'messages': [rt.wire, {'role': 'tool', 'tool_call_id': 'actual-document', 'content': result}]}
@@ -287,11 +287,11 @@ def test_native_dispatch_revalidates_actual_document_derivative_and_corrections(
     elif change == 'erase':
         rt.ledger.erase_sources(contact_id='owner', turn_ids=['document'])
     elif change == 'attribution':
-        from apsimo.turns.source_attribution import correct
+        from pacomind.turns.source_attribution import correct
         correct(rt.ledger, operation_id='identity-correction', performed_by='operator', old_contact_id='owner',
                 contact_id='actual-person', source_ids=['document'], evidence_refs=['owner-confirmation'])
     elif change == 'missing_original':
-        from apsimo.turns.media import SourceMedia
+        from pacomind.turns.media import SourceMedia
         SourceMedia(rt.ledger).store._original_path(ASSET, 'application/pdf').unlink()
     else:
         rt.client.post = lambda *args, **kwargs: (_ for _ in ()).throw(OSError('offline'))

@@ -6,11 +6,11 @@ import sqlite3
 from fastapi.testclient import TestClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.commitments.local_work import LocalWork
-from apsimo.commitments.store import CommitmentStore
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.turns.local_work import local_work_view
+from pacomind.api.routers import host
+from pacomind.commitments.local_work import LocalWork
+from pacomind.commitments.store import CommitmentStore
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.turns.local_work import local_work_view
 from test_commitment_work import work_app
 from test_hermes_general_governance import runtime, _pre, _tool
 
@@ -19,12 +19,12 @@ from test_hermes_general_governance import runtime, _pre, _tool
 def local_api(tmp_path, monkeypatch):
     state = tmp_path/'state'; state.mkdir()
     native = tmp_path/'native'; (native/'cron').mkdir(parents=True)
-    monkeypatch.setenv('COLONY_STATE_DIR', str(state))
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'cid-owner')
-    monkeypatch.setenv('COLONY_HERMES_HOME', str(native))
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(state))
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'cid-owner')
+    monkeypatch.setenv('PACOMIND_HERMES_HOME', str(native))
     monkeypatch.setenv('HERMES_HOME', str(native))
-    monkeypatch.setenv('COLONY_LOCAL_WORK_ENABLED', 'true')
-    monkeypatch.setenv('COLONY_LOCAL_WORK_JOB_ID', 'selected-job')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_ENABLED', 'true')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_JOB_ID', 'selected-job')
     with sqlite3.connect(native/'cron/executions.db') as db:
         db.execute('CREATE TABLE executions(id TEXT PRIMARY KEY,job_id TEXT,status TEXT)')
         db.executemany('INSERT INTO executions VALUES(?,?,?)', [(identifier*32, 'selected-job', 'running') for identifier in 'abc'])
@@ -70,7 +70,7 @@ def test_owner_typed_acceptance_dedup_assignment_and_pending_projection(local_ap
     assigned = next(item for item in claims if item)
     assert assigned['attempt_count'] == 1 and assigned['context']['accepted_turn_id'] == 'owner-turn'
     assert post(api, '/v1/host/commitments/local-work/next', {**native_run(), 'native_job_id':'other'}).status_code == 409
-    monkeypatch.setenv('COLONY_LOCAL_WORK_ENABLED', 'false')
+    monkeypatch.setenv('PACOMIND_LOCAL_WORK_ENABLED', 'false')
     assert post(api, path, value).status_code == 503
     assert commitments.get(obligation['id'])['status'] == 'pending'
 
@@ -81,10 +81,10 @@ def test_real_plugin_acceptance_requires_current_owner_turn(runtime, local_api, 
     client.post = lambda path, **kwargs: post(api, path, kwargs['json'])
     args = {'commitment_id': obligation['id'], 'question':'Compare both notes', 'sources':body(tmp_path)['sources']}
     _pre(context, session='owner', task='owner', turn='one', platform='sms', sender='+15550001')
-    result = json.loads(_tool(context, 'colony_accept_local_draft', args, session='owner', task='owner', turn='one', call='accept'))
+    result = json.loads(_tool(context, 'pacomind_accept_local_draft', args, session='owner', task='owner', turn='one', call='accept'))
     assert result['status'] == 'pending' and result['context']['accepted_session_id'] == 'owner'
     _pre(context, session='guest', task='guest', turn='two', platform='sms', sender='+15550002')
-    denied = json.loads(_tool(context, 'colony_accept_local_draft', args, session='guest', task='guest', turn='two', call='deny'))
+    denied = json.loads(_tool(context, 'pacomind_accept_local_draft', args, session='guest', task='guest', turn='two', call='deny'))
     assert 'error' in denied
 
 

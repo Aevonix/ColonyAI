@@ -4,12 +4,12 @@ import json
 
 import pytest
 
-from apsimo.intelligence.graph.client import ColonyGraph
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.vector.collections import Collection
-from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog
-from apsimo.vector.migrate import migrate_tier
-from apsimo.vector.store import VectorStore
+from pacomind.intelligence.graph.client import PacoMindGraph
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.vector.collections import Collection
+from pacomind.vector.indexes import EmbeddingIdentity, IndexCatalog
+from pacomind.vector.migrate import migrate_tier
+from pacomind.vector.store import VectorStore
 
 
 class Result:
@@ -50,7 +50,7 @@ class Driver:
 
 
 def graph(records=()):
-    value = ColonyGraph.__new__(ColonyGraph)
+    value = PacoMindGraph.__new__(PacoMindGraph)
     value.driver = Driver(records)
     value.database = 'neutral-fixture'
     value._embed_fn = value._vector_store = None

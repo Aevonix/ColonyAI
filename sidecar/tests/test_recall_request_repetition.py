@@ -5,11 +5,11 @@ import json
 
 import pytest
 
-from apsimo.memory.recall import source_candidates
-from apsimo.memory.selection import RecallSelector
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.turns.idempotency import TurnIdempotencyLedger, source_message_hash
+from pacomind.memory.recall import source_candidates
+from pacomind.memory.selection import RecallSelector
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.turns.idempotency import TurnIdempotencyLedger, source_message_hash
 from test_source_claim_projection import Model, claim
 
 
@@ -30,8 +30,8 @@ async def test_exact_request_is_supplementary_across_rerank_paths(monkeypatch, m
     observation = quotation("observation", "The connector inspection found bent pins.", "assistant")
     rows = [echo, observation, correction]
     original = deepcopy(rows)
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on" if mode == "failed" else mode)
-    monkeypatch.delenv("COLONY_RECALL_RERANK_MIN_SCORE", raising=False)
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on" if mode == "failed" else mode)
+    monkeypatch.delenv("PACOMIND_RECALL_RERANK_MIN_SCORE", raising=False)
 
     async def rank(query, documents, top_k):
         assert documents == [observation["content"], correction["content"], echo["content"]]
@@ -59,7 +59,7 @@ async def test_exact_request_is_supplementary_across_rerank_paths(monkeypatch, m
     {"contact_id": None}, {"epistemic_state": "derived_unverified"},
 ])
 async def test_qualified_or_uncertain_source_is_not_deprioritized(monkeypatch, extra):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     query = "Where was the connector yesterday?"
     qualified = quotation("qualified", query, **extra)
     rows = [qualified, quotation("other", "An unrelated observation.", "assistant")]
@@ -69,7 +69,7 @@ async def test_qualified_or_uncertain_source_is_not_deprioritized(monkeypatch, e
 
 @pytest.mark.asyncio
 async def test_history_and_assistant_observations_keep_exact_bytes(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     query = "What did we ask and observe about the connector yesterday?"
     rows = [quotation("question", "Where is the spare connector?"),
             quotation("observation", "I measured its resistance as 4 ohms.", "assistant"),
@@ -81,7 +81,7 @@ async def test_history_and_assistant_observations_keep_exact_bytes(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_no_semantic_or_case_normalization(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     rows = [quotation("case-differs", "Where is the Connector?"),
             quotation("observation", "The connector is in drawer six.")]
     selected, _ = await RecallSelector().select_context("Where is the connector?", [], rows, limit=1)
@@ -92,7 +92,7 @@ async def test_no_semantic_or_case_normalization(monkeypatch):
 @pytest.mark.parametrize("admitted", [False, True])
 async def test_pending_and_admitted_correction_survive_repeated_recall(tmp_path, monkeypatch, admitted):
     """Reconstructed ingestion/FTS/projection/packing case, not a model benchmark."""
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     query = "Which drawer currently holds the spare connector? Use retained evidence and answer briefly."
     old = "Remember this workshop fact: the spare connector is in drawer four."
     correction = "Correction: the spare connector is now in drawer six. The previous drawer is outdated. Remember the correction."

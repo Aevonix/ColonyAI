@@ -55,7 +55,7 @@ Revocation appends `revoke`.
 Models can register immutable candidate drives, submit evidence signals, and
 propose charter revisions. None of those operations can activate a revision.
 
-Activation and revocation reuse Colony's `ApprovalAuthorityStore`:
+Activation and revocation reuse PacoMind's `ApprovalAuthorityStore`:
 
 1. P7 derives an `ActionBinding` over the exact transition, content digest,
    revision, and expected active revision.

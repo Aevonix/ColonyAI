@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apsimo.intelligence.synthesis.insight_store import InsightStore
+from pacomind.intelligence.synthesis.insight_store import InsightStore
 
 
 def test_dismiss_then_list(tmp_path):

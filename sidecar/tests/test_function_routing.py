@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.router.router import LLMRouter
+from pacomind.router.router import LLMRouter
 
 
 @contextmanager
@@ -130,7 +130,7 @@ async def test_invalid_output_contract_and_capability_fail_before_dispatch():
 
 @pytest.mark.asyncio
 async def test_named_functions_never_open_the_legacy_learner_database(tmp_path, monkeypatch):
-    from apsimo.router import self_learning
+    from pacomind.router import self_learning
     database = tmp_path / 'must-not-create.db'
     monkeypatch.setattr(self_learning, '_DEFAULT_DB', database)
     with endpoint() as (url, calls):
@@ -145,8 +145,8 @@ async def test_named_functions_never_open_the_legacy_learner_database(tmp_path, 
 
 
 def test_legacy_routing_still_records_outcomes_lazily(tmp_path, monkeypatch):
-    from apsimo.router import self_learning
-    from apsimo.router.tiers import ModelTier
+    from pacomind.router import self_learning
+    from pacomind.router.tiers import ModelTier
     database = tmp_path / 'legacy.db'
     monkeypatch.setattr(self_learning, '_DEFAULT_DB', database)
     r = LLMRouter()
@@ -164,7 +164,7 @@ def test_legacy_routing_still_records_outcomes_lazily(tmp_path, monkeypatch):
     ({'role': 'assistant', 'content': ''}, 'stop', 'missing_final_answer'),
 ])
 async def test_incomplete_http_completion_uses_fallback_without_endpoint_cooldown(message, finish, reason):
-    from apsimo.util.model_output import final_text
+    from pacomind.util.model_output import final_text
     events = []
     with endpoint(choice={'index': 0, 'message': message, 'finish_reason': finish}) as (first, a), endpoint() as (second, b):
         r = router(config(first, second))
@@ -186,7 +186,7 @@ async def test_incomplete_http_completion_uses_fallback_without_endpoint_cooldow
 
 @pytest.mark.asyncio
 async def test_requested_tool_completion_remains_usable_but_is_not_final_text():
-    from apsimo.util.model_output import final_text
+    from pacomind.util.model_output import final_text
     tool = {'type': 'function', 'function': {'name': 'neutral_read', 'description': 'Read a neutral fixture.',
         'parameters': {'type': 'object', 'properties': {}}}}
     choice = {'index': 0, 'finish_reason': 'tool_calls', 'message': {'role': 'assistant', 'content': None,
@@ -332,7 +332,7 @@ async def test_timeout_and_connection_failover_are_bounded(failure):
 @pytest.mark.parametrize('recovering', [False, True])
 @pytest.mark.parametrize('allow_fallback', [False, True])
 async def test_short_role_budget_does_not_suppress_longer_role(monkeypatch, recovering, allow_fallback):
-    from apsimo.router.endpoints import EndpointRuntime
+    from pacomind.router.endpoints import EndpointRuntime
     cfg = config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1',
                  candidates=['deliberate', 'interactive'], timeoutSeconds=.05, deadlineSeconds=.3)
     r = router(cfg)
@@ -403,7 +403,7 @@ async def test_endpoint_failure_still_cools_down_across_roles(monkeypatch, error
 
 @pytest.mark.asyncio
 async def test_caller_cancellation_does_not_fallback_or_hold_recovery(monkeypatch):
-    from apsimo.router.endpoints import EndpointRuntime
+    from pacomind.router.endpoints import EndpointRuntime
     r = router(config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1'))
     now, calls, started = [100.0], [], asyncio.Event()
     r._endpoints = EndpointRuntime(clock=lambda: now[0])
@@ -471,8 +471,8 @@ async def test_deployment_hostname_is_declared_resolved_checked_and_pinned(monke
 
 @pytest.mark.asyncio
 async def test_real_source_claim_flow_retains_role_generation_and_scoped_evidence(tmp_path):
-    from apsimo.turns.idempotency import TurnIdempotencyLedger
-    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from pacomind.turns.idempotency import TurnIdempotencyLedger
+    from pacomind.beliefs.source_projection import SourceClaimProjection
     from test_source_claim_projection import claim
     text = 'My office is in Alder.'
     def answer(payload):
@@ -500,8 +500,8 @@ async def test_real_source_claim_flow_retains_role_generation_and_scoped_evidenc
 
 @pytest.mark.asyncio
 async def test_real_retained_image_job_selects_vision_binding_and_records_generation(tmp_path):
-    from apsimo.turns.idempotency import TurnIdempotencyLedger
-    from apsimo.turns.media import SourceMedia
+    from pacomind.turns.idempotency import TurnIdempotencyLedger
+    from pacomind.turns.media import SourceMedia
     from test_source_media import message
     with endpoint() as (first, a), endpoint(content='A red rectangle and blue circle.') as (second, b):
         r = router(config(first, second))
@@ -609,9 +609,9 @@ async def test_tool_result_round_trip_accepts_null_assistant_content():
 
 @pytest.mark.asyncio
 async def test_model_inventory_normalizes_url_preserves_working_alias_and_declarations(monkeypatch, tmp_path):
-    from apsimo.api.routers import host
-    from apsimo.router.endpoints import EndpointRuntime
-    from apsimo.router.tiers import discover_openai_compatible_models
+    from pacomind.api.routers import host
+    from pacomind.router.endpoints import EndpointRuntime
+    from pacomind.router.tiers import discover_openai_compatible_models
     gets = []
     advertised = [{'id': 'advertised-weight-name', 'owned_by': 'neutral', 'max_model_len': 256000,
                    'supportsVision': True, 'secret': 'not-metadata'}]
@@ -661,7 +661,7 @@ async def test_missing_model_listing_does_not_disable_completion():
 @pytest.mark.asyncio
 @pytest.mark.parametrize('failure_status', [404, 503])
 async def test_actual_failure_cooldown_single_recovery_and_restored_primary(failure_status):
-    from apsimo.router.endpoints import EndpointRuntime
+    from pacomind.router.endpoints import EndpointRuntime
     now, mode = [100.0], ['failed']
     started, release = threading.Event(), threading.Event()
     def primary_status():
@@ -717,7 +717,7 @@ async def test_endpoint_move_reload_clears_old_failure_and_no_fallback_is_explic
 
 @pytest.mark.asyncio
 async def test_inventory_is_bounded_covers_larger_pool_and_releases_cancelled_reads():
-    from apsimo.router.endpoints import EndpointRuntime
+    from pacomind.router.endpoints import EndpointRuntime
     cfg = config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1')
     for i in range(3, 7):
         cfg['modelPool'][f'candidate{i}'] = {'model': 'neutral', 'baseUrl': f'http://127.0.0.1:{10000+i}/v1'}
@@ -751,7 +751,7 @@ async def test_inventory_is_bounded_covers_larger_pool_and_releases_cancelled_re
 
 
 def test_cancelled_recovery_releases_its_own_slot_only():
-    from apsimo.router.endpoints import EndpointRuntime
+    from pacomind.router.endpoints import EndpointRuntime
     now = [100.0]
     runtime = EndpointRuntime(clock=lambda: now[0])
     r = router(config('http://127.0.0.1:10001/v1', 'http://127.0.0.1:10002/v1'))
@@ -784,7 +784,7 @@ async def test_inventory_cancellation_before_children_start_releases_slots(monke
 
 @pytest.mark.asyncio
 async def test_models_api_falls_through_if_function_routing_disappears(monkeypatch, tmp_path):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
     async def no_snapshot(): return None
     monkeypatch.setattr(host, '_llm_router', SimpleNamespace(supports_function_routing=True,
         discover_models=no_snapshot, routing_status=lambda: {}))
@@ -832,10 +832,10 @@ async def test_context_window_failure_does_not_cool_down_healthy_binding():
 
 @pytest.mark.asyncio
 async def test_inventory_provider_metadata_comes_from_retained_valid_snapshot(monkeypatch, tmp_path):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
     with endpoint(listing=[{'id': 'retained-model'}]) as (address, calls):
         cfg = config(address, address); cfg['baseUrl'] = address
-        path = tmp_path / '.colony-llm-config.json'; path.write_text(json.dumps(cfg))
+        path = tmp_path / '.pacomind-llm-config.json'; path.write_text(json.dumps(cfg))
         r = router(cfg, path)
         monkeypatch.setattr(host, '_llm_router', r)
         monkeypatch.setattr(host, 'get_state_dir', lambda: tmp_path)

@@ -6,10 +6,10 @@ import json
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.media import SourceMedia, MAX_IMAGE_BYTES
-from apsimo.turns.source_read import read
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.media import SourceMedia, MAX_IMAGE_BYTES
+from pacomind.turns.source_read import read
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_media import image_bytes, message
 from test_turn_source_evidence import source_app
@@ -92,7 +92,7 @@ def test_corrupt_or_oversized_original_never_becomes_image_output(original, dama
 def test_attribution_invalidation_revokes_existing_image_revision(original):
     ledger, ref, _ = original
     first = opened(original)
-    from apsimo.turns.source_attribution import correct
+    from pacomind.turns.source_attribution import correct
     correct(ledger, operation_id='identity-correction', performed_by='operator', old_contact_id='person',
             contact_id='actual-person', source_ids=[ref['source_id']], evidence_refs=['owner-confirmation'])
     with pytest.raises(ValueError, match='unavailable'):

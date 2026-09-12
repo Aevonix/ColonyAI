@@ -15,9 +15,9 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.delivery.rate_limiter import DeliveryRateLimiter
-from apsimo.util.quiet_hours import in_quiet_window
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.delivery.rate_limiter import DeliveryRateLimiter
+from pacomind.util.quiet_hours import in_quiet_window
 
 
 # --- shared predicate --------------------------------------------------------
@@ -85,7 +85,7 @@ def test_loop_quiet_hours_unchanged():
 def test_reload_counts_owner_local_day(tmp_path, monkeypatch):
     """Deliveries after LOCAL midnight (but before UTC midnight) must
     survive a restart; deliveries before local midnight must not."""
-    monkeypatch.setenv("COLONY_TIMEZONE", "Pacific/Kiritimati")  # UTC+14
+    monkeypatch.setenv("PACOMIND_TIMEZONE", "Pacific/Kiritimati")  # UTC+14
     tz = ZoneInfo("Pacific/Kiritimati")
     db = tmp_path / "deliveries.db"
 
@@ -116,7 +116,7 @@ def test_reload_counts_owner_local_day(tmp_path, monkeypatch):
 def test_reload_utc_deployment_unchanged(tmp_path, monkeypatch):
     """Regression lock: with the default UTC-equivalent timezone the reload
     window is byte-identical to the old behavior."""
-    monkeypatch.setenv("COLONY_TIMEZONE", "UTC")
+    monkeypatch.setenv("PACOMIND_TIMEZONE", "UTC")
     db = tmp_path / "deliveries.db"
     now = datetime.now(timezone.utc)
     utc_midnight = datetime.combine(

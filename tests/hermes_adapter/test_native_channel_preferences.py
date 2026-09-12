@@ -5,7 +5,7 @@ import socket
 import pytest
 import yaml
 
-from apsimo.setup_hermes import _receipt_preference
+from pacomind.setup_hermes import _receipt_preference
 
 
 LAYOUTS = [

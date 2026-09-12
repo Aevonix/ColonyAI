@@ -8,10 +8,10 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import commitment_work, executions, host
-from apsimo.commitments.store import CommitmentStore
-from apsimo.commitments.work import CommitmentWork
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import commitment_work, executions, host
+from pacomind.commitments.store import CommitmentStore
+from pacomind.commitments.work import CommitmentWork
 from test_hermes_general_governance import runtime, _pre, _tool
 from test_scoped_api_authority import _principal, _write_keyring
 
@@ -104,7 +104,7 @@ def test_native_adapter_sessions_race_through_scoped_http_and_stale_tool_stops(r
         for session in ('sms', 'voice'):
             _pre(context, session=session, task=session, turn=session, platform='sms', sender='+15550001')
         def claim(session):
-            return json.loads(_tool(context, 'colony_commitment_work', {'operation': 'claim', 'commitment_id': obligation['id']},
+            return json.loads(_tool(context, 'pacomind_commitment_work', {'operation': 'claim', 'commitment_id': obligation['id']},
                 session=session, task=session, turn=session, call='call-' + session))
         with ThreadPoolExecutor(max_workers=2) as pool:
             outcomes = list(pool.map(claim, ['sms', 'voice']))
@@ -142,7 +142,7 @@ def test_explicit_stop_after_terminal_or_superseded_claim_allows_next_work(runti
         for session in ('first', 'reclaimer'):
             _pre(context, session=session, task=session, turn=session, platform='sms', sender='+15550001')
         def work(session, operation, obligation):
-            return json.loads(_tool(context, 'colony_commitment_work', {'operation': operation, 'commitment_id': obligation['id']}, session=session, task=session, turn=session, call='call-' + session))
+            return json.loads(_tool(context, 'pacomind_commitment_work', {'operation': operation, 'commitment_id': obligation['id']}, session=session, task=session, turn=session, call='call-' + session))
         assert work('first', 'claim', first)['accepted']
         store.resolve(first['id'], outcome='done')
         assert json.loads(call(context, 'read_file', session='first', task='first', turn='first'))['effect_performed'] is False
@@ -159,8 +159,8 @@ def test_explicit_stop_after_terminal_or_superseded_claim_allows_next_work(runti
 
 @pytest.mark.asyncio
 async def test_canonical_worker_queue_view_has_descriptions_and_truthful_liveness(tmp_path, monkeypatch):
-    from apsimo.task_queue.queue_manager import QueueManager
-    from apsimo.task_queue.models import Job, JobType, JobStatus, WorkerCapabilities
+    from pacomind.task_queue.queue_manager import QueueManager
+    from pacomind.task_queue.models import Job, JobType, JobStatus, WorkerCapabilities
     clock = [datetime.now(timezone.utc)]
     queue = QueueManager(tmp_path / 'queue.db', clock=lambda: clock[0])
     await queue.start()
@@ -191,21 +191,21 @@ async def test_canonical_worker_queue_view_has_descriptions_and_truthful_livenes
 
 @pytest.mark.asyncio
 async def test_context_names_obligation_and_other_session_holder(tmp_path, monkeypatch):
-    from apsimo.api.authority import RequestAuthority
-    from apsimo.api.schemas.host import ContextAssembleRequest
+    from pacomind.api.authority import RequestAuthority
+    from pacomind.api.schemas.host import ContextAssembleRequest
     store = CommitmentStore(tmp_path / 'commitments.db')
     obligation = store.create('owner', 'Compare repair options', due_at=(datetime.now(timezone.utc) + timedelta(days=1)).isoformat())
     CommitmentWork(store).operate(obligation['id'], operation='claim', **holder('voice'))
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'owner')
     monkeypatch.setattr(host, '_p8_runtime', None)
     monkeypatch.setattr(host, '_commitment_store', store)
     monkeypatch.setattr(host, '_require_scoped_context_runtime_for_guest', lambda *a: None)
     for person in ('owner', 'guest'):
         authority = RequestAuthority(principal_id='host', credential_id='key', scopes=frozenset({'context:read'}), viewer_person_id=person, person_ids=frozenset({person}), audiences=frozenset({'viewer'}), authenticated=True)
-        request = SimpleNamespace(state=SimpleNamespace(colony_authority=authority))
+        request = SimpleNamespace(state=SimpleNamespace(pacomind_authority=authority))
         body = ContextAssembleRequest(identity={'host_id': 'test'}, context={'contact_id': person, 'session_id': 'sms'}, incoming_message={'role': 'user', 'content': 'What is in progress?'})
         result = await host.context_assemble(body, request)
-        sections = [section for section in result.sections if section.id == 'colony-commitments']
+        sections = [section for section in result.sections if section.id == 'pacomind-commitments']
         if person == 'owner':
             assert len(sections) == 1
             assert obligation['id'] in sections[0].body and 'Compare repair options' in sections[0].body

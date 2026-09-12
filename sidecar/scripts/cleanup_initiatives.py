@@ -13,7 +13,7 @@ from pathlib import Path
 from neo4j import AsyncGraphDatabase
 
 
-STATE_DIR = Path.home() / ".colony" / "data"
+STATE_DIR = Path.home() / ".pacomind" / "data"
 DB_PATH = STATE_DIR / "initiatives.db"
 
 
@@ -44,9 +44,9 @@ def normalize_name(name: str) -> str:
 
 async def cleanup_graph():
     """Delete junk Person nodes and merge obvious duplicates."""
-    uri = os.environ.get("COLONY_NEO4J_URI", "bolt://localhost:7687")
-    user = os.environ.get("COLONY_NEO4J_USER", "neo4j")
-    password = os.environ.get("COLONY_NEO4J_PASSWORD", "password")
+    uri = os.environ.get("PACOMIND_NEO4J_URI", "bolt://localhost:7687")
+    user = os.environ.get("PACOMIND_NEO4J_USER", "neo4j")
+    password = os.environ.get("PACOMIND_NEO4J_PASSWORD", "password")
     driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
 
     async with driver.session() as session:

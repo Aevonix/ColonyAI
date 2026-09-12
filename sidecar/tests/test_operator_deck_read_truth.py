@@ -7,8 +7,8 @@ from types import SimpleNamespace
 from fastapi import HTTPException, Request
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.api.authority import legacy_authority
+from pacomind.api.routers import host
+from pacomind.api.authority import legacy_authority
 
 
 def _legacy_request() -> Request:
@@ -17,7 +17,7 @@ def _legacy_request() -> Request:
         "query_string": b"", "headers": [], "scheme": "http",
         "server": ("test", 80), "client": ("test", 1), "root_path": "",
     })
-    request.state.colony_authority = legacy_authority()
+    request.state.pacomind_authority = legacy_authority()
     return request
 
 

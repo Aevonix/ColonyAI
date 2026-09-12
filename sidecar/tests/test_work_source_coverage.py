@@ -8,10 +8,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions, host
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.executions import ExecutionRegistry, request_work_context
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions, host
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.executions import ExecutionRegistry, request_work_context
 
 
 def records(source, count=1):
@@ -77,7 +77,7 @@ def test_join_identities_survive_projection_without_claim_tokens_or_task_text():
 
 @pytest.mark.asyncio
 async def test_reader_failure_isolated_and_unattached_queue_stays_unknown(tmp_path, monkeypatch):
-    from apsimo.turns import hermes_work, hermes_kanban, local_work, reported_workers
+    from pacomind.turns import hermes_work, hermes_kanban, local_work, reported_workers
     monkeypatch.setattr(local_work, 'local_work_view', lambda **_: records('draft', 8))
     monkeypatch.setattr(hermes_work, 'cron_view', lambda **_: records('cron'))
     def broken(**_):
@@ -85,7 +85,7 @@ async def test_reader_failure_isolated_and_unattached_queue_stays_unknown(tmp_pa
     monkeypatch.setattr(hermes_kanban, 'kanban_view', broken)
     monkeypatch.setattr(reported_workers, 'reported_worker_view', lambda **_: None)
     monkeypatch.setattr(host, '_task_queue', None)
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'owner')
     store = ExecutionRegistry(TurnIdempotencyLedger(tmp_path / 'turns.db'))
     monkeypatch.setattr(executions, 'registry', lambda: store)
     identifier = hashlib.sha256(b'independent-turn').hexdigest()
@@ -97,7 +97,7 @@ async def test_reader_failure_isolated_and_unattached_queue_stays_unknown(tmp_pa
     @app.middleware('http')
     async def identity(request, call_next):
         person = request.headers.get('fixture-person', 'owner')
-        request.state.colony_authority = RequestAuthority(principal_id='host', credential_id='fixture',
+        request.state.pacomind_authority = RequestAuthority(principal_id='host', credential_id='fixture',
             scopes=frozenset({'context:read'}), viewer_person_id=person,
             person_ids=frozenset({person}), audiences=frozenset({'viewer'}), authenticated=True)
         return await call_next(request)
@@ -129,7 +129,7 @@ async def test_reader_failure_isolated_and_unattached_queue_stays_unknown(tmp_pa
 
 @pytest.mark.asyncio
 async def test_slow_queue_does_not_hold_other_source_observations(monkeypatch):
-    from apsimo.turns import hermes_work, hermes_kanban, local_work, reported_workers
+    from pacomind.turns import hermes_work, hermes_kanban, local_work, reported_workers
     for module, function in ((hermes_work, 'cron_view'), (hermes_kanban, 'kanban_view'),
                              (local_work, 'local_work_view'), (reported_workers, 'reported_worker_view')):
         monkeypatch.setattr(module, function, lambda **_: records('independent'))

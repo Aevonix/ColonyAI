@@ -5,9 +5,9 @@ import tempfile
 
 import pytest
 
-from apsimo.surprise.store import SurpriseStore
-from apsimo.surprise.scorer import compute_surprise
-from apsimo.patterns.store import PatternStore
+from pacomind.surprise.store import SurpriseStore
+from pacomind.surprise.scorer import compute_surprise
+from pacomind.patterns.store import PatternStore
 
 
 @pytest.fixture
@@ -34,11 +34,11 @@ class TestSurpriseCreate:
     def test_create_basic(self, surprise_store):
         result = surprise_store.create_surprise(
             observation="User mentioned a new project called BlueBio",
-            expected="User usually discusses ColonyAI",
+            expected="User usually discusses PacoMind",
             surprise_score=0.8,
         )
         assert result["observation"] == "User mentioned a new project called BlueBio"
-        assert result["expected"] == "User usually discusses ColonyAI"
+        assert result["expected"] == "User usually discusses PacoMind"
         assert result["surprise_score"] == 0.8
         assert result["resolved"] is False
         assert result["id"]
@@ -152,10 +152,10 @@ class TestSurpriseScorer:
         for _ in range(6):
             pattern_store.create_pattern(
                 pattern_type="entity_cooccurrence",
-                description="User and ColonyAI appear together",
-                pattern_key="cooc:User:ColonyAI",
+                description="User and PacoMind appear together",
+                pattern_key="cooc:User:PacoMind",
             )
-        result = compute_surprise("User ColonyAI discussion", pattern_store=pattern_store)
+        result = compute_surprise("User PacoMind discussion", pattern_store=pattern_store)
         assert result["surprise_score"] == 0.0
         assert result["pattern_id"] is not None
 
@@ -176,8 +176,8 @@ class TestSurpriseScorer:
 
 from datetime import datetime, timedelta, timezone
 
-from apsimo.events import broadcaster
-from apsimo.surprise.accumulation import (
+from pacomind.events import broadcaster
+from pacomind.surprise.accumulation import (
     handle_surprise_accumulation, register as register_consumer,
 )
 
@@ -234,8 +234,8 @@ class TestAccumulationConsumer:
     def _isolate(self, monkeypatch):
         monkeypatch.setattr(broadcaster, "_subscribers", {})
         monkeypatch.setattr(broadcaster, "_broadcast_fn", lambda _e: None)
-        monkeypatch.delenv("COLONY_WORKSPACE", raising=False)
-        monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+        monkeypatch.delenv("PACOMIND_WORKSPACE", raising=False)
+        monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
 
     def test_noop_when_workspace_off(self, monkeypatch):
         """Regression-lock: default posture (workspace off) consumes
@@ -243,15 +243,15 @@ class TestAccumulationConsumer:
         assert handle_surprise_accumulation(_event(7)) is False
 
     def test_noop_when_workspace_enabled_but_unwired(self, monkeypatch):
-        import apsimo.api.routers.host as host_mod
-        monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+        import pacomind.api.routers.host as host_mod
+        monkeypatch.setenv("PACOMIND_WORKSPACE", "shadow")
         monkeypatch.setattr(host_mod, "_workspace", None)
         assert handle_surprise_accumulation(_event(7)) is False
 
     def test_raises_concern_when_workspace_on(self, monkeypatch):
-        import apsimo.api.routers.host as host_mod
+        import pacomind.api.routers.host as host_mod
         ws = _FakeWorkspace()
-        monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+        monkeypatch.setenv("PACOMIND_WORKSPACE", "shadow")
         monkeypatch.setattr(host_mod, "_workspace", ws)
         assert handle_surprise_accumulation(_event(7)) is True
         assert len(ws.bumps) == 1
@@ -265,9 +265,9 @@ class TestAccumulationConsumer:
 
     def test_end_to_end_via_emit(self, monkeypatch):
         """register() + emit('surprise.accumulation') lands as a concern."""
-        import apsimo.api.routers.host as host_mod
+        import pacomind.api.routers.host as host_mod
         ws = _FakeWorkspace()
-        monkeypatch.setenv("COLONY_WORKSPACE", "shadow")
+        monkeypatch.setenv("PACOMIND_WORKSPACE", "shadow")
         monkeypatch.setattr(host_mod, "_workspace", ws)
         register_consumer()
         broadcaster.emit("surprise.accumulation", {"unresolved_count": 5})
@@ -283,8 +283,8 @@ class TestAccumulationConsumer:
 
 class TestPatternsScheduleDefault:
     def test_default_is_off(self, monkeypatch):
-        """Regression-lock: without COLONY_PATTERNS_SCHEDULE=on the daily
+        """Regression-lock: without PACOMIND_PATTERNS_SCHEDULE=on the daily
         pattern_extract task is not registered (server gate condition)."""
-        monkeypatch.delenv("COLONY_PATTERNS_SCHEDULE", raising=False)
+        monkeypatch.delenv("PACOMIND_PATTERNS_SCHEDULE", raising=False)
         assert os.environ.get(
-            "COLONY_PATTERNS_SCHEDULE", "off").strip().lower() != "on"
+            "PACOMIND_PATTERNS_SCHEDULE", "off").strip().lower() != "on"

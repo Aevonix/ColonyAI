@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.contacts.scoring import compute_relationship_score
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.contacts.scoring import compute_relationship_score
 
 
 @pytest.mark.asyncio

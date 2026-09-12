@@ -8,22 +8,22 @@ from typing import Any
 
 import pytest
 
-from apsimo_hostworker.admission import FileDispatchAdmission
-from apsimo_hostworker.contract import (
+from pacomind_hostworker.admission import FileDispatchAdmission
+from pacomind_hostworker.contract import (
     EFFECT_SCHEMA,
     EXECUTION_RESULT_SCHEMA,
     canonical_json_utf8,
     sha256_json_utf8,
 )
-from apsimo_hostworker.conformance import (
+from pacomind_hostworker.conformance import (
     ManualClock,
     build_envelope,
     build_intent,
     delivery_gate_evidence,
     grant_gate_evidence,
 )
-from apsimo_hostworker.sqlite_store import SqliteActionStore
-from apsimo_hostworker.worker import (
+from pacomind_hostworker.sqlite_store import SqliteActionStore
+from pacomind_hostworker.worker import (
     DEFAULT_ACTION_TYPE,
     DEFAULT_SOURCE_PREFIX,
     GovernedActionWorker,
@@ -36,9 +36,9 @@ PRINCIPAL = "test-host"
 SOURCE = DEFAULT_SOURCE_PREFIX + PRINCIPAL
 ORIGIN = "http://127.0.0.1:8123"
 DEFAULT_TOOLS = (
-    "colony_create_commitment",
-    "colony_task_complete",
-    "colony_autonomy_enable",
+    "pacomind_create_commitment",
+    "pacomind_task_complete",
+    "pacomind_autonomy_enable",
 )
 
 
@@ -114,11 +114,11 @@ class Env:
 
 def write_admission_file(path, enabled, clock):
     document = {
-        "schema": "ColonyHostWorkerAdmissionV1",
+        "schema": "PacoMindHostWorkerAdmissionV1",
         "version": 1,
         "authorized": True,
         "authorization_id": uuid.uuid4().hex,
-        "colony_origin": ORIGIN,
+        "pacomind_origin": ORIGIN,
         "enabled_tools": sorted(enabled),
         "binding_identity": None,
         "created_at": clock() - 10.0,
@@ -137,7 +137,7 @@ def make_env(tmp_path, *, enabled=DEFAULT_TOOLS, admitted=True):
     admission_path = str(tmp_path / "admission.json")
     admission = FileDispatchAdmission(
         admission_path,
-        colony_origin=ORIGIN,
+        pacomind_origin=ORIGIN,
         enabled_tools=enabled,
         clock=clock,
     )
@@ -165,7 +165,7 @@ def make_env(tmp_path, *, enabled=DEFAULT_TOOLS, admitted=True):
 def gated_action(
     env,
     *,
-    tool_name="colony_create_commitment",
+    tool_name="pacomind_create_commitment",
     args=None,
     grant=False,
     expires_in=3600.0,
@@ -321,7 +321,7 @@ def test_expired_grant_never_dispatches(tmp_path):
     env = make_env(tmp_path)
     _action_id, _intent = gated_action(
         env,
-        tool_name="colony_task_complete",
+        tool_name="pacomind_task_complete",
         args={"task_id": "task-1"},
         grant=True,
         expires_in=3600.0,
@@ -336,7 +336,7 @@ def test_expired_grant_never_dispatches(tmp_path):
 def test_grant_never_covers_non_grantable_tool(tmp_path):
     env = make_env(tmp_path)
     _action_id, _intent = gated_action(
-        env, tool_name="colony_autonomy_enable", args={}, grant=True
+        env, tool_name="pacomind_autonomy_enable", args={}, grant=True
     )
     result = env.worker.process_one()
     assert result is not None and result["state"] == "failed"
@@ -362,9 +362,9 @@ def test_duplicate_gate_receipts_fail_closed(tmp_path):
 
 
 def test_disabled_tool_fails_closed(tmp_path):
-    env = make_env(tmp_path, enabled=("colony_create_commitment",))
+    env = make_env(tmp_path, enabled=("pacomind_create_commitment",))
     _action_id, _intent = gated_action(
-        env, tool_name="colony_task_complete", args={"task_id": "task-2"}
+        env, tool_name="pacomind_task_complete", args={"task_id": "task-2"}
     )
     result = env.worker.process_one()
     assert result is not None and result["state"] == "failed"
@@ -421,7 +421,7 @@ def test_worker_requires_a_real_admission(tmp_path):
                 env.store,
                 env.dispatcher,
                 bad,
-                enabled_tools=("colony_create_commitment",),
+                enabled_tools=("pacomind_create_commitment",),
                 admission_principals=(PRINCIPAL,),
                 clock=env.clock,
             )
@@ -432,7 +432,7 @@ def test_worker_validates_configuration(tmp_path):
 
     def build(**overrides):
         arguments: dict[str, Any] = dict(
-            enabled_tools=("colony_create_commitment",),
+            enabled_tools=("pacomind_create_commitment",),
             admission_principals=(PRINCIPAL,),
             clock=env.clock,
         )
@@ -467,7 +467,7 @@ def _request_and_result(clock):
         "action_digest": "b" * 64,
         "intent_id": "hti_" + "c" * 32,
         "intent_digest": "d" * 64,
-        "tool_name": "colony_create_commitment",
+        "tool_name": "pacomind_create_commitment",
     }
     return request, completed_result(request, clock())
 
@@ -486,7 +486,7 @@ def test_validate_execution_result_accepts_bound_completed():
         lambda result: result.update(status="executing"),
         lambda result: result.update(status="failed"),
         lambda result: result.update(effect_state="unknown"),
-        lambda result: result.update(tool_name="colony_task_complete"),
+        lambda result: result.update(tool_name="pacomind_task_complete"),
         lambda result: result.update(effect_digest="0" * 64),
         lambda result: result.update(observed_at=-5.0),
         lambda result: result.pop("effect"),

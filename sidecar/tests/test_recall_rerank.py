@@ -15,7 +15,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from apsimo.intelligence.graph import client as client_mod
+from pacomind.intelligence.graph import client as client_mod
 from test_recall_ranking import RecallFixture, _Hit, _node
 
 
@@ -60,7 +60,7 @@ def _fixture_three():
 @pytest.mark.asyncio
 async def test_default_off_never_calls_reranker(monkeypatch):
     """Regression lock: flag unset -> ANN ordering, reranker untouched."""
-    monkeypatch.delenv("COLONY_RECALL_RERANK", raising=False)
+    monkeypatch.delenv("PACOMIND_RECALL_RERANK", raising=False)
     fx = _fixture_three()
     rr = _RecordingReranker(scores={2: 9.0, 1: 5.0, 0: 1.0})
     fx.graph.set_rerank_fn(rr.rerank)
@@ -72,8 +72,8 @@ async def test_default_off_never_calls_reranker(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_skipped_when_candidates_fit_limit(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
     fx = _fixture_three()
     rr = _RecordingReranker(scores={2: 9.0})
     fx.graph.set_rerank_fn(rr.rerank)
@@ -84,9 +84,9 @@ async def test_skipped_when_candidates_fit_limit(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_on_reorders_by_rerank_times_confidence(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
-    monkeypatch.delenv("COLONY_RECALL_STRENGTH_RANKING", raising=False)
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
+    monkeypatch.delenv("PACOMIND_RECALL_STRENGTH_RANKING", raising=False)
     fx = _fixture_three()
     # reranker prefers the ANN loser
     rr = _RecordingReranker(scores={0: 0.1, 1: 0.5, 2: 0.9})
@@ -100,9 +100,9 @@ async def test_on_reorders_by_rerank_times_confidence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_on_blends_strength_when_strength_ranking_on(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
-    monkeypatch.setenv("COLONY_RECALL_STRENGTH_RANKING", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_STRENGTH_RANKING", "on")
     fx = RecallFixture(
         hits=[_Hit("a", 0.9), _Hit("b", 0.8), _Hit("c", 0.7)],
         node_props=[
@@ -121,8 +121,8 @@ async def test_on_blends_strength_when_strength_ranking_on(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_shadow_logs_but_returns_ann_order(monkeypatch, caplog):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "shadow")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "shadow")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
     fx = _fixture_three()
     rr = _RecordingReranker(scores={0: 0.1, 1: 0.5, 2: 0.9})
     fx.graph.set_rerank_fn(rr.rerank)
@@ -136,9 +136,9 @@ async def test_shadow_logs_but_returns_ann_order(monkeypatch, caplog):
 
 @pytest.mark.asyncio
 async def test_timeout_fails_open_to_ann_order(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
-    monkeypatch.setenv("COLONY_RECALL_RERANK_TIMEOUT_MS", "30")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK_TIMEOUT_MS", "30")
     fx = _fixture_three()
     rr = _RecordingReranker(scores={2: 9.0}, delay=5.0)
     fx.graph.set_rerank_fn(rr.rerank)
@@ -148,8 +148,8 @@ async def test_timeout_fails_open_to_ann_order(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_exception_fails_open_to_ann_order(monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
     fx = _fixture_three()
     rr = _RecordingReranker(exc=RuntimeError("reranker down"))
     fx.graph.set_rerank_fn(rr.rerank)
@@ -160,8 +160,8 @@ async def test_exception_fails_open_to_ann_order(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_failure_warns_once_per_five_minutes(monkeypatch, caplog):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
     fx = _fixture_three()
     rr = _RecordingReranker(exc=RuntimeError("reranker down"))
     fx.graph.set_rerank_fn(rr.rerank)
@@ -193,8 +193,8 @@ async def test_first_failure_warns_on_a_freshly_booted_host(monkeypatch, caplog)
     host and swallows the very first warning. This reproduces that host state
     on a long-uptime machine, where the bug is invisible.
     """
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "on")
-    monkeypatch.setenv("COLONY_RECALL_OVERSAMPLE", "3")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "on")
+    monkeypatch.setenv("PACOMIND_RECALL_OVERSAMPLE", "3")
     monkeypatch.setattr(client_mod.time, "monotonic", lambda: 12.0)
     fx = _fixture_three()
     rr = _RecordingReranker(exc=RuntimeError("reranker down"))

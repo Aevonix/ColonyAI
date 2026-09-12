@@ -22,24 +22,24 @@ from types import SimpleNamespace
 
 import pytest
 
-import apsimo.api.routers.host as host
-from apsimo.api.schemas.host import (
+import pacomind.api.routers.host as host
+from pacomind.api.schemas.host import (
     ContextAssembleRequest, ContextSection, HostIdentity, HostMessage,
     HostTurnContext,
 )
-from apsimo.channels.presence import ConversationPresenceStore
-from apsimo.gate.guard_audit import GuardAuditStore
-from apsimo.gate.response_guard import GuardMode, ResponseGuard
-from apsimo.gate.taint import TaintRegistry
-from apsimo.proposals import ProposalStore
-from apsimo.tom import leveled as leveled_mod
-from apsimo.tom import levels as levels_mod
-from apsimo.tom.approvals import Tom2ApprovalRegistry
-from apsimo.tom.exposure import Tom2ExposureStore
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.levels import clear_level_cache, set_evidence_probe
-from apsimo.tom.tom2 import Tom2Store
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.channels.presence import ConversationPresenceStore
+from pacomind.gate.guard_audit import GuardAuditStore
+from pacomind.gate.response_guard import GuardMode, ResponseGuard
+from pacomind.gate.taint import TaintRegistry
+from pacomind.proposals import ProposalStore
+from pacomind.tom import leveled as leveled_mod
+from pacomind.tom import levels as levels_mod
+from pacomind.tom.approvals import Tom2ApprovalRegistry
+from pacomind.tom.exposure import Tom2ExposureStore
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.levels import clear_level_cache, set_evidence_probe
+from pacomind.tom.tom2 import Tom2Store
+from pacomind.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 READER = "cid-alice"
@@ -89,8 +89,8 @@ def _reset_levels():
 def world(monkeypatch, tmp_path):
     """An R1 room with a full level-2 chain ready: trusted strong reader in
     a private DM, subject approved + mutually known, evidence probe live."""
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
-    monkeypatch.setenv("COLONY_ENV_RISK_GATEWAY_CLASS", "dm:private")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_ENV_RISK_GATEWAY_CLASS", "dm:private")
 
     ledger = TurnIdempotencyLedger(tmp_path / "turns.db")
     ledger.record_source("fixture-source", contact_id=READER, session_id="s1",
@@ -137,15 +137,15 @@ def world(monkeypatch, tmp_path):
 
 
 def _arm_level2(monkeypatch, probe=None):
-    monkeypatch.setenv("COLONY_TOM2_LEVEL", "2")
-    monkeypatch.setenv("COLONY_TOM2_MAX_LEVEL", "2")
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_LEVEL", "2")
+    monkeypatch.setenv("PACOMIND_TOM2_MAX_LEVEL", "2")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
     set_evidence_probe(probe or (lambda gw: True))
 
 
 def _leveled(resp):
-    return [s for s in resp.sections if s.id in ("colony-tom2-l1",
-                                                 "colony-tom2-l2")]
+    return [s for s in resp.sections if s.id in ("pacomind-tom2-l1",
+                                                 "pacomind-tom2-l2")]
 
 
 def _dump(resp):
@@ -162,9 +162,9 @@ async def test_defaults_byte_identical_to_neutralized_block(world,
     """With ALL shipped defaults, assembly output is byte-equal to a run in
     which the L4.2 block is neutralized outright (its first import made to
     explode). The block therefore contributes exactly zero bytes today."""
-    for var in ("COLONY_TOM2_LEVEL", "COLONY_TOM2_MAX_LEVEL",
-                "COLONY_TOM2_RISK_CAPS", "COLONY_TOM2_CROSS_CONTEXT",
-                "COLONY_TOM2_CONTEXT"):
+    for var in ("PACOMIND_TOM2_LEVEL", "PACOMIND_TOM2_MAX_LEVEL",
+                "PACOMIND_TOM2_RISK_CAPS", "PACOMIND_TOM2_CROSS_CONTEXT",
+                "PACOMIND_TOM2_CONTEXT"):
         monkeypatch.delenv(var, raising=False)
     with_defaults = _dump(await host.context_assemble(_req(READER)))
 
@@ -174,7 +174,7 @@ async def test_defaults_byte_identical_to_neutralized_block(world,
     monkeypatch.setattr(levels_mod, "configured_level", boom)
     neutralized = _dump(await host.context_assemble(_req(READER)))
     assert with_defaults == neutralized
-    assert all(sid not in ("colony-tom2-l1", "colony-tom2-l2")
+    assert all(sid not in ("pacomind-tom2-l1", "pacomind-tom2-l2")
                for sid, *_ in with_defaults)
 
 
@@ -184,7 +184,7 @@ async def test_defaults_byte_identical_to_neutralized_block(world,
 
 @pytest.mark.asyncio
 async def test_render_level1_not_invoked_at_level_zero(world, monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_LEVEL", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_LEVEL", raising=False)
     calls = []
     monkeypatch.setattr(leveled_mod, "render_level1",
                         lambda *a, **k: calls.append(1))
@@ -196,14 +196,14 @@ async def test_render_level1_not_invoked_at_level_zero(world, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_render_level2_not_invoked_below_level_2(world, monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_LEVEL", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_LEVEL", "1")
     calls = []
     monkeypatch.setattr(leveled_mod, "render_level2",
                         lambda *a, **k: calls.append(2))
     resp = await host.context_assemble(_req(READER))
     assert calls == []
     # level 1 itself DID render (the reader's own knows row)
-    assert [s.id for s in _leveled(resp)] == ["colony-tom2-l1"]
+    assert [s.id for s in _leveled(resp)] == ["pacomind-tom2-l1"]
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +215,8 @@ async def test_level2_renders_with_bookkeeping(world, monkeypatch):
     _arm_level2(monkeypatch)
     resp = await host.context_assemble(_req(READER))
     ids = [s.id for s in _leveled(resp)]
-    assert ids == ["colony-tom2-l1", "colony-tom2-l2"]
-    l2 = next(s for s in resp.sections if s.id == "colony-tom2-l2")
+    assert ids == ["pacomind-tom2-l1", "pacomind-tom2-l2"]
+    l2 = next(s for s in resp.sections if s.id == "pacomind-tom2-l2")
     assert f"{SUBJECT} has not heard: {FACT_TEXT}" in l2.body
     assert "SILENT" in l2.body                       # framed as silent prior
     # ledger-first bookkeeping happened
@@ -236,7 +236,7 @@ async def test_missing_taint_registry_renders_no_l2(world, monkeypatch):
     _arm_level2(monkeypatch)
     monkeypatch.setattr(host, "_taint_registry", None)
     resp = await host.context_assemble(_req(READER))
-    assert [s.id for s in _leveled(resp)] == ["colony-tom2-l1"]
+    assert [s.id for s in _leveled(resp)] == ["pacomind-tom2-l1"]
 
 
 @pytest.mark.asyncio
@@ -247,7 +247,7 @@ async def test_budget_exhaustion_stops_further_renders(world, monkeypatch):
     await host.context_assemble(_req(READER))
     clear_level_cache()
     resp2 = await host.context_assemble(_req(READER))
-    assert all(s.id != "colony-tom2-l2" for s in resp2.sections)
+    assert all(s.id != "pacomind-tom2-l2" for s in resp2.sections)
     assert len(world.exposure.recent()) == 1         # no second exposure
 
 
@@ -265,14 +265,14 @@ async def test_owner_never_gets_leveled_sections(world, monkeypatch):
 @pytest.mark.asyncio
 async def test_owner_h33_section_unaffected_by_leveled_flags(world,
                                                              monkeypatch):
-    """H3.3 verbatim: the owner section keys ONLY off COLONY_TOM2_CONTEXT,
+    """H3.3 verbatim: the owner section keys ONLY off PACOMIND_TOM2_CONTEXT,
     exactly as before the leveled wiring existed."""
     _arm_level2(monkeypatch)
     resp = await host.context_assemble(_req(OWNER, channel="dm:owner"))
-    assert all(s.id != "colony-tom2" for s in resp.sections)
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
+    assert all(s.id != "pacomind-tom2" for s in resp.sections)
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
     resp2 = await host.context_assemble(_req(OWNER, channel="dm:owner"))
-    tom2_secs = [s for s in resp2.sections if s.id == "colony-tom2"]
+    tom2_secs = [s for s in resp2.sections if s.id == "pacomind-tom2"]
     assert len(tom2_secs) == 1 and FACT_TEXT in tom2_secs[0].body
 
 
@@ -300,15 +300,15 @@ async def test_subject_joining_vanishes_their_inferences(world, monkeypatch):
     resp = await host.context_assemble(_req(READER))
     joined = "\n".join(s.body for s in resp.sections)
     assert "has not heard" not in joined
-    assert all(s.id != "colony-tom2-l2" for s in resp.sections)
+    assert all(s.id != "pacomind-tom2-l2" for s in resp.sections)
 
 
 @pytest.mark.asyncio
 async def test_candidate_verdict_rows_never_unlock_level_2(world, monkeypatch):
-    from apsimo.gate.surface_policy import POLICY_DIGEST, POLICY_ID
+    from pacomind.gate.surface_policy import POLICY_DIGEST, POLICY_ID
 
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
-    monkeypatch.setenv("COLONY_GUARD_TRIP_BLOCKS", "1")
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.setenv("PACOMIND_GUARD_TRIP_BLOCKS", "1")
     audit = GuardAuditStore()
     for _ in range(3):
         audit.record(conversation_key=CONV, mode="enforce",
@@ -319,12 +319,12 @@ async def test_candidate_verdict_rows_never_unlock_level_2(world, monkeypatch):
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE, audit_store=audit)
     _arm_level2(monkeypatch, probe=guard.evidence_probe())
     resp = await host.context_assemble(_req(READER))
-    assert [s.id for s in _leveled(resp)] == ["colony-tom2-l1"]
+    assert [s.id for s in _leveled(resp)] == ["pacomind-tom2-l1"]
 
 
 @pytest.mark.asyncio
 async def test_stale_enforce_evidence_caps_at_level_1(world, monkeypatch):
-    monkeypatch.delenv("COLONY_GUARD_ENFORCE_CHECKS", raising=False)
+    monkeypatch.delenv("PACOMIND_GUARD_ENFORCE_CHECKS", raising=False)
     audit = GuardAuditStore()
     audit.record(conversation_key=CONV, mode="enforce", decision="allow",
                  authorized=False, checks=["secret_leak"], entities=[],
@@ -335,7 +335,7 @@ async def test_stale_enforce_evidence_caps_at_level_1(world, monkeypatch):
     guard = ResponseGuard(default_mode=GuardMode.ENFORCE, audit_store=audit)
     _arm_level2(monkeypatch, probe=guard.evidence_probe())
     resp = await host.context_assemble(_req(READER))
-    assert [s.id for s in _leveled(resp)] == ["colony-tom2-l1"]
+    assert [s.id for s in _leveled(resp)] == ["pacomind-tom2-l1"]
 
 
 # ---------------------------------------------------------------------------
@@ -367,4 +367,4 @@ async def test_exposure_write_failure_aborts_the_section(world, monkeypatch):
 
     monkeypatch.setattr(host, "_tom2_exposure", _BrokenLedger())
     resp = await host.context_assemble(_req(READER))
-    assert all(s.id != "colony-tom2-l2" for s in resp.sections)
+    assert all(s.id != "pacomind-tom2-l2" for s in resp.sections)

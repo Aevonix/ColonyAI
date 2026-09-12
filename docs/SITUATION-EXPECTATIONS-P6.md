@@ -4,12 +4,12 @@ Status: implemented behind migration gates; not attached by default.
 
 This phase adds one durable present-tense situation model and upgrades the
 existing expectation engine without replacing its working V1 API. It is
-generic Colony code: it contains no deployment identity, phone, host, or
+generic PacoMind code: it contains no deployment identity, phone, host, or
 channel secret.
 
 ## Non-negotiable contracts
 
-- A situation fact originates in a structured Colony/host event, probe, or
+- A situation fact originates in a structured PacoMind/host event, probe, or
   transport/action receipt. A model assertion, inference, or prose is rejected
   as a source.
 - Every observation has a durable evidence reference, event time, finite TTL,

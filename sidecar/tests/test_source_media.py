@@ -11,10 +11,10 @@ from PIL import Image, ImageDraw
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.idempotency import SourceErased, source_message_hash
-from apsimo.turns.media import SourceMedia
-from apsimo.vector.multimodal_types import ImageInput
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.idempotency import SourceErased, source_message_hash
+from pacomind.turns.media import SourceMedia
+from pacomind.vector.multimodal_types import ImageInput
 from test_turn_source_evidence import source_app, recalled
 from test_hermes_turn_outbox import _load_client
 
@@ -79,7 +79,7 @@ async def test_rejected_caption_retains_disposition_and_returned_model_only(
     assert media.read(hashlib.sha256(image_bytes()).hexdigest(), contact_id='person', session_id='later')[0] == image_bytes()
     # The existing retry becomes eligible and can complete with its own model
     # provenance. No new job or manual admission of the rejected text is used.
-    from apsimo.turns import media as media_module
+    from pacomind.turns import media as media_module
     now = media_module.time.time()
     monkeypatch.setattr(media_module.time, 'time', lambda: now + 901)
     assert await media.process_one(Vision())
@@ -110,7 +110,7 @@ async def test_caption_transport_exception_does_not_persist_arbitrary_details(tm
 
 @pytest.mark.asyncio
 async def test_media_http_reads_require_memory_scope_and_bound_person(source_app, tmp_path):
-    from apsimo.api.middleware import ApiKeyMiddleware
+    from pacomind.api.middleware import ApiKeyMiddleware
     from test_scoped_api_authority import _principal, _write_keyring
     principals = [
         _principal(principal='reader', secret='reader-key', viewer='contact-a', scopes=['memory:read']),
@@ -164,7 +164,7 @@ async def test_inline_image_retained_exactly_and_recalled_across_sessions(source
         assert blob.content == data and blob.headers['cache-control'] == 'no-store'
         assert (await client.get('/v1/host/memory/sources/assets/' + asset, params={'contact_id': 'contact-b', 'session_id': 's1'})).status_code == 404
         vision = Vision(); assert await media.process_one(vision)
-        monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+        monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
         context = await recalled(client, session='another', query='blue circle')
         assert 'blue circle' in context and asset in context and 'derived_unverified' in context
         assert 'fixture-vision-a' in context
@@ -260,7 +260,7 @@ def test_startup_recovers_only_unowned_source_namespace(tmp_path):
     ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db'); media = SourceMedia(ledger)
     image = ImageInput(data=image_bytes(), mime_type='image/png', width=320, height=160)
     source = media.store.store_original(image)
-    from apsimo.vector.image_store import LocalImageStore
+    from pacomind.vector.image_store import LocalImageStore
     legacy = LocalImageStore(str(tmp_path)).store_original(image)
     media.recover_unowned_files()
     from pathlib import Path
@@ -279,9 +279,9 @@ async def test_invalid_image_stays_explicitly_unretained_without_losing_text(sou
 
 @pytest.mark.asyncio
 async def test_media_requires_explicit_local_vision_capability(tmp_path):
-    from apsimo.router.tiers import ModelTier, build_tiers_from_host
-    from apsimo.router.router import LLMRouter
-    from apsimo.router.fallback import FallbackHandler
+    from pacomind.router.tiers import ModelTier, build_tiers_from_host
+    from pacomind.router.router import LLMRouter
+    from pacomind.router.fallback import FallbackHandler
     from unittest.mock import AsyncMock
     ledger = TurnIdempotencyLedger(tmp_path / 'ledger.db'); media = SourceMedia(ledger)
     ledger.record_source('turn', contact_id='c', session_id='s', messages=[message()])

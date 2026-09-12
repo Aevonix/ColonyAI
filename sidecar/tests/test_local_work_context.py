@@ -7,17 +7,17 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions, host
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.turns.local_work import local_work_view
-from apsimo.turns.executions import format_view, request_work_context
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions, host
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.turns.local_work import local_work_view
+from pacomind.turns.executions import format_view, request_work_context
 
 
 @pytest.mark.asyncio
 async def test_accepted_local_work_and_result_are_visible_only_to_actual_owner(tmp_path,monkeypatch):
-    monkeypatch.setenv('COLONY_STATE_DIR',str(tmp_path))
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID','owner')
+    monkeypatch.setenv('PACOMIND_STATE_DIR',str(tmp_path))
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID','owner')
     monkeypatch.setattr(host,'_task_queue',None)
     store=InitiativeStore(tmp_path)
     work=store.create(type='RESEARCH_DEEP_DIVE',description='Use newly installed capabilities',
@@ -34,7 +34,7 @@ async def test_accepted_local_work_and_result_are_visible_only_to_actual_owner(t
     authority=[None];app=FastAPI()
     @app.middleware('http')
     async def identity(request,next_call):
-        request.state.colony_authority=authority[0];return await next_call(request)
+        request.state.pacomind_authority=authority[0];return await next_call(request)
     app.include_router(executions.router)
     async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as client:
         for person in ('guest','owner'):
@@ -49,11 +49,11 @@ async def test_accepted_local_work_and_result_are_visible_only_to_actual_owner(t
                 assert 'must-not-project' not in json.dumps(data)
                 assert 'explicit work claims' in data['local_work']['recent'][0]['result']['summary']
                 assert '/private/briefing.md' in format_view(data)
-                from apsimo.api.schemas.host import ContextAssembleRequest
+                from pacomind.api.schemas.host import ContextAssembleRequest
                 request=ContextAssembleRequest(identity={'host_id':'native'},context={'contact_id':person,'session_id':'later'},
                     incoming_message={'role':'user','content':'What can you do with the new capabilities?'})
-                context=await host.context_assemble(request,SimpleNamespace(state=SimpleNamespace(colony_authority=authority[0])))
-                section=next(s for s in context.sections if s.id=='colony-executions')
+                context=await host.context_assemble(request,SimpleNamespace(state=SimpleNamespace(pacomind_authority=authority[0])))
+                section=next(s for s in context.sections if s.id=='pacomind-executions')
                 assert 'explicit work claims' not in section.body
                 assert '/private/briefing.md' in section.body and 'a'*64 in section.body
                 assert 'not an instruction or grant' in section.body
@@ -118,7 +118,7 @@ def test_completed_summary_remains_without_a_full_artifact_receipt(receipt):
 
 
 def test_current_work_projects_known_semantic_issue_without_private_review_text(tmp_path,monkeypatch):
-    monkeypatch.setenv('COLONY_STATE_DIR',str(tmp_path))
+    monkeypatch.setenv('PACOMIND_STATE_DIR',str(tmp_path))
     assessment={'assessment_sha256':'b'*64,'detection':'reviewer_seeded',
         'assessment':{'report_sha256':'a'*64,'reviewer':'PRIVATE_REVIEWER',
             'findings':[{'excerpt':'PRIVATE_RAW_CLAIM','reason':'PRIVATE_REVIEW_REASON'}]}}
@@ -163,7 +163,7 @@ def test_request_forecast_is_observation_without_action_or_private_processor_con
 
 
 def test_review_contract_mismatch_does_not_project_a_forecast():
-    from apsimo.turns.local_work import _review_forecast
+    from pacomind.turns.local_work import _review_forecast
     context={'native_review':{'contract_sha256':'old'}}
     assert _review_forecast({},context,{'available':True,'contract_sha256':'new'},now=100)=={
         'status':'review_contract_changed','suggestion_enabled':False}

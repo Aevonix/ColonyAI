@@ -8,10 +8,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.qualification.cases import role_completion, json_fields
-from apsimo.qualification.records import CaseSpec, encode, read, write_once
-from apsimo.qualification.runner import evaluate
-from apsimo.qualification.report import summarize, compare
+from pacomind.qualification.cases import role_completion, json_fields
+from pacomind.qualification.records import CaseSpec, encode, read, write_once
+from pacomind.qualification.runner import evaluate
+from pacomind.qualification.report import summarize, compare
 
 RECIPE = {'binding': 'candidate', 'declared': {'supports_tools': False}, 'returned_model': None}
 CASE = CaseSpec(id='neutral', version='1', role='chat', boundary='role_completion',
@@ -151,7 +151,7 @@ def test_result_writer_never_overwrites(tmp_path):
 
 @pytest.mark.asyncio
 async def test_cleanup_failure_is_not_reported_as_complete(tmp_path,monkeypatch):
-    from apsimo.qualification import runner
+    from pacomind.qualification import runner
     original = runner.tempfile.TemporaryDirectory
     class CleanupFailure:
         def __init__(self,*args,**kwargs):
@@ -217,7 +217,7 @@ async def test_running_attempt_cannot_be_resumed_concurrently(tmp_path):
 
 @pytest.mark.asyncio
 async def test_actual_memory_consumer_result_keeps_supporting_judge_distinct(tmp_path):
-    from apsimo.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS
+    from pacomind.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS
     from test_model_qualification_memory import Processor
     await evaluate(tmp_path/'run', RECIPE, CASES, CONSUMERS, EVALUATORS, lambda case:Processor())
     for case in CASES:
@@ -241,7 +241,7 @@ async def test_actual_memory_consumer_result_keeps_supporting_judge_distinct(tmp
 @pytest.mark.asyncio
 @pytest.mark.parametrize('supported', [True, False], ids=['copied-value', 'rejected-value'])
 async def test_actual_memory_rejected_completion_is_retained_without_changing_grade(tmp_path, supported):
-    from apsimo.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS, memory_outcomes
+    from pacomind.qualification.memory_cases import CASES, CONSUMERS, EVALUATORS, memory_outcomes
     from test_model_qualification_memory import Processor
 
     class CapturedProcessor(Processor):
@@ -317,7 +317,7 @@ async def test_completion_text_has_aggregate_case_and_run_bound_without_truncati
 
 @pytest.mark.asyncio
 async def test_existing_router_failure_preserves_only_known_nonsecret_causes(tmp_path):
-    from apsimo.qualification.runner import router_for
+    from pacomind.qualification.runner import router_for
     from test_function_routing import endpoint, config
 
     with endpoint(content=lambda _: '') as (url, calls):

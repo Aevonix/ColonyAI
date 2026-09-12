@@ -2,7 +2,7 @@
 
 ## Boundaries
 
-Shadow changes only Colony's optional priority observer. Live additionally
+Shadow changes only PacoMind's optional priority observer. Live additionally
 requires the active owner-ratified charter to narrow new P3 goal admission;
 it still does not authorize action execution or change voice, Hermes, channel
 transports, or live service topology. Keep one writer responsible for the P7
@@ -10,7 +10,7 @@ state/flags during each phase.
 
 ## Preconditions
 
-1. Deploy a pinned, clean Colony revision containing P7.
+1. Deploy a pinned, clean PacoMind revision containing P7.
 2. Confirm P3 policy decisions and project provenance are healthy.
 3. Confirm the existing directive/global-pause store is readable.
 4. Confirm the scoped owner approval principal has `approvals:decide`, the
@@ -32,7 +32,7 @@ state/flags during each phase.
 
 ## Phase A: off
 
-Leave `COLONY_DRIVE_GOVERNANCE_MODE` unset or set it to `off`.
+Leave `PACOMIND_DRIVE_GOVERNANCE_MODE` unset or set it to `off`.
 
 `bootstrap` is a narrow initial-authority lane for an otherwise unchartered
 deployment. It may register inert drive definitions, propose a root charter,
@@ -59,7 +59,7 @@ Rollback: none; off is the baseline.
 Set:
 
 ```text
-COLONY_DRIVE_GOVERNANCE_MODE=shadow
+PACOMIND_DRIVE_GOVERNANCE_MODE=shadow
 ```
 
 Register one owner-private candidate drive with a low contribution budget,
@@ -132,14 +132,14 @@ Exit criteria:
 ## Rollback
 
 1. Set P3 to `shadow` (or `off`) before setting
-   `COLONY_DRIVE_GOVERNANCE_MODE=off`; restart only the Colony process that
+   `PACOMIND_DRIVE_GOVERNANCE_MODE=off`; restart only the PacoMind process that
    owns the optional attachment. This avoids unintentionally widening live P3
    from the ratified charter back to the base deployment validator.
 2. Verify no new P3 Project is created and all normal execution gates remain
    enabled. Restore P3 `live` only as an explicit operator decision after the
    base charter behavior is re-verified.
 3. Keep the P7 SQLite ledger in place for audit. It has no effect in off mode.
-4. If a code rollback is required, deploy the prior pinned Colony revision and
+4. If a code rollback is required, deploy the prior pinned PacoMind revision and
    retain/rename the P7 database. Do not downgrade or delete it in place.
 5. Do not restore the shared approval database from a P7-only backup: it may
    contain unrelated newer approvals. P7's one-use transition records are
@@ -153,13 +153,13 @@ the copied evidence is preserved. Re-propose and re-ratify; never synthesize an
 ## Build verification record (2026-07-12)
 
 The contract test was run before implementation and failed at collection with
-the expected missing `colony_sidecar.cognition.drive_governance` module. After
+the expected missing `pacomind.cognition.drive_governance` module. After
 implementation:
 
 - P7 focused contract: `30 passed`;
 - P7 + P3 + directives + bounded approvals + P4 + Toolsmith matrix:
   `133 passed`; and
-- complete Colony sidecar suite: `2664 passed, 118 skipped, 21 warnings`.
+- complete PacoMind sidecar suite: `2664 passed, 118 skipped, 21 warnings`.
 
 The 21 full-suite warnings are pre-existing async/deprecation warnings outside
 the P7 files; P7 adds no warning.

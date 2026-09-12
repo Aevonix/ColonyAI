@@ -1,6 +1,6 @@
 # Leveled Cross-Contact Theory of Mind (ToM2)
 
-Colony keeps second-order inferences — *who appears to know / not know
+PacoMind keeps second-order inferences — *who appears to know / not know
 which shared fact* — in a refs-not-content store (`tom/tom2.py`). This
 document describes the **leveled rendering system** that decides, per
 conversation and per reader, **every turn**, how much of that model may
@@ -24,18 +24,18 @@ establish that a knowledge inference is semantically correct.
 
 | Level | Audience | What renders |
 |---|---|---|
-| **0** | owner only | Today's behavior: the owner-facing asymmetry section (`COLONY_TOM2_CONTEXT`) and owner API surfaces. Nothing about the model reaches any other reader. |
+| **0** | owner only | Today's behavior: the owner-facing asymmetry section (`PACOMIND_TOM2_CONTEXT`) and owner API surfaces. Nothing about the model reaches any other reader. |
 | **1** | the reader, about themself | Self-reflexive prior: the reader's own `knows` rows (fact text they already own) plus ONE content-free caution line when `unaware_of` rows exist about them. No third party is ever mentioned. |
 | **2** | the reader, about third parties | Epistemic topology ("X has not heard: …") through the full eligibility pipeline. By construction (the H3.5 double gate) every rendered fact text is a fact the reader **already owns** — level 2 can add topology, never new content. |
 
 ## The effective level (a min-chain of independent brakes)
 
 ```
-effective = min( COLONY_TOM2_LEVEL          (default 0),
-                 COLONY_TOM2_MAX_LEVEL      (default 1),
-                 cap(environment risk)      (COLONY_TOM2_RISK_CAPS, default 0:2,1:2,2:1,3:0),
+effective = min( PACOMIND_TOM2_LEVEL          (default 0),
+                 PACOMIND_TOM2_MAX_LEVEL      (default 1),
+                 cap(environment risk)      (PACOMIND_TOM2_RISK_CAPS, default 0:2,1:2,2:1,3:0),
                  2 if live-enforce-evidence else 1,
-                 2 if COLONY_TOM2_CROSS_CONTEXT else 1 )
+                 2 if PACOMIND_TOM2_CROSS_CONTEXT else 1 )
        … and 0 on ANY error anywhere.
 ```
 
@@ -43,8 +43,8 @@ Environment risk (`gate/env_risk.py`) grades each (conversation, reader)
 pair R0–R3, **monotone and fail-closed**: a lower grade needs positive,
 verified evidence (declared-private gateway, strong identity resolution,
 known census, tier floors); every missing signal — and every error — is
-R3. `COLONY_ENV_RISK_GATEWAY_CLASS` must explicitly bless a gateway as
-`private` before anything can grade below R3; Colony ships no gateway
+R3. `PACOMIND_ENV_RISK_GATEWAY_CLASS` must explicitly bless a gateway as
+`private` before anything can grade below R3; PacoMind ships no gateway
 names.
 
 Enforce evidence must prove that a transport-owned egress mediator actually
@@ -69,7 +69,7 @@ Any one of these drops the level THAT TURN, silently:
 - no enforce evidence, breaker tripped, or check de-allowlisted → ≤ 1
 - machine/system turn, unresolved reader → 0
 - resolver / classifier / store error of any kind → 0
-- exposure budgets exhausted (`COLONY_TOM2_BUDGET_*`) → the row does not
+- exposure budgets exhausted (`PACOMIND_TOM2_BUDGET_*`) → the row does not
   render
 - owner pair-approval missing / expired / revoked → the row does not
   render
@@ -98,7 +98,7 @@ cannot inject content the reader does not already hold.
 1. **Ship dark** (all defaults). Observe presence, `/env-risk`, and
    `/tom2/status` for a while; confirm your private DM surfaces grade
    R0/R1 and the doctor is clean.
-2. `COLONY_TOM2_LEVEL=1` — self-reflexive priors only.
+2. `PACOMIND_TOM2_LEVEL=1` — self-reflexive priors only.
 3. Ramp the chat guard to enforce on the target gateway and keep
    `tom2_epistemic` allowlisted. Use `/response-guard/audit` only to calibrate
    evaluation behavior; those rows do not accrue applied-output evidence.
@@ -106,8 +106,8 @@ cannot inject content the reader does not already hold.
    binding the policy, evaluated candidate digest, decision, and exact applied
    output digest. Only that receipt-backed mediator may supply the resolver's
    enforce-evidence probe.
-5. `COLONY_TOM2_MAX_LEVEL=2` + `COLONY_TOM2_CROSS_CONTEXT=1` +
-   `COLONY_TOM2_LEVEL=2`, with `COLONY_TOM2_L2_APPROVAL=required`
+5. `PACOMIND_TOM2_MAX_LEVEL=2` + `PACOMIND_TOM2_CROSS_CONTEXT=1` +
+   `PACOMIND_TOM2_LEVEL=2`, with `PACOMIND_TOM2_L2_APPROVAL=required`
    (default) and per-pair approvals via `POST /v1/host/tom2/approvals`.
 
 The current system cannot complete step 4 and therefore cannot run level 2:
@@ -116,16 +116,16 @@ no receipt-backed applied-output evidence means the min-chain caps at level 1
 
 ## Kill switch / panic
 
-**`COLONY_TOM2_LEVEL=0`** is the single-variable kill: the context wiring
+**`PACOMIND_TOM2_LEVEL=0`** is the single-variable kill: the context wiring
 is skipped entirely (level 1 AND 2, every conversation) on the next turn.
 Nothing else needs to change; already-registered taints keep protecting
 egress until they expire. Verify with `GET /v1/host/tom2/status`
-(`configured: 0`) and `colony doctor` (`tom2-level-coherence` reports the
+(`configured: 0`) and `pacomind doctor` (`tom2-level-coherence` reports the
 kill switch).
 
 For a full stand-down beyond rendering: revoke pairs
 (`POST /v1/host/tom2/approvals` with `action=revoke`) and set
-`COLONY_TOM2_CONTEXT=0` to drop the owner section too. Leave the guard
+`PACOMIND_TOM2_CONTEXT=0` to drop the owner section too. Leave the guard
 and its allowlist alone — the egress net is protection, not exposure.
 
 ## Reversibility
@@ -137,7 +137,7 @@ and its allowlist alone — the egress net is protection, not exposure.
   `Tom2Store.delete_for_fact` — the fact's inferences are dropped, and a
   dangling ref could never render anyway (H3.5 fails closed).
 - **Un-approve a pair:** `POST /v1/host/tom2/approvals` `action=revoke`
-  (approvals also expire on their own, `COLONY_TOM2_APPROVAL_TTL_DAYS`,
+  (approvals also expire on their own, `PACOMIND_TOM2_APPROVAL_TTL_DAYS`,
   default 30).
 
 ## Observability
@@ -148,26 +148,26 @@ and its allowlist alone — the egress net is protection, not exposure.
 - `GET /v1/host/tom2/exposure`, `GET /v1/host/tom2/approvals`.
 - `GET /v1/host/response-guard/audit` — evaluation-only per-check rates and
   breaker posture; these verdict rows are never applied-enforcement evidence.
-- `colony doctor` — `tom2-cross-context`, `tom2-risk-caps`,
+- `pacomind doctor` — `tom2-cross-context`, `tom2-risk-caps`,
   `tom2-level-coherence`.
 
 ## Variables
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `COLONY_TOM2_LEVEL` | `0` | Requested level; `0` is the kill switch. |
-| `COLONY_TOM2_MAX_LEVEL` | `1` | Hard ceiling. |
-| `COLONY_TOM2_RISK_CAPS` | `0:2,1:2,2:1,3:0` | Per-risk level caps; malformed fails closed to all-0. |
-| `COLONY_TOM2_CROSS_CONTEXT` | `0` | H3.5 render gate (half of the level-2 requirement). |
-| `COLONY_TOM2_L2_APPROVAL` | `required` | Owner pair-approval requirement. |
-| `COLONY_TOM2_BUDGET_PAIR_DAY` / `_READER_DAY` / `_GLOBAL_DAY` | `1` / `3` / `10` | Exposure budgets per rolling 24h. |
-| `COLONY_TOM2_TAINT_TTL_SECS` | `900` | How long an injection stays hot for the egress net. |
-| `COLONY_TOM2_MUTUAL_WINDOW_DAYS` | `30` | Mutual-knowledge co-sighting window. |
-| `COLONY_ENV_RISK_GATEWAY_CLASS` | *(empty)* | `gateway:private\|public\|embodied` pairs; unclassified = hostile. |
-| `COLONY_ENV_RISK_WINDOW_HOURS` | `48` | Census / subject-presence window. |
-| `COLONY_GUARD_ENFORCE_CHECKS` | `secret_leak,tom2_epistemic` | Per-check enforce allowlist. |
-| `COLONY_GUARD_DERIVE_CONTEXT` | `1` | Server-side guard-context completion (chat hot path). |
-| `COLONY_CONV_PRESENCE` | `on` | Passive conversation census recording. |
+| `PACOMIND_TOM2_LEVEL` | `0` | Requested level; `0` is the kill switch. |
+| `PACOMIND_TOM2_MAX_LEVEL` | `1` | Hard ceiling. |
+| `PACOMIND_TOM2_RISK_CAPS` | `0:2,1:2,2:1,3:0` | Per-risk level caps; malformed fails closed to all-0. |
+| `PACOMIND_TOM2_CROSS_CONTEXT` | `0` | H3.5 render gate (half of the level-2 requirement). |
+| `PACOMIND_TOM2_L2_APPROVAL` | `required` | Owner pair-approval requirement. |
+| `PACOMIND_TOM2_BUDGET_PAIR_DAY` / `_READER_DAY` / `_GLOBAL_DAY` | `1` / `3` / `10` | Exposure budgets per rolling 24h. |
+| `PACOMIND_TOM2_TAINT_TTL_SECS` | `900` | How long an injection stays hot for the egress net. |
+| `PACOMIND_TOM2_MUTUAL_WINDOW_DAYS` | `30` | Mutual-knowledge co-sighting window. |
+| `PACOMIND_ENV_RISK_GATEWAY_CLASS` | *(empty)* | `gateway:private\|public\|embodied` pairs; unclassified = hostile. |
+| `PACOMIND_ENV_RISK_WINDOW_HOURS` | `48` | Census / subject-presence window. |
+| `PACOMIND_GUARD_ENFORCE_CHECKS` | `secret_leak,tom2_epistemic` | Per-check enforce allowlist. |
+| `PACOMIND_GUARD_DERIVE_CONTEXT` | `1` | Server-side guard-context completion (chat hot path). |
+| `PACOMIND_CONV_PRESENCE` | `on` | Passive conversation census recording. |
 
 ## Residual risk (accepted, not hidden)
 

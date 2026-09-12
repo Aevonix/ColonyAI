@@ -4,9 +4,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.beliefs.source_claims import validated_claims
-from apsimo.util.model_output import final_text
-from apsimo.tom.extractor import _parse_fact_array
+from pacomind.beliefs.source_claims import validated_claims
+from pacomind.util.model_output import final_text
+from pacomind.tom.extractor import _parse_fact_array
 from test_source_claim_projection import claim
 from test_tom_extractor import fact_item
 

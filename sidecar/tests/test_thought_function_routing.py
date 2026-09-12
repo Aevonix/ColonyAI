@@ -6,10 +6,10 @@ import json
 
 import pytest
 
-from apsimo.cognition.goal_spine import ThoughtJobV1, parse_thought_output
-from apsimo.self_model.workspace import ConcernStore
-from apsimo.task_queue.handlers.inference import InferenceHandler
-from apsimo.task_queue.models import Job, JobType
+from pacomind.cognition.goal_spine import ThoughtJobV1, parse_thought_output
+from pacomind.self_model.workspace import ConcernStore
+from pacomind.task_queue.handlers.inference import InferenceHandler
+from pacomind.task_queue.models import Job, JobType
 from test_cognition_goal_spine import concern
 from test_function_routing import config, endpoint, router
 from test_inference_context_gate import _big_doc
@@ -76,7 +76,7 @@ async def test_strict_thought_uses_selected_function_and_its_deadline(
 async def test_generic_cognition_gate_uses_the_same_task_role_as_dispatch(
     monkeypatch, thought_budget, default_budget,
 ):
-    monkeypatch.setenv("COLONY_CONTEXT_GATE", "auto")
+    monkeypatch.setenv("PACOMIND_CONTEXT_GATE", "auto")
     doc = _big_doc() + "\n\nWhen did the database outage start?"
     with endpoint(content="The recorded outage began at 03:14 UTC.") as (url, requests):
         cfg = config(url, url)

@@ -19,15 +19,15 @@ native=sys.argv[5]
 if native: sys.path.insert(2,native)
 import uvicorn
 from fastapi import FastAPI, Response
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions,host
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.turns import get_turn_idempotency_ledger
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions,host
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.turns import get_turn_idempotency_ledger
 
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-state=Path(os.environ['COLONY_STATE_DIR']); state.mkdir()
+state=Path(os.environ['PACOMIND_STATE_DIR']); state.mkdir()
 contacts=SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db')))
 async def setup():
     await contacts.connect()
@@ -39,7 +39,7 @@ async def setup():
                                   gateway='sms',address='+15550007161',verified=True)
     return person.contact_id,guest.contact_id
 owner,guest=asyncio.run(setup()); host._contacts_store=contacts; host._task_queue=None
-os.environ['COLONY_OWNER_CONTACT_ID']=owner
+os.environ['PACOMIND_OWNER_CONTACT_ID']=owner
 fact='My neutral orchard badge is cobalt-716.'
 guest_fact='My neutral orchard badge is amber-981.'
 ledger=get_turn_idempotency_ledger(state)
@@ -54,7 +54,7 @@ async def authority(request,next_call):
     if (second_person=='unavailable' and request.url.path=='/v1/host/contacts/resolve'
             and request.query_params.get('address')=='+15550007161'):
         return Response('Controlled identity resolver outage',status_code=503)
-    request.state.colony_authority=RequestAuthority(principal_id='native-fixture',credential_id='fixture',
+    request.state.pacomind_authority=RequestAuthority(principal_id='native-fixture',credential_id='fixture',
         scopes=frozenset({'turns:write','turns:resolve-sender','context:read'}),viewer_person_id=owner,
         turn_ingress_platforms=frozenset({'sms'}),
         person_ids=frozenset({owner,guest}),audiences=frozenset({'viewer'}),authenticated=True)
@@ -74,26 +74,26 @@ def local_only(self,address):
     assert isinstance(address,tuple) and address[:2]==('127.0.0.1',port),address
     return connect(self,address)
 socket.socket.connect=local_only
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['pacomind'],'pacomind':{
     'owner_contact_id':owner,'url':base,'turn_writer_platforms':[],'execution_registry_enabled':True}},
-    'memory':{'provider':'apsimo-memory','config':{'contact_id':owner,'url':base}}}))
-import apsimo_hermes
+    'memory':{'provider':'pacomind-memory','config':{'contact_id':owner,'url':base}}}))
+import pacomind_hermes
 first_hook=threading.Event(); second_queued=threading.Event(); release=threading.Event()
-original_get=apsimo_hermes.ColonyClient.get
+original_get=pacomind_hermes.PacoMindClient.get
 def get(self,path,**kwargs):
     if (path=='/v1/host/contacts/resolve' and kwargs.get('params',{}).get('address')=='+15550007160'
             and threading.current_thread().name.startswith('hermes-hook-pre_llm_call')):
         first_hook.set()
         assert release.wait(15), 'second native turn failed to overlap first callback'
     return original_get(self,path,**kwargs)
-apsimo_hermes.ColonyClient.get=get
+pacomind_hermes.PacoMindClient.get=get
 from hermes_cli.plugins import get_plugin_manager
 if native:
     import hermes_cli.plugins
     assert Path(hermes_cli.plugins.__file__).resolve().is_relative_to(Path(native).resolve())
 plugin_manager=get_plugin_manager()
 plugin_manager.discover_and_load()
-assert plugin_manager._plugins['apsimo'].enabled
+assert plugin_manager._plugins['pacomind'].enabled
 # Observe real admission behind the running callback, then let both turns
 # proceed. Waiting for the second whole turn here would make a circular wait
 # under Hermes's healthy-overlap serialization.
@@ -139,7 +139,7 @@ try:
             agent._user_id='+1555000716'+str(index)
             agent._cached_system_prompt='Neutral identity.'; agent._use_prompt_caching=False
             agent.compression_enabled=False; agent.save_trajectories=False
-            manager=MemoryManager(); manager.add_provider(load_memory_provider('apsimo-memory'))
+            manager=MemoryManager(); manager.add_provider(load_memory_provider('pacomind-memory'))
             manager.initialize_all(agent.session_id,hermes_home=str(home),platform='sms')
             agent._memory_manager=manager; agents.append(agent)
         first=threading.Thread(target=run,args=(0,)); first.start()
@@ -153,7 +153,7 @@ try:
     for index in range(2):
         first_request=json.dumps(requests[index][0])
         tools=[row['content'] for row in results[index]['messages'] if row.get('role')=='tool']
-        scope=apsimo_hermes._TRANSPORT_SCOPES.for_session(agents[index].session_id)
+        scope=pacomind_hermes._TRANSPORT_SCOPES.for_session(agents[index].session_id)
         with ledger._connect() as db:
             observed=db.execute('SELECT contact_id FROM execution_observations WHERE session_id=?',
                                 (agents[index].session_id,)).fetchall()
@@ -161,7 +161,7 @@ try:
         assert bool(observed)==(index==0 or second_person!='unavailable'),observed
         assert all(row['contact_id']==expected_contact for row in observed),observed
         expected_fact=guest_fact if index==1 and second_person=='guest' else fact
-        summary.append({'index':index,'recall':expected_fact in first_request,'work':'[colony-work-request-v1]' in first_request,
+        summary.append({'index':index,'recall':expected_fact in first_request,'work':'[pacomind-work-request-v1]' in first_request,
             'authorized_read':any('ACTUAL_CONCURRENT_READ' in value for value in tools),
             'bound':bool(scope and scope.valid_participant),'model_requests':len(requests[index])})
         if index==1 and second_person!='owner':
@@ -179,13 +179,13 @@ finally:
 
 @pytest.mark.parametrize('second_person',['owner','guest','unavailable'])
 def test_actual_overlapping_native_starts_preserve_recall_authorized_tools_and_work(artifacts,tmp_path,second_person):
-    native=os.environ.get('COLONY_TEST_HERMES_PATH','')
+    native=os.environ.get('PACOMIND_TEST_HERMES_PATH','')
     if not native and importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for actual concurrent turn qualification')
     env={key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'profile'),COLONY_STATE_DIR=str(tmp_path/'colony'),
+    env.update(HERMES_HOME=str(tmp_path/'profile'),PACOMIND_STATE_DIR=str(tmp_path/'pacomind'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_GENERAL_PLUGIN_ACTIVE='1',COLONY_MEMORY_WORKER_TOOLS='0',COLONY_MEMORY_TURN_WRITER='disabled',
-        COLONY_GUARD_CHAT_MODE='off',COLONY_OWNER_CONTACT_ID='owner',COLONY_SKIP_DOTENV='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
-    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),second_person,native,cwd=tmp_path,env=env)
+        PACOMIND_GENERAL_PLUGIN_ACTIVE='1',PACOMIND_MEMORY_WORKER_TOOLS='0',PACOMIND_MEMORY_TURN_WRITER='disabled',
+        PACOMIND_GUARD_CHAT_MODE='off',PACOMIND_OWNER_CONTACT_ID='owner',PACOMIND_SKIP_DOTENV='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
+    result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH',''),second_person,native,cwd=tmp_path,env=env)
     assert '"actual_native": true' in result.stdout

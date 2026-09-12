@@ -5,9 +5,9 @@ import importlib
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import social_state
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import social_state
+from pacomind.turns import TurnIdempotencyLedger
 from test_canonical_scoped_context import context, headers
 from test_scoped_api_authority import _principal, _write_keyring
 from test_source_appraisals import admitted_preference
@@ -18,8 +18,8 @@ from test_native_request_erasure import packet
 
 @pytest.mark.asyncio
 async def test_capture_reflection_recall_correction_and_erasure(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     keys = tmp_path/'keys.json'
     _write_keyring(keys, [_principal(principal=p, secret='fixture-'+p, viewer=p)
                           for p in ('owner', 'person', 'stranger')])
@@ -40,7 +40,7 @@ async def test_capture_reflection_recall_correction_and_erasure(source_app, tmp_
                                      json=context('person', 'export task', session='later-channel'))
         assert recalled.status_code == 200, recalled.text
         sections = {s['id']: s for s in recalled.json()['sections']}
-        section = sections['colony-appraisals']
+        section = sections['pacomind-appraisals']
         assert 'I prefer concise explanations for export diagnostics.' in section['body']
         assert section['citations'][0]['source_id'] == 'explicit-preference'
         # Inspection permits the owner, while other contacts cannot select this person.
@@ -57,7 +57,7 @@ async def test_capture_reflection_recall_correction_and_erasure(source_app, tmp_
         replay = await client.post('/v1/host/social/appraisals/correct', headers=headers('owner'), json=correction)
         assert replay.status_code == 200 and replay.json()['created'] is False
         after = await client.post('/v1/host/context/assemble', headers=headers('person'), json=context('person', 'export task'))
-        assert 'colony-appraisals' not in [s['id'] for s in after.json()['sections']]
+        assert 'pacomind-appraisals' not in [s['id'] for s in after.json()['sections']]
         ledger.erase_sources(contact_id='person', turn_ids=['explicit-preference'])
         assert store.view('person', viewer_contact_id='owner', history=True)['records'] == []
         with ledger._connect() as conn:
@@ -66,8 +66,8 @@ async def test_capture_reflection_recall_correction_and_erasure(source_app, tmp_
 
 @pytest.mark.asyncio
 async def test_withdrawn_social_hint_is_not_replayed_as_current_request_guidance(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'owner')
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'owner')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     ledger = TurnIdempotencyLedger(tmp_path/'turn-idempotency.db')
     text = 'I prefer concise explanations for export diagnostics.'
     ledger.record_source('preference', contact_id='person', session_id='earlier',

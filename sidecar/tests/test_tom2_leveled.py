@@ -11,11 +11,11 @@ import inspect
 
 import pytest
 
-from apsimo.tom import leveled
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.leveled import (
+from pacomind.tom import leveled
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.leveled import (
     LEVEL2_HEADER, UNAWARE_CAUTION, render_level1, render_level2)
-from apsimo.tom.tom2 import Tom2Store, render_inference_for_contact
+from pacomind.tom.tom2 import Tom2Store, render_inference_for_contact
 
 READER = "cid-alice"
 
@@ -38,7 +38,7 @@ def stores():
 # ---------------------------------------------------------------------------
 
 def test_level1_knows_renders_readers_own_fact(stores, monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_CROSS_CONTEXT", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_CROSS_CONTEXT", raising=False)
     facts, tom2, own, _ = stores
     tom2.record_inference(contact_id=READER, kind="knows",
                           fact_ref=own["id"], confidence=0.8)
@@ -120,7 +120,7 @@ def _bob_unaware(tom2, fact):
 
 
 def test_level2_renders_silent_prior(stores, monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
     facts, tom2, own, _ = stores
     row = _bob_unaware(tom2, own)
     out = render_level2([row], facts, READER)
@@ -132,7 +132,7 @@ def test_level2_renders_silent_prior(stores, monkeypatch):
 
 
 def test_level2_refuses_when_master_flag_off(stores, monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_CROSS_CONTEXT", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_CROSS_CONTEXT", raising=False)
     facts, tom2, own, _ = stores
     row = _bob_unaware(tom2, own)
     assert render_level2([row], facts, READER) is None
@@ -141,7 +141,7 @@ def test_level2_refuses_when_master_flag_off(stores, monkeypatch):
 def test_level2_unvetted_foreign_row_cannot_render(stores, monkeypatch):
     """Even a caller that skips the eligibility pipeline cannot leak: the
     H3.5 gate inside refuses rows resting on foreign facts."""
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
     facts, tom2, _, foreign = stores
     row = _bob_unaware(tom2, foreign)
     out = render_level2([row], facts, READER)
@@ -150,7 +150,7 @@ def test_level2_unvetted_foreign_row_cannot_render(stores, monkeypatch):
 
 
 def test_level2_limit_and_empty(stores, monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_CROSS_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CROSS_CONTEXT", "1")
     facts, tom2, _, _ = stores
     rows = []
     for i in range(4):

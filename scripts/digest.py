@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Colony digest — bundles completed/failed job summaries and messages owner.
+"""PacoMind digest — bundles completed/failed job summaries and messages owner.
 
 Runs every 6 hours via cron. Queries the task queue digest endpoint and
 pushes the result to the delivery bridge (or logs if no bridge).
@@ -15,18 +15,18 @@ from datetime import datetime, timezone
 
 import httpx
 
-logger = logging.getLogger("colony_digest")
+logger = logging.getLogger("pacomind_digest")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
-COLONY_URL = os.environ.get("COLONY_URL", "http://127.0.0.1:7777")
-API_TOKEN = os.environ.get("COLONY_AGENT_API_TOKEN", "")
+PACOMIND_URL = os.environ.get("PACOMIND_URL", "http://127.0.0.1:7777")
+API_TOKEN = os.environ.get("PACOMIND_AGENT_API_TOKEN", "")
 _HEADERS = {"Authorization": f"Bearer {API_TOKEN}"} if API_TOKEN else {}
 
 
 def main() -> int:
     try:
         resp = httpx.get(
-            f"{COLONY_URL}/v1/host/queue/digest",
+            f"{PACOMIND_URL}/v1/host/queue/digest",
             headers=_HEADERS,
             params={"hours": 6},
             timeout=10,
@@ -44,7 +44,7 @@ def main() -> int:
         logger.info("No activity in last 6 hours")
         return 0
 
-    lines = ["[Colony Digest — 6h]"]
+    lines = ["[PacoMind Digest — 6h]"]
     if completed:
         lines.append(f"✅ Completed ({len(completed)})")
         for item in completed:
@@ -61,13 +61,13 @@ def main() -> int:
     try:
         payload = {
             "initiative_type": "PROACTIVE_MESSAGE",
-            "title": "Colony Digest",
+            "title": "PacoMind Digest",
             "description": message,
             "priority": 50,
             "dedup_key": f"digest:{datetime.now(timezone.utc).strftime('%Y-%m-%d-%H')}",
         }
         push_resp = httpx.post(
-            f"{COLONY_URL}/v1/host/initiatives",
+            f"{PACOMIND_URL}/v1/host/initiatives",
             headers=_HEADERS,
             json=payload,
             timeout=10,

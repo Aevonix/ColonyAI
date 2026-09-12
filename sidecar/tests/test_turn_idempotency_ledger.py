@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 
-from apsimo.turns import (
+from pacomind.turns import (
     ReservationOutcome,
     TurnIdempotencyLedger,
     canonical_turn_digest,

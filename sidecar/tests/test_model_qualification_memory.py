@@ -5,8 +5,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.qualification.memory_cases import CASES, source_memory, memory_outcomes
-from apsimo.qualification.runner import RunContext
+from pacomind.qualification.memory_cases import CASES, source_memory, memory_outcomes
+from pacomind.qualification.runner import RunContext
 from test_source_claim_projection import claim
 
 

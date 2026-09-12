@@ -1,7 +1,7 @@
 """U22 — boundary (DirectiveGuard) checks fail CLOSED on error.
 
 An owner boundary is a prohibition; if the check itself raises we must not
-assume the action is permitted. COLONY_BOUNDARY_FAIL_CLOSED defaults to
+assume the action is permitted. PACOMIND_BOUNDARY_FAIL_CLOSED defaults to
 true: an exception inside the boundary check refuses the delivery /
 directed intake with reason boundary_check_error, logs a WARNING, and
 increments a counter. Setting the flag to false restores the legacy
@@ -18,10 +18,10 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.autonomy.config import AutonomyConfig
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.directed import DirectedActionService, ScopedTaskStore
-from apsimo.directives.guard import boundary_fail_closed
+from pacomind.autonomy.config import AutonomyConfig
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.directed import DirectedActionService, ScopedTaskStore
+from pacomind.directives.guard import boundary_fail_closed
 
 
 class _ExplodingDirectives:
@@ -74,13 +74,13 @@ def _service(dm):
 # ---------------------------------------------------------------------------
 
 def test_flag_defaults_to_fail_closed(monkeypatch):
-    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
-    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+    monkeypatch.delenv("PACOMIND_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
     assert boundary_fail_closed() is True
 
 
 def test_flag_false_restores_legacy(monkeypatch):
-    monkeypatch.setenv("COLONY_BOUNDARY_FAIL_CLOSED", "false")
+    monkeypatch.setenv("PACOMIND_BOUNDARY_FAIL_CLOSED", "false")
     assert boundary_fail_closed() is False
 
 
@@ -89,14 +89,14 @@ def test_flag_false_restores_legacy(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_delivery_boundary_error_refuses_by_default(monkeypatch, caplog):
-    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
-    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
-    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
+    monkeypatch.delenv("PACOMIND_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
+    monkeypatch.delenv("PACOMIND_DELIVERY_TRANSPORT", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-xyz")
 
     loop = _loop(_ExplodingDirectives())
     delivery = _FakeDelivery()
-    with caplog.at_level(logging.WARNING, logger="apsimo.autonomy.loop"):
+    with caplog.at_level(logging.WARNING, logger="pacomind.autonomy.loop"):
         ok = asyncio.run(loop._route_reachout_delivery(_payload(), delivery))
 
     assert ok is False
@@ -108,9 +108,9 @@ def test_delivery_boundary_error_refuses_by_default(monkeypatch, caplog):
 
 
 def test_delivery_boundary_error_allows_when_flag_false(monkeypatch):
-    monkeypatch.setenv("COLONY_BOUNDARY_FAIL_CLOSED", "false")
-    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
+    monkeypatch.setenv("PACOMIND_BOUNDARY_FAIL_CLOSED", "false")
+    monkeypatch.delenv("PACOMIND_DELIVERY_TRANSPORT", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-xyz")
 
     loop = _loop(_ExplodingDirectives())
     delivery = _FakeDelivery()
@@ -123,9 +123,9 @@ def test_delivery_boundary_error_allows_when_flag_false(monkeypatch):
 
 def test_delivery_healthy_boundary_path_unchanged(monkeypatch):
     """Regression lock: no directives wired -> delivery proceeds as before."""
-    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
-    monkeypatch.delenv("COLONY_DELIVERY_TRANSPORT", raising=False)
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-xyz")
+    monkeypatch.delenv("PACOMIND_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("PACOMIND_DELIVERY_TRANSPORT", raising=False)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-xyz")
 
     loop = _loop(None)
     delivery = _FakeDelivery()
@@ -140,11 +140,11 @@ def test_delivery_healthy_boundary_path_unchanged(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_directed_boundary_error_refuses_by_default(monkeypatch, caplog):
-    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
-    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+    monkeypatch.delenv("PACOMIND_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
 
     svc = _service(_ExplodingDirectives())
-    with caplog.at_level(logging.WARNING, logger="apsimo.directed.service"):
+    with caplog.at_level(logging.WARNING, logger="pacomind.directed.service"):
         task = asyncio.run(svc.intake("summarize recent changes"))
 
     assert task.status == "refused"
@@ -157,7 +157,7 @@ def test_directed_boundary_error_refuses_by_default(monkeypatch, caplog):
 
 
 def test_directed_boundary_error_allows_when_flag_false(monkeypatch):
-    monkeypatch.setenv("COLONY_BOUNDARY_FAIL_CLOSED", "false")
+    monkeypatch.setenv("PACOMIND_BOUNDARY_FAIL_CLOSED", "false")
 
     svc = _service(_ExplodingDirectives())
     task = asyncio.run(svc.intake("summarize recent changes"))
@@ -169,7 +169,7 @@ def test_directed_boundary_error_allows_when_flag_false(monkeypatch):
 
 def test_directed_healthy_boundary_path_unchanged(monkeypatch):
     """Regression lock: no directive manager -> intake proceeds as before."""
-    monkeypatch.delenv("COLONY_BOUNDARY_FAIL_CLOSED", raising=False)
+    monkeypatch.delenv("PACOMIND_BOUNDARY_FAIL_CLOSED", raising=False)
 
     svc = _service(None)
     task = asyncio.run(svc.intake("summarize recent changes"))

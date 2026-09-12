@@ -1,4 +1,4 @@
-"""Tests for the colony doctor check engine (v0.19.0)."""
+"""Tests for the pacomind doctor check engine (v0.19.0)."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo import doctor
-from apsimo.doctor import (
+from pacomind import doctor
+from pacomind.doctor import (
     FAIL,
     PASS,
     SKIP,
@@ -27,23 +27,23 @@ from apsimo.doctor import (
 )
 
 _ENV_VARS = (
-    "COLONY_STATE_DIR",
-    "COLONY_CONTACTS_DB",
-    "COLONY_OWNER_CONTACT_ID",
-    "COLONY_HOST_CONTACT_ID",
-    "COLONY_APPROVAL_POLICY",
-    "COLONY_APPROVAL_AUTHORITY_MODE",
-    "COLONY_GRANT_MAX_TTL_SECONDS",
-    "COLONY_GRANT_MAX_USES",
-    "COLONY_ENABLE_INTERNAL_THINKING",
-    "COLONY_ENABLE_SKILL_SYNTHESIS",
-    "COLONY_EMIT_HERMES_SKILLS",
-    "COLONY_HERMES_SKILLS_DIR",
-    "COLONY_API_KEY",
-    "COLONY_CLIENT_API_KEY",
-    "COLONY_INSTALL_PROFILE",
-    "COLONY_URL",
-    "COLONY_SIDECAR_URL",
+    "PACOMIND_STATE_DIR",
+    "PACOMIND_CONTACTS_DB",
+    "PACOMIND_OWNER_CONTACT_ID",
+    "PACOMIND_HOST_CONTACT_ID",
+    "PACOMIND_APPROVAL_POLICY",
+    "PACOMIND_APPROVAL_AUTHORITY_MODE",
+    "PACOMIND_GRANT_MAX_TTL_SECONDS",
+    "PACOMIND_GRANT_MAX_USES",
+    "PACOMIND_ENABLE_INTERNAL_THINKING",
+    "PACOMIND_ENABLE_SKILL_SYNTHESIS",
+    "PACOMIND_EMIT_HERMES_SKILLS",
+    "PACOMIND_HERMES_SKILLS_DIR",
+    "PACOMIND_API_KEY",
+    "PACOMIND_CLIENT_API_KEY",
+    "PACOMIND_INSTALL_PROFILE",
+    "PACOMIND_URL",
+    "PACOMIND_SIDECAR_URL",
 )
 
 
@@ -57,7 +57,7 @@ def clean_env(monkeypatch, tmp_path):
             monkeypatch.delenv(key, raising=False)
     state = tmp_path / "state"
     state.mkdir()
-    monkeypatch.setenv("COLONY_STATE_DIR", str(state))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(state))
     return state
 
 
@@ -67,10 +67,10 @@ def _by_name(results):
 
 @pytest.mark.parametrize('outcome', ['ready', 'wrong_key', 'pending_error', 'down'])
 def test_private_profile_uses_only_scoped_source_diagnostics(clean_env, monkeypatch, outcome):
-    monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
-    monkeypatch.setenv('COLONY_CLIENT_API_KEY', 'scoped-fixture-key')
-    monkeypatch.setenv('COLONY_API_KEY', '')
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'person+fixture')
+    monkeypatch.setenv('PACOMIND_INSTALL_PROFILE', 'local')
+    monkeypatch.setenv('PACOMIND_CLIENT_API_KEY', 'scoped-fixture-key')
+    monkeypatch.setenv('PACOMIND_API_KEY', '')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'person+fixture')
     calls = []
     def request(url, key, timeout):
         calls.append(url)
@@ -84,7 +84,7 @@ def test_private_profile_uses_only_scoped_source_diagnostics(clean_env, monkeypa
         return 200, {'sources': ([{'status': 'pending', 'error': 'TimeoutError'}]
             if outcome == 'pending_error' else []), 'media': [], 'semantic': {}}
     monkeypatch.setattr(doctor, '_http_get', request)
-    result = _by_name(run_doctor(colony_url='http://fixture'))
+    result = _by_name(run_doctor(pacomind_url='http://fixture'))
     expected = FAIL if outcome in {'wrong_key', 'down'} else WARN if outcome == 'pending_error' else PASS
     assert result['server-source-memory'].status == expected
     assert 'server-auth' not in result and 'server-memory-graph' not in result
@@ -92,10 +92,10 @@ def test_private_profile_uses_only_scoped_source_diagnostics(clean_env, monkeypa
 
 
 def test_doctor_default_credential_preserves_legacy_profile(clean_env, monkeypatch):
-    monkeypatch.setenv('COLONY_CLIENT_API_KEY', 'local-client')
-    monkeypatch.setenv('COLONY_API_KEY', 'legacy')
+    monkeypatch.setenv('PACOMIND_CLIENT_API_KEY', 'local-client')
+    monkeypatch.setenv('PACOMIND_API_KEY', 'legacy')
     assert doctor.default_api_key() == 'legacy'
-    monkeypatch.setenv('COLONY_INSTALL_PROFILE', 'local')
+    monkeypatch.setenv('PACOMIND_INSTALL_PROFILE', 'local')
     assert doctor.default_api_key() == 'local-client'
 
 
@@ -148,7 +148,7 @@ def test_state_dir_pass(clean_env):
 
 
 def test_state_dir_missing_fails(clean_env, monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "nope"))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "nope"))
     result = doctor.check_state_dir()
     assert result.status == FAIL
     assert "does not exist" in result.detail
@@ -167,7 +167,7 @@ def _write_llm_config(state, **overrides):
         "models": {"small": "qwen2.5-7b", "medium": "qwen2.5-7b", "large": "qwen2.5-72b"},
     }
     cfg.update(overrides)
-    (state / ".colony-llm-config.json").write_text(json.dumps(cfg))
+    (state / ".pacomind-llm-config.json").write_text(json.dumps(cfg))
     return cfg
 
 
@@ -179,7 +179,7 @@ def test_llm_config_missing_warns_and_skips_subchecks(clean_env):
 
 
 def test_llm_config_corrupt_fails(clean_env):
-    (clean_env / ".colony-llm-config.json").write_text("{not json")
+    (clean_env / ".pacomind-llm-config.json").write_text("{not json")
     by = _by_name(doctor.check_llm_config())
     assert by["llm-config"].status == FAIL
     assert by["llm-config-baseurl"].status == SKIP
@@ -234,7 +234,7 @@ def test_llm_config_empty_models_warns(clean_env):
 # ---------------------------------------------------------------------------
 
 def test_contacts_db_memory_fails(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_CONTACTS_DB", ":memory:")
+    monkeypatch.setenv("PACOMIND_CONTACTS_DB", ":memory:")
     result = doctor.check_contacts_db()
     assert result.status == FAIL
     assert ":memory:" in result.detail
@@ -245,14 +245,14 @@ def test_contacts_db_not_created_yet_passes(clean_env):
 
 
 def test_contacts_db_missing_parent_fails(clean_env, monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_CONTACTS_DB", str(tmp_path / "nodir" / "contacts.db"))
+    monkeypatch.setenv("PACOMIND_CONTACTS_DB", str(tmp_path / "nodir" / "contacts.db"))
     result = doctor.check_contacts_db()
     assert result.status == FAIL
     assert "parent" in result.detail.lower()
 
 
 def test_contacts_db_real_sqlite_passes(clean_env):
-    db_path = clean_env / "colony-contacts.db"
+    db_path = clean_env / "pacomind-contacts.db"
     conn = sqlite3.connect(str(db_path))
     conn.execute("CREATE TABLE contacts (id TEXT)")
     conn.commit()
@@ -261,7 +261,7 @@ def test_contacts_db_real_sqlite_passes(clean_env):
 
 
 def test_contacts_db_garbage_file_fails(clean_env):
-    (clean_env / "colony-contacts.db").write_text("not a database")
+    (clean_env / "pacomind-contacts.db").write_text("not a database")
     result = doctor.check_contacts_db()
     assert result.status == FAIL
     assert "SQLite" in result.detail
@@ -275,18 +275,18 @@ def test_owner_unset_warns_with_degradation_explained(clean_env):
     result = doctor.check_owner_contact_id()
     assert result.status == WARN
     assert "CRITICAL" in result.detail
-    assert "COLONY_OWNER_CONTACT_ID" in result.remedy
+    assert "PACOMIND_OWNER_CONTACT_ID" in result.remedy
 
 
 def test_owner_set_passes(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-123-abc")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-123-abc")
     result = doctor.check_owner_contact_id()
     assert result.status == PASS
     assert "cid-123-abc" in result.detail
 
 
 def test_owner_legacy_alias_warns(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_HOST_CONTACT_ID", "cid-old")
+    monkeypatch.setenv("PACOMIND_HOST_CONTACT_ID", "cid-old")
     result = doctor.check_owner_contact_id()
     assert result.status == WARN
     assert "deprecated" in result.detail
@@ -299,12 +299,12 @@ def test_owner_legacy_alias_warns(clean_env, monkeypatch):
 @pytest.mark.parametrize("value", [None, "strict", "graduated", "  Graduated "])
 def test_approval_policy_valid_values_pass(clean_env, monkeypatch, value):
     if value is not None:
-        monkeypatch.setenv("COLONY_APPROVAL_POLICY", value)
+        monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", value)
     assert doctor.check_approval_policy().status == PASS
 
 
 def test_approval_policy_typo_fails(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_POLICY", "gradutaed")
+    monkeypatch.setenv("PACOMIND_APPROVAL_POLICY", "gradutaed")
     result = doctor.check_approval_policy()
     assert result.status == FAIL
     assert "strict" in result.detail  # explains fail-closed behavior
@@ -312,7 +312,7 @@ def test_approval_policy_typo_fails(clean_env, monkeypatch):
 
 
 def test_approval_authority_mode_typo_fails(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_APPROVAL_AUTHORITY_MODE", "enforec")
+    monkeypatch.setenv("PACOMIND_APPROVAL_AUTHORITY_MODE", "enforec")
     result = doctor.check_approval_policy()
     assert result.status == FAIL
     assert "fail closed" in result.detail
@@ -321,7 +321,7 @@ def test_approval_authority_mode_typo_fails(clean_env, monkeypatch):
 def test_approval_shadow_authority_with_live_effects_warns(clean_env, monkeypatch):
     """Shadow approval authority + an effects-on subsystem running live must
     WARN (approvals are observational, not enforced), never PASS."""
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")   # effects on
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")   # effects on
     # authority mode unset => shadow default
     result = doctor.check_approval_policy()
     assert result.status == WARN
@@ -396,9 +396,9 @@ def test_server_grant_envelope_reports_standing_authority_visibly(
 
     assert result.status == WARN
     assert "STANDING AUTHORITY" in result.detail
-    assert "COLONY_GRANT_MAX_TTL_SECONDS" in result.detail
+    assert "PACOMIND_GRANT_MAX_TTL_SECONDS" in result.detail
     assert "no expiry" in result.detail
-    assert "COLONY_GRANT_MAX_USES" in result.detail
+    assert "PACOMIND_GRANT_MAX_USES" in result.detail
     assert "no use cap" in result.detail
 
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
@@ -433,14 +433,14 @@ def test_gates_unset_pass(clean_env):
 
 
 def test_gates_odd_value_warns(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_INTERNAL_THINKING", "1")
+    monkeypatch.setenv("PACOMIND_ENABLE_INTERNAL_THINKING", "1")
     result = doctor.check_feature_gates()
     assert result.status == WARN
     assert "treated as false" in result.detail
 
 
 def test_gates_thinking_enabled_notes_llm_dependency(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_ENABLE_INTERNAL_THINKING", "true")
+    monkeypatch.setenv("PACOMIND_ENABLE_INTERNAL_THINKING", "true")
     result = doctor.check_feature_gates()
     assert result.status == PASS
     assert "LLM router" in result.detail
@@ -472,19 +472,19 @@ def test_hermes_disabled_skips(clean_env):
 
 
 def test_hermes_enabled_missing_parent_warns(clean_env, monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
+    monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
     monkeypatch.setenv(
-        "COLONY_HERMES_SKILLS_DIR", str(tmp_path / "hermes" / "skills" / "colony")
+        "PACOMIND_HERMES_SKILLS_DIR", str(tmp_path / "hermes" / "skills" / "pacomind")
     )
     result = doctor.check_hermes_skills_dir()
     assert result.status == WARN
 
 
 def test_hermes_enabled_parent_exists_passes(clean_env, monkeypatch, tmp_path):
-    base = tmp_path / "hermes" / "skills" / "colony"
+    base = tmp_path / "hermes" / "skills" / "pacomind"
     base.parent.mkdir(parents=True)
-    monkeypatch.setenv("COLONY_EMIT_HERMES_SKILLS", "true")
-    monkeypatch.setenv("COLONY_HERMES_SKILLS_DIR", str(base))
+    monkeypatch.setenv("PACOMIND_EMIT_HERMES_SKILLS", "true")
+    monkeypatch.setenv("PACOMIND_HERMES_SKILLS_DIR", str(base))
     assert doctor.check_hermes_skills_dir().status == PASS
 
 
@@ -540,9 +540,9 @@ def _happy_responses(owner="cid-owner-1"):
         # Cognition / autonomy checks (v0.22.0)
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "calibration",
-            "COLONY_EXECUTOR_ENABLED": "true",
-            "COLONY_PROJECTS_MODE": "shadow",
-            "COLONY_THINKING_MODE": "shadow",
+            "PACOMIND_EXECUTOR_ENABLED": "true",
+            "PACOMIND_PROJECTS_MODE": "shadow",
+            "PACOMIND_THINKING_MODE": "shadow",
             "grant_envelope": {
                 "max_ttl_seconds": 2592000,
                 "max_ttl_state": "bounded",
@@ -597,7 +597,7 @@ def test_server_down_fails_health_and_skips_rest(clean_env, monkeypatch):
     results = run_server_checks(URL, "key")
     by = _by_name(results)
     assert by["server-health"].status == FAIL
-    assert "colony start" in by["server-health"].remedy
+    assert "pacomind start" in by["server-health"].remedy
     for name in doctor.SERVER_CHECK_NAMES[1:]:
         assert by[name].status == SKIP
         assert "unreachable" in by[name].detail
@@ -605,7 +605,7 @@ def test_server_down_fails_health_and_skips_rest(clean_env, monkeypatch):
 
 
 def test_server_happy_path_all_pass(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-1")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-1")
     monkeypatch.setattr(doctor, "_http_get", _fake_http(_happy_responses()))
     by = _by_name(run_server_checks(URL, "key"))
     for name in doctor.SERVER_CHECK_NAMES:
@@ -622,7 +622,7 @@ def test_server_happy_path_all_pass(clean_env, monkeypatch):
 ])
 def test_source_memory_readiness_reports_storage_and_optional_index_separately(
         clean_env, monkeypatch, status, body, expected):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "person+fixture")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "person+fixture")
 
     def read(url, key, timeout):
         assert url == URL + "/v1/host/memory/sources/claims/status?contact_id=person%2Bfixture"
@@ -642,11 +642,11 @@ def test_source_memory_readiness_reports_storage_and_optional_index_separately(
 @pytest.mark.parametrize("owner,key", [("", "scoped-client"), ("person-fixture", "")])
 def test_source_memory_readiness_requires_selected_owner_and_credential(
         clean_env, monkeypatch, owner, key):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", owner)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", owner)
     monkeypatch.setattr(doctor, "_http_get", lambda *args: pytest.fail("Unscoped read"))
     result = doctor.check_server_source_memory(URL, key, 4)
     assert result.status == FAIL
-    assert "COLONY_CLIENT_API_KEY" in result.remedy
+    assert "PACOMIND_CLIENT_API_KEY" in result.remedy
 
 
 def test_server_degraded_health_warns(clean_env, monkeypatch):
@@ -667,7 +667,7 @@ def test_server_auth_401_fails(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
     result = _by_name(run_server_checks(URL, "wrong-key"))["server-auth"]
     assert result.status == FAIL
-    assert "COLONY_API_KEY" in result.remedy
+    assert "PACOMIND_API_KEY" in result.remedy
 
 
 def test_server_auth_only_genuine_success_passes(clean_env, monkeypatch):
@@ -714,14 +714,14 @@ def test_server_owner_unset_skips(clean_env, monkeypatch):
 
 
 def test_server_owner_non_cid_skips(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "Owner Name")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "Owner Name")
     monkeypatch.setattr(doctor, "_http_get", _fake_http(_happy_responses()))
     result = _by_name(run_server_checks(URL, "key"))["server-owner-contact"]
     assert result.status == SKIP
 
 
 def test_server_owner_404_fails_with_create_remedy(clean_env, monkeypatch):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-owner-1")
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-owner-1")
     responses = _happy_responses()
     responses["/v1/host/contacts/cid-owner-1"] = (404, {"detail": "Contact not found"})
     monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
@@ -797,7 +797,7 @@ def test_server_worker_liveness_stale_queued_warns(clean_env, monkeypatch):
     assert result.status == WARN
     assert "queue worker appears absent" in result.detail
     assert "agent_sync_github" in result.detail
-    assert "colony-queue-worker" in result.remedy
+    assert "pacomind-queue-worker" in result.remedy
     assert "*/5 * * * *" in result.remedy
 
 
@@ -848,7 +848,7 @@ def test_server_skills_observations_empty_warns(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http(responses))
     result = _by_name(run_server_checks(URL, "key"))["server-skills-observations"]
     assert result.status == WARN
-    assert "colony-skills-sync" in result.remedy
+    assert "pacomind-skills-sync" in result.remedy
 
 
 def test_server_skills_observations_stale_warns(clean_env, monkeypatch):
@@ -869,7 +869,7 @@ def test_run_doctor_combines_local_and_server(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/health": urllib.error.URLError("refused"),
     }))
-    names = {r.name for r in run_doctor(colony_url=URL, api_key="k")}
+    names = {r.name for r in run_doctor(pacomind_url=URL, api_key="k")}
     assert "state-dir" in names
     assert "llm-config-baseurl" in names
     assert set(doctor.SERVER_CHECK_NAMES) <= names
@@ -881,8 +881,8 @@ def test_run_doctor_combines_local_and_server(clean_env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_health_endpoint_ok(monkeypatch):
-    from apsimo.api.routers import host
-    from apsimo.router.tiers import ModelTier
+    from pacomind.api.routers import host
+    from pacomind.router.tiers import ModelTier
 
     class FakeResp:
         tier_used = ModelTier.SMALL
@@ -901,7 +901,7 @@ async def test_llm_health_endpoint_ok(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_health_endpoint_all_tiers_exhausted(monkeypatch):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
     class BrokenRouter:
         async def complete(self, messages, **kwargs):
@@ -915,7 +915,7 @@ async def test_llm_health_endpoint_all_tiers_exhausted(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_llm_health_endpoint_not_wired(monkeypatch):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
     monkeypatch.setattr(host, "_llm_router", None)
     out = await host.llm_health()
@@ -961,7 +961,7 @@ def test_format_report_includes_remedies_and_summary():
         CheckResult("good-check", PASS, "all fine"),
         CheckResult("bad-check", FAIL, "exploded", "turn it off and on"),
     ]
-    report = format_report(results, colony_url="http://x:7777", color=False)
+    report = format_report(results, pacomind_url="http://x:7777", color=False)
     assert "PASS" in report and "FAIL" in report
     assert "turn it off and on" in report
     assert "1 pass, 0 warn, 1 fail, 0 skip" in report
@@ -983,7 +983,7 @@ def test_skip_dominated_run_is_not_healthy():
 
 
 def test_cmd_doctor_json_output_and_exit_code(clean_env, monkeypatch, capsys):
-    from apsimo import cli
+    from pacomind import cli
 
     fake = [CheckResult("a", PASS, "ok"), CheckResult("b", FAIL, "boom", "fix")]
     monkeypatch.setattr(doctor, "run_doctor", lambda **kwargs: fake)
@@ -997,7 +997,7 @@ def test_cmd_doctor_json_output_and_exit_code(clean_env, monkeypatch, capsys):
 
 
 def test_cmd_doctor_human_output_exit_zero(clean_env, monkeypatch, capsys):
-    from apsimo import cli
+    from pacomind import cli
 
     fake = [CheckResult("a", PASS, "ok"), CheckResult("b", WARN, "meh", "tweak")]
     monkeypatch.setattr(doctor, "run_doctor", lambda **kwargs: fake)
@@ -1021,29 +1021,29 @@ def test_posture_preset_with_reactive_loop_fails(clean_env, monkeypatch):
         monkeypatch.setattr(doctor, "_http_get", _fake_http({
             "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
                 "preset": preset,
-                "COLONY_AUTONOMY_MODE": "reactive",
-                "COLONY_EXECUTOR_ENABLED": "true",
-                "COLONY_THINKING_MODE": "shadow",
+                "PACOMIND_AUTONOMY_MODE": "reactive",
+                "PACOMIND_EXECUTOR_ENABLED": "true",
+                "PACOMIND_THINKING_MODE": "shadow",
             }}),
         }))
         r = doctor.check_server_autonomy_posture(URL, "key", 5)
         assert r.status == FAIL
         assert "REACTIVE" in r.detail
-        assert "COLONY_AUTONOMY_MODE=proactive" in r.remedy
+        assert "PACOMIND_AUTONOMY_MODE=proactive" in r.remedy
 
 
 def test_posture_explicit_reactive_pin_under_preset_fails(
         clean_env, monkeypatch):
     """H4.2: with coupling on, a reactive loop under a working preset can
-    only be an explicit COLONY_AUTONOMY_MODE=reactive pin — FAIL, with a
+    only be an explicit PACOMIND_AUTONOMY_MODE=reactive pin — FAIL, with a
     remedy that names the pin (it may be a deliberate rollback)."""
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "calibration",
-            "COLONY_AUTONOMY_MODE": "reactive",
-            "COLONY_AUTONOMY_MODE_SOURCE": "env",
-            "COLONY_PRESET_LOOP_COUPLING": "on",
-            "COLONY_THINKING_MODE": "shadow",
+            "PACOMIND_AUTONOMY_MODE": "reactive",
+            "PACOMIND_AUTONOMY_MODE_SOURCE": "env",
+            "PACOMIND_PRESET_LOOP_COUPLING": "on",
+            "PACOMIND_THINKING_MODE": "shadow",
         }}),
     }))
     r = doctor.check_server_autonomy_posture(URL, "key", 5)
@@ -1056,15 +1056,15 @@ def test_posture_coupling_off_under_preset_fails(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "autonomous",
-            "COLONY_AUTONOMY_MODE": "reactive",
-            "COLONY_AUTONOMY_MODE_SOURCE": "default",
-            "COLONY_PRESET_LOOP_COUPLING": "off",
-            "COLONY_THINKING_MODE": "live",
+            "PACOMIND_AUTONOMY_MODE": "reactive",
+            "PACOMIND_AUTONOMY_MODE_SOURCE": "default",
+            "PACOMIND_PRESET_LOOP_COUPLING": "off",
+            "PACOMIND_THINKING_MODE": "live",
         }}),
     }))
     r = doctor.check_server_autonomy_posture(URL, "key", 5)
     assert r.status == FAIL
-    assert "COLONY_PRESET_LOOP_COUPLING=off" in r.detail
+    assert "PACOMIND_PRESET_LOOP_COUPLING=off" in r.detail
 
 
 def test_posture_coupled_preset_mode_passes(clean_env, monkeypatch):
@@ -1072,10 +1072,10 @@ def test_posture_coupled_preset_mode_passes(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "calibration",
-            "COLONY_AUTONOMY_MODE": "proactive",
-            "COLONY_AUTONOMY_MODE_SOURCE": "preset",
-            "COLONY_PRESET_LOOP_COUPLING": "on",
-            "COLONY_THINKING_MODE": "shadow",
+            "PACOMIND_AUTONOMY_MODE": "proactive",
+            "PACOMIND_AUTONOMY_MODE_SOURCE": "preset",
+            "PACOMIND_PRESET_LOOP_COUPLING": "on",
+            "PACOMIND_THINKING_MODE": "shadow",
         }}),
     }))
     assert doctor.check_server_autonomy_posture(URL, "key", 5).status == PASS
@@ -1087,10 +1087,10 @@ def test_posture_coupling_failed_safe_warns_not_fails(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "calibration",
-            "COLONY_AUTONOMY_MODE": "reactive",
-            "COLONY_AUTONOMY_MODE_SOURCE": "default",
-            "COLONY_PRESET_LOOP_COUPLING": "on",
-            "COLONY_THINKING_MODE": "shadow",
+            "PACOMIND_AUTONOMY_MODE": "reactive",
+            "PACOMIND_AUTONOMY_MODE_SOURCE": "default",
+            "PACOMIND_PRESET_LOOP_COUPLING": "on",
+            "PACOMIND_THINKING_MODE": "shadow",
         }}),
     }))
     r = doctor.check_server_autonomy_posture(URL, "key", 5)
@@ -1103,10 +1103,10 @@ def test_posture_calibration_proactive_passes_labeled_expected(
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "calibration",
-            "COLONY_AUTONOMY_MODE": "proactive",
-            "COLONY_EXECUTOR_ENABLED": "true",
-            "COLONY_THINKING_MODE": "shadow",
-            "COLONY_PROJECTS_MODE": "shadow",
+            "PACOMIND_AUTONOMY_MODE": "proactive",
+            "PACOMIND_EXECUTOR_ENABLED": "true",
+            "PACOMIND_THINKING_MODE": "shadow",
+            "PACOMIND_PROJECTS_MODE": "shadow",
         }}),
     }))
     r = doctor.check_server_autonomy_posture(URL, "key", 5)
@@ -1120,8 +1120,8 @@ def test_posture_without_mode_key_unchanged(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "calibration",
-            "COLONY_EXECUTOR_ENABLED": "true",
-            "COLONY_THINKING_MODE": "shadow",
+            "PACOMIND_EXECUTOR_ENABLED": "true",
+            "PACOMIND_THINKING_MODE": "shadow",
         }}),
     }))
     assert doctor.check_server_autonomy_posture(URL, "key", 5).status == PASS
@@ -1131,11 +1131,11 @@ def test_posture_downgraded_below_preset_warns(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
             "preset": "autonomous",
-            "COLONY_AUTONOMY_MODE": "proactive",
-            "COLONY_EXECUTOR_ENABLED": "true",
-            "COLONY_THINKING_MODE": "off",       # below preset's "live"
-            "COLONY_PROJECTS_MODE": "live",
-            "COLONY_SANDBOX_MODE": "dry_run",    # = preset default, expected
+            "PACOMIND_AUTONOMY_MODE": "proactive",
+            "PACOMIND_EXECUTOR_ENABLED": "true",
+            "PACOMIND_THINKING_MODE": "off",       # below preset's "live"
+            "PACOMIND_PROJECTS_MODE": "live",
+            "PACOMIND_SANDBOX_MODE": "dry_run",    # = preset default, expected
         }}),
     }))
     r = doctor.check_server_autonomy_posture(URL, "key", 5)
@@ -1147,13 +1147,13 @@ def test_posture_downgraded_below_preset_warns(clean_env, monkeypatch):
 def test_posture_all_off_warns(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/autonomy/posture": (200, {"available": True, "posture": {
-            "preset": "(none)", "COLONY_EXECUTOR_ENABLED": "false",
-            "COLONY_PROJECTS_MODE": "off", "COLONY_THINKING_MODE": "off",
+            "preset": "(none)", "PACOMIND_EXECUTOR_ENABLED": "false",
+            "PACOMIND_PROJECTS_MODE": "off", "PACOMIND_THINKING_MODE": "off",
         }}),
     }))
     r = doctor.check_server_autonomy_posture(URL, "key", 5)
     assert r.status == WARN
-    assert "COLONY_AUTONOMY_PRESET" in r.remedy
+    assert "PACOMIND_AUTONOMY_PRESET" in r.remedy
 
 
 def test_self_model_demotion_warns(clean_env, monkeypatch):
@@ -1185,7 +1185,7 @@ def test_connectors_mode_without_connectors_warns(clean_env, monkeypatch):
     }))
     r = doctor.check_server_connectors(URL, "key", 5)
     assert r.status == WARN
-    assert "COLONY_CONNECTOR_FS_PATH" in r.remedy
+    assert "PACOMIND_CONNECTOR_FS_PATH" in r.remedy
 
 
 def test_executor_unwired_warns(clean_env, monkeypatch):
@@ -1194,7 +1194,7 @@ def test_executor_unwired_warns(clean_env, monkeypatch):
     }))
     r = doctor.check_server_executor(URL, "key", 5)
     assert r.status == WARN
-    assert "COLONY_EXECUTOR_ENABLED" in r.remedy
+    assert "PACOMIND_EXECUTOR_ENABLED" in r.remedy
 
 
 def test_projects_blocked_warns(clean_env, monkeypatch):
@@ -1219,7 +1219,7 @@ def test_older_server_404s_skip(clean_env, monkeypatch):
 
 
 def test_contacts_db_sibling_mismatch_warns(clean_env, monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     # The service created contacts under another name than this shell resolves.
     (tmp_path / "contacts.db").write_bytes(b"x" * 2048)
     r = doctor.check_contacts_db()
@@ -1228,8 +1228,8 @@ def test_contacts_db_sibling_mismatch_warns(clean_env, monkeypatch, tmp_path):
 
 
 def test_contacts_db_empty_stub_with_real_sibling_warns(clean_env, monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    (tmp_path / "colony-contacts.db").write_bytes(b"")        # stale stub
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    (tmp_path / "pacomind-contacts.db").write_bytes(b"")        # stale stub
     (tmp_path / "contacts.db").write_bytes(b"x" * 4096)       # the real store
     r = doctor.check_contacts_db()
     assert r.status == WARN
@@ -1237,20 +1237,20 @@ def test_contacts_db_empty_stub_with_real_sibling_warns(clean_env, monkeypatch, 
 
 
 def test_contacts_db_state_dir_default_not_cwd(clean_env, monkeypatch, tmp_path):
-    # No COLONY_STATE_DIR: the default must anchor to ~/.colony/data, never
+    # No PACOMIND_STATE_DIR: the default must anchor to ~/.pacomind/data, never
     # the process CWD (the world-model incident class).
-    monkeypatch.delenv("COLONY_STATE_DIR", raising=False)
-    monkeypatch.delenv("COLONY_CONTACTS_DB", raising=False)
-    from apsimo.contacts.config import ContactsConfig
+    monkeypatch.delenv("PACOMIND_STATE_DIR", raising=False)
+    monkeypatch.delenv("PACOMIND_CONTACTS_DB", raising=False)
+    from pacomind.contacts.config import ContactsConfig
     p = ContactsConfig.from_env().sqlite_path
     assert not p.startswith("./")
-    assert ".colony" in p
+    assert ".pacomind" in p
 
 
 def test_directive_fragments_and_piles_warn(clean_env, monkeypatch):
     monkeypatch.setattr(doctor, "_http_get", _fake_http({
         "/v1/host/directives": (200, {"available": True, "directives": [
-            {"id": "a", "subject": "that and wipe it from colony"},
+            {"id": "a", "subject": "that and wipe it from pacomind"},
             {"id": "b", "subject": "do Y and I hate it"},
             {"id": "c", "subject": "do Y and I hate it"},
             {"id": "d", "subject": "do Y and I hate it"},

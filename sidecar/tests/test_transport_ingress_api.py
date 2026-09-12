@@ -8,14 +8,14 @@ import time
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host, transport, transport_ingress_api
-from apsimo.commitments.store import CommitmentStore
-from apsimo.contacts.comms import CommsLog
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.initiatives.temporal_followup import TemporalFollowups
-from apsimo.turns import TurnIdempotencyLedger, canonical_turn_digest
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host, transport, transport_ingress_api
+from pacomind.commitments.store import CommitmentStore
+from pacomind.contacts.comms import CommsLog
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.initiatives.temporal_followup import TemporalFollowups
+from pacomind.turns import TurnIdempotencyLedger, canonical_turn_digest
 from test_scoped_api_authority import _principal, _write_keyring
 from test_turn_source_evidence import source_app
 

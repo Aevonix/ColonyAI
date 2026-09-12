@@ -6,15 +6,15 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apsimo.autonomy.config import AutonomyConfig, AutonomyMode
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.initiatives.context_freshness import is_context_fresh
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.intelligence.components.initiative_engine import InitiativeEngine, InitiativeType
-from apsimo.observations.store import ObservationStore
-from apsimo.self_model.perspective import SelfPerspective
-from apsimo.self_model.store import CompetenceStore, SelfModel
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.autonomy.config import AutonomyConfig, AutonomyMode
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.initiatives.context_freshness import is_context_fresh
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.intelligence.components.initiative_engine import InitiativeEngine, InitiativeType
+from pacomind.observations.store import ObservationStore
+from pacomind.self_model.perspective import SelfPerspective
+from pacomind.self_model.store import CompetenceStore, SelfModel
+from pacomind.turns import TurnIdempotencyLedger
 
 
 @pytest.mark.asyncio
@@ -84,7 +84,7 @@ async def test_invalid_stored_or_supplied_time_never_becomes_fresh(tmp_path):
 @pytest.mark.asyncio
 async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,monkeypatch):
     monkeypatch.setenv('HOME',str(tmp_path))
-    backup=tmp_path/'.colony/backups/old.bak';backup.parent.mkdir(parents=True);backup.write_text('unverified checkpoint')
+    backup=tmp_path/'.pacomind/backups/old.bak';backup.parent.mkdir(parents=True);backup.write_text('unverified checkpoint')
     stamp=(datetime.now(timezone.utc)-timedelta(days=27)).timestamp();os.utime(backup,(stamp,stamp))
     engine=InitiativeEngine(None,None,None)
     await engine._load_operational_tasks()
@@ -93,7 +93,7 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
     assert 'Last backup' not in rows[0].description and 'unverified' in rows[0].description
     assert rows[0].trigger_data['evidence_scope']=='legacy_bak_directory_only'
     assert rows[0].trigger_data['latest_file_modified_at']==datetime.fromtimestamp(stamp,timezone.utc).isoformat()
-    from apsimo.initiatives.action_registry import get_action, RiskTier
+    from pacomind.initiatives.action_registry import get_action, RiskTier
     action = get_action(rows[0].action_hint)
     assert action.name == 'operational_review' and action.risk == RiskTier.READ_ONLY and action.native_review
 
@@ -101,11 +101,11 @@ async def test_backup_proposal_describes_only_the_observed_legacy_file(tmp_path,
 @pytest.mark.asyncio
 async def test_measured_log_volume_reaches_default_proposal_gate_without_mutating_logs(tmp_path, monkeypatch):
     import json
-    from apsimo.initiatives.native_work import NativeInitiativeWork
+    from pacomind.initiatives.native_work import NativeInitiativeWork
 
     monkeypatch.setenv('HOME', str(tmp_path))
-    logs = tmp_path/'.colony/logs'
-    monkeypatch.setenv('APSIMO_LOG_PATH', str(logs/'sidecar.log'))
+    logs = tmp_path/'.pacomind/logs'
+    monkeypatch.setenv('PACOMIND_LOG_PATH', str(logs/'sidecar.log'))
     logs.mkdir(parents=True)
     for name, size in [('sidecar.log', 99 * 1024 * 1024), ('monitor.log', 2 * 1024 * 1024)]:
         with (logs/name).open('wb') as stream:
@@ -142,7 +142,7 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
     assert [item['path'] for item in row.context['largest_files']] == [str(logs/'sidecar.log'), str(logs/'monitor.log')]
     review = NativeInitiativeWork(store).get(row.id)['review']
     assert review['action'] == 'operational_review'
-    assert 'apsimo_read_work_source' in review['body'] and 'sources 1 through 5' in review['body']
+    assert 'pacomind_read_work_source' in review['body'] and 'sources 1 through 5' in review['body']
     assert 'Do not modify input files' in review['body'] and 'do not propose truncation or deletion' in review['body']
     assert 'disk pressure and retention are unverified' in review['body']
     assert str(canonical) not in json.dumps(row.context)
@@ -156,8 +156,8 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
 @pytest.mark.asyncio
 async def test_log_review_ignores_archives_and_does_not_invent_pressure_at_threshold(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
-    logs = tmp_path/'.colony/logs'
-    monkeypatch.setenv('APSIMO_LOG_PATH', str(logs/'sidecar.log'))
+    logs = tmp_path/'.pacomind/logs'
+    monkeypatch.setenv('PACOMIND_LOG_PATH', str(logs/'sidecar.log'))
     logs.mkdir(parents=True)
     for name in ['sidecar.log', 'historical.log.gz']:
         with (logs/name).open('wb') as stream:
@@ -169,9 +169,9 @@ async def test_log_review_ignores_archives_and_does_not_invent_pressure_at_thres
 
 @pytest.mark.asyncio
 async def test_inferred_proposal_needs_acceptance_before_real_followup_generation(tmp_path, monkeypatch):
-    from apsimo.goals.models import Goal, GoalSource, GoalStatus
-    from apsimo.goals.store import GoalStore
-    monkeypatch.setenv('COLONY_COGNITION_SPINE', 'off')
+    from pacomind.goals.models import Goal, GoalSource, GoalStatus
+    from pacomind.goals.store import GoalStore
+    monkeypatch.setenv('PACOMIND_COGNITION_SPINE', 'off')
     goals = GoalStore(str(tmp_path/'goals.db'))
     old = datetime.now(timezone.utc)-timedelta(days=30)
     proposed = Goal(title='Investigate a suggested documentation gap', source=GoalSource.INFERRED,

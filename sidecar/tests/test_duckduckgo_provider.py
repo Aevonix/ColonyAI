@@ -5,7 +5,7 @@ from __future__ import annotations
 import httpx
 import pytest
 
-from apsimo.research.search.duckduckgo import DuckDuckGoProvider
+from pacomind.research.search.duckduckgo import DuckDuckGoProvider
 
 
 _SAMPLE_HTML = """\
@@ -30,7 +30,7 @@ async def test_duckduckgo_parses_results(monkeypatch):
 
     monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
     provider = DuckDuckGoProvider()
-    results = await provider.search("colony ai", max_results=5)
+    results = await provider.search("pacomind ai", max_results=5)
     assert len(results) == 2
     assert results[0].title == "Example A"
     assert results[0].url == "https://example.com/a"

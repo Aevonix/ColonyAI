@@ -17,13 +17,13 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-import apsimo.api.routers.host as host_mod
-from apsimo.api.authority import legacy_authority
-from apsimo.commitments.store import (
+import pacomind.api.routers.host as host_mod
+from pacomind.api.authority import legacy_authority
+from pacomind.commitments.store import (
     CommitmentResolutionConflict, CommitmentStore, _normalize_desc, _similar_desc,
 )
-from apsimo.self_model import settlement
-from apsimo.self_model.workspace import ConcernStore, WorkspaceEngine
+from pacomind.self_model import settlement
+from pacomind.self_model.workspace import ConcernStore, WorkspaceEngine
 
 
 @pytest.fixture
@@ -351,7 +351,7 @@ class TestResolveSuppression:
         assert cs.active() == []                     # stays off her mind
 
     def test_suppression_expires(self, ws, monkeypatch):
-        monkeypatch.setenv("COLONY_WORKSPACE_RESOLVED_TTL_HOURS", "1")
+        monkeypatch.setenv("PACOMIND_WORKSPACE_RESOLVED_TTL_HOURS", "1")
         engine, cs = ws
         c = engine.bump(kind="goal", summary="s", dedup_key="k", salience=0.5)
         cs.record_thought(c.concern_id, "done", resolved=True, salience=0.0)
@@ -384,7 +384,7 @@ async def _client(ws_engine, cstore):
     app = FastAPI()
     @app.middleware("http")
     async def _legacy_authority(request, call_next):
-        request.state.colony_authority = legacy_authority()
+        request.state.pacomind_authority = legacy_authority()
         return await call_next(request)
     app.include_router(host_mod.router)
     try:
@@ -569,12 +569,12 @@ class _FakeAsyncClient:
 async def test_introspection_skips_open_and_rejected_duplicates(tmp_path, monkeypatch):
     """The extractor must not re-record an item that is already open, nor one
     recently rejected as invalid/duplicate — code-enforced, not prompt-hoped."""
-    from apsimo.cognition import introspection as intro
+    from pacomind.cognition import introspection as intro
 
     cstore = CommitmentStore(db_path=tmp_path / "c.db")
     existing = cstore.create(person_id="owner",
                              description="Send Sam the build recap")
-    monkeypatch.setenv("COLONY_INTROSPECT_MODEL", "fake-model")
+    monkeypatch.setenv("PACOMIND_INTROSPECT_MODEL", "fake-model")
     _FakeAsyncClient.payload = (
         '[{"description": "send Sam the build recap", "due_at": null,'
         '  "priority": 70, "source_type": "cognition", "metadata": null},'

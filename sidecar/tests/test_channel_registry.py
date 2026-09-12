@@ -9,16 +9,16 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from apsimo.delivery.channels import Channel, ChannelRegistry
+from pacomind.delivery.channels import Channel, ChannelRegistry
 
 
 # ── Fixtures ──────────────────────────────────────────────────────────────
 
 @pytest.fixture(autouse=True)
 def clean_env(monkeypatch):
-    """Remove COLONY_CHANNEL_* env vars before each test."""
+    """Remove PACOMIND_CHANNEL_* env vars before each test."""
     for key in list(os.environ.keys()):
-        if key.startswith("COLONY_CHANNEL_") or key.endswith("_HOME_CHANNEL"):
+        if key.startswith("PACOMIND_CHANNEL_") or key.endswith("_HOME_CHANNEL"):
             monkeypatch.delenv(key, raising=False)
 
 
@@ -64,7 +64,7 @@ class TestChannelRegistryLoad:
         assert registry.resolve("owner", "home") is None
 
     def test_env_dm_channel(self, temp_json_path, monkeypatch):
-        monkeypatch.setenv("COLONY_CHANNEL_DM_owner", "telegram:@owner")
+        monkeypatch.setenv("PACOMIND_CHANNEL_DM_owner", "telegram:@owner")
         registry = ChannelRegistry.load(json_path=temp_json_path)
         ch = registry.resolve("owner", "dm")
         assert ch is not None
@@ -73,7 +73,7 @@ class TestChannelRegistryLoad:
         assert ch.channel_type == "dm"
 
     def test_env_home_channel(self, temp_json_path, monkeypatch):
-        monkeypatch.setenv("COLONY_CHANNEL_HOME", "discord:#general")
+        monkeypatch.setenv("PACOMIND_CHANNEL_HOME", "discord:#general")
         registry = ChannelRegistry.load(json_path=temp_json_path)
         ch = registry.resolve("__global__", "home")
         assert ch is not None
@@ -81,7 +81,7 @@ class TestChannelRegistryLoad:
         assert ch.chat_id == "#general"
 
     def test_env_home_per_person(self, temp_json_path, monkeypatch):
-        monkeypatch.setenv("COLONY_CHANNEL_HOME_owner", "signal:+15551234567")
+        monkeypatch.setenv("PACOMIND_CHANNEL_HOME_owner", "signal:+15551234567")
         registry = ChannelRegistry.load(json_path=temp_json_path)
         ch = registry.resolve("owner", "home")
         assert ch is not None
@@ -114,7 +114,7 @@ class TestChannelRegistryLoad:
         assert home.platform == "telegram"
 
     def test_priority_env_over_json(self, temp_json_path, write_json, monkeypatch):
-        monkeypatch.setenv("COLONY_CHANNEL_DM_owner", "signal:+1555ZZZZZZZ")
+        monkeypatch.setenv("PACOMIND_CHANNEL_DM_owner", "signal:+1555ZZZZZZZ")
         write_json({
             "contacts": {
                 "owner": {
@@ -162,7 +162,7 @@ class TestChannelRegistryLoad:
         assert ch is None
 
     def test_custom_gateway_map(self, temp_json_path, mock_contacts_store, monkeypatch):
-        monkeypatch.setenv("COLONY_CHANNEL_GATEWAY_MAP", '{"imessage": "telegram"}')
+        monkeypatch.setenv("PACOMIND_CHANNEL_GATEWAY_MAP", '{"imessage": "telegram"}')
         registry = ChannelRegistry.load(
             json_path=temp_json_path,
             handle_inference=True,
@@ -186,9 +186,9 @@ class TestChannelRegistryLoad:
         assert ch.chat_id == "+5551234567"
 
     def test_owner_contact_id_alias(self, temp_json_path, monkeypatch):
-        """COLONY_CHANNEL_DM_owner resolves for the owner's contact UUID."""
-        monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", "cid-test-12345-owner")
-        monkeypatch.setenv("COLONY_CHANNEL_DM_owner", "whatsapp:+1555ZZZZZZZ")
+        """PACOMIND_CHANNEL_DM_owner resolves for the owner's contact UUID."""
+        monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", "cid-test-12345-owner")
+        monkeypatch.setenv("PACOMIND_CHANNEL_DM_owner", "whatsapp:+1555ZZZZZZZ")
         registry = ChannelRegistry.load(json_path=temp_json_path)
         # Should resolve by UUID
         ch = registry.resolve("cid-test-12345-owner", "dm")
@@ -342,11 +342,11 @@ class TestChannelRegistryReload:
     """Test the reload() method."""
 
     def test_reload_picks_up_new_env(self, temp_json_path, monkeypatch):
-        monkeypatch.setenv("COLONY_CHANNEL_DM_owner", "telegram:@old")
+        monkeypatch.setenv("PACOMIND_CHANNEL_DM_owner", "telegram:@old")
         registry = ChannelRegistry.load(json_path=temp_json_path)
         assert registry.resolve("owner", "dm").chat_id == "@old"
 
-        monkeypatch.setenv("COLONY_CHANNEL_DM_owner", "telegram:@new")
+        monkeypatch.setenv("PACOMIND_CHANNEL_DM_owner", "telegram:@new")
         registry.reload()
         assert registry.resolve("owner", "dm").chat_id == "@new"
 

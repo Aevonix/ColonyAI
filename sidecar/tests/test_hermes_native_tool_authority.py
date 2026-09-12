@@ -10,7 +10,7 @@ from test_hermes_general_governance import runtime, _pre
 NATIVE_TOOLS = ("terminal", "read_file", "write_file", "patch", "web_search",
                 "web_extract", "execute_code", "delegate_task", "cronjob",
                 "session_search", "memory", "skill_manage", "send_message",
-                "camera_capture", "mcp_device_unlock", "colony_unknown")
+                "camera_capture", "mcp_device_unlock", "pacomind_unknown")
 
 
 def call(context, name, *, session="s", task="t", turn="u", args=None, dispatch=None):

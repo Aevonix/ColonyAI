@@ -121,7 +121,7 @@ def handle(args, scope, client, request_memory, context):
             if len(data) > 4 * 1024 * 1024 or hashlib.sha256(data).hexdigest() != image['asset_hash']:
                 raise ValueError('invalid_source_image_bytes')
             result = {**result, 'image': image}
-        text = json.dumps({**result, 'colony_source_read_v1': True}, ensure_ascii=False)
+        text = json.dumps({**result, 'pacomind_source_read_v1': True}, ensure_ascii=False)
         if deadline is not None and time.monotonic() >= deadline:
             raise TimeoutError('source_video_open_deadline')
         if not request_memory.register_source_read(scope, context['tool_call_id'], text, result, image_url=image_url):

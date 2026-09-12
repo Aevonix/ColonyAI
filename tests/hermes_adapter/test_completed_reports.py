@@ -19,7 +19,7 @@ def no_network(*a,**k):raise AssertionError('No network in native dispatcher fix
 socket.socket.connect=no_network;socket.create_connection=no_network
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['pacomind'],'pacomind':{
  'owner_contact_id':'owner','url':'http://fixture','turn_outbox_path':str(home/'outbox.db'),
  'turn_outbox_drain_timeout_ms':1000,
  'turn_writer_platforms':['api_server','rcs','sms','whatsapp']}},
@@ -27,17 +27,17 @@ Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 profile_owned = sys.argv[2] == 'profile'
 if profile_owned:
  # A native default-profile worker starts from its selected durable profile.
- # No inherited Colony process latches or synthetic dotenv are supplied.
+ # No inherited PacoMind process latches or synthetic dotenv are supplied.
  from hermes_cli.profiles import resolve_profile_env
  assert Path(resolve_profile_env('default')) == home
  cfg=json.loads((home/'config.yaml').read_text())
- cfg['memory']={'provider':'apsimo-memory','config':{
+ cfg['memory']={'provider':'pacomind-memory','config':{
   'url':'http://fixture','contact_id':'owner','turn_writer':'disabled'}}
- cfg['plugins']['apsimo']['native_local_work']={'board':'colony-drafts',
-  'worker_profile':'colony-drafts','destination':str(home/'drafts'),'worker':False}
+ cfg['plugins']['pacomind']['native_local_work']={'board':'pacomind-drafts',
+  'worker_profile':'pacomind-drafts','destination':str(home/'drafts'),'worker':False}
  (home/'config.yaml').write_text(json.dumps(cfg))
  assert not any(name in os.environ for name in (
-  'COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'))
+  'PACOMIND_GENERAL_PLUGIN_ACTIVE','PACOMIND_MEMORY_WORKER_TOOLS','PACOMIND_MEMORY_TURN_WRITER'))
 from hermes_cli import kanban_db as kb
 try:
  from hermes_cli.kanban_db_dispatch import _default_spawn
@@ -82,22 +82,22 @@ if sys.argv[4]=='lexical':
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import host
-from apsimo.turns import get_turn_idempotency_ledger, canonical_turn_digest
-from apsimo_hermes.client import TurnOutbox
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import host
+from pacomind.turns import get_turn_idempotency_ledger, canonical_turn_digest
+from pacomind_hermes.client import TurnOutbox
 home=Path(os.environ['HERMES_HOME'])
 profile_owned = sys.argv[5] == 'profile'
 app=FastAPI()
 @app.middleware('http')
 async def authority(request,next_call):
- request.state.colony_authority=RequestAuthority(principal_id='fixture',credential_id='fixture',
+ request.state.pacomind_authority=RequestAuthority(principal_id='fixture',credential_id='fixture',
   scopes=frozenset({'turns:write','context:read'}),viewer_person_id='owner',person_ids=frozenset({'owner'}),
   audiences=frozenset({'viewer'}),authenticated=True)
  return await next_call(request)
 app.include_router(host.router);app.include_router(host.v2_router)
 api=TestClient(app)
-ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
+ledger=get_turn_idempotency_ledger(os.environ['PACOMIND_STATE_DIR'])
 parent='The calibration procedure uses a violet filter.'
 ledger.record_source('report-parent',contact_id='owner',session_id='parent-session',
  messages=[{'role':'user','content':parent}],derive_claims=False)
@@ -122,18 +122,18 @@ from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import apply_llm_request_middleware
 from agent.turn_context import compose_user_api_content
 from model_tools import handle_function_call
-from apsimo_memory.provider import ColonyMemoryProvider
+from pacomind_memory.provider import PacoMindMemoryProvider
 from gateway.session_context import set_session_vars
 from tools import kanban_tools
 db=kb.connect(board='default')
 tid=os.environ['HERMES_KANBAN_TASK'];task=kb.get_task(db,tid);assert task
 pm=get_plugin_manager();pm.discover_and_load()
-assert pm._plugins['apsimo'].enabled,pm._plugins['apsimo'].error
-import apsimo_hermes
+assert pm._plugins['pacomind'].enabled,pm._plugins['pacomind'].error
+import pacomind_hermes
 if profile_owned:
- from apsimo_hermes.native_drafts import NativeDrafts
+ from pacomind_hermes.native_drafts import NativeDrafts
  from agent.delegation_context import non_dispatcher_owned_context
- config=json.loads((home/'config.yaml').read_text())['plugins']['apsimo']['native_local_work']
+ config=json.loads((home/'config.yaml').read_text())['plugins']['pacomind']['native_local_work']
  assert NativeDrafts.for_execution(config,None,'owner') is None
  # Actual draft workers and nonowned execution retain the board invariant.
  for guard in ('draft-worker','nonowned'):
@@ -154,18 +154,18 @@ for index,callback in enumerate(pm._hooks.get('kanban_task_completed',[])):
    value=_callback(**kwargs);report_outcomes.append(value);return value
   pm._hooks['kanban_task_completed'][index]=record_outcome
 def inspect_context(**kwargs):
- context=dict(apsimo_hermes._TOOL_EXECUTION_CONTEXT.get() or {})
+ context=dict(pacomind_hermes._TOOL_EXECUTION_CONTEXT.get() or {})
  observed.append((kwargs,context))
 pm._hooks.setdefault('kanban_task_completed',[]).append(inspect_context)
 set_session_vars(platform='cli',user_id='',chat_id='',session_id='worker-session')
 if profile_owned:
  from plugins.memory import load_memory_provider
- provider=load_memory_provider('apsimo-memory')
+ provider=load_memory_provider('pacomind-memory')
  assert provider is not None and not provider._turn_writer_enabled()
  assert {row['name'] for row in provider.get_tool_schemas()} == set(__import__(
-  'apsimo_memory.provider',fromlist=['GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES']).GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES)
+  'pacomind_memory.provider',fromlist=['GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES']).GENERAL_PLUGIN_READ_CONTEXT_TOOL_NAMES)
 else:
- provider=ColonyMemoryProvider({'url':'http://fixture','contact_id':'owner','turn_writer':'disabled','default_context_authority':'owner_system'})
+ provider=PacoMindMemoryProvider({'url':'http://fixture','contact_id':'owner','turn_writer':'disabled','default_context_authority':'owner_system'})
 provider.initialize('worker-session',hermes_home=str(home))
 # Production excludes CLI from ordinary conversation capture. Machine worker
 # instructions remain excluded at both turn and compression boundaries, while
@@ -175,7 +175,7 @@ invoke_hook('pre_llm_call',session_id='worker-session',task_id='worker-probe',tu
  platform='cli',sender_id='',user_message=worker_instruction)
 if profile_owned:
  before=list(wire)
- denied=json.loads(handle_function_call('apsimo_accept_local_draft',
+ denied=json.loads(handle_function_call('pacomind_accept_local_draft',
   {'question':'Unrelated draft','sources':[str(home/'unrelated.txt')]},
   session_id='worker-session',task_id='worker-probe',turn_id='worker-probe',tool_call_id='reject-draft'))
  assert denied.get('execution_created') is False,denied
@@ -221,17 +221,17 @@ with ledger._connect() as conn:
 assert any(r['turn_id']==sid for r in ledger.search_sources('calibration finding',contact_id='owner',session_id='later'))
 assert not ledger.search_sources('calibration finding',contact_id='someone-else',session_id='later')
 # The shared operational window expires; the source is still discoverable.
-from apsimo.turns import hermes_kanban
+from pacomind.turns import hermes_kanban
 with patch.object(hermes_kanban,'selected_home',return_value=home):
  assert not hermes_kanban.kanban_view(now=time.time()+8*86400)['recent']
 assert any(r['turn_id']==sid for r in ledger.search_sources('calibration finding',contact_id='owner',session_id='after-window'))
 # A duplicate actual lifecycle callback re-reads the committed summary and
 # preserves the exact outbox envelope, recovering the lost acknowledgement.
-token=apsimo_hermes._TOOL_EXECUTION_CONTEXT.set(context)
+token=pacomind_hermes._TOOL_EXECUTION_CONTEXT.set(context)
 try:
- with patch('apsimo_hermes.client.time.time',return_value=rows[0]['lease_expires_at']+.1):
+ with patch('pacomind_hermes.client.time.time',return_value=rows[0]['lease_expires_at']+.1):
   invoke_hook('kanban_task_completed',**{**hook,'summary':'FORGED-CALLBACK-TEXT'})
-finally:apsimo_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
+finally:pacomind_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
 assert len(outbox.snapshot())==1 and outbox.snapshot()[0]['payload']==payload
 assert outbox.snapshot()[0]['state']=='delivered'
 with ledger._connect() as conn:
@@ -240,7 +240,7 @@ invoke_hook('kanban_task_completed',**hook)
 assert report_outcomes[-1]['reason']=='attested_completion_context_missing'
 assert len(outbox.snapshot())==1
 from agent.delegation_context import non_dispatcher_owned_context
-token=apsimo_hermes._TOOL_EXECUTION_CONTEXT.set(context)
+token=pacomind_hermes._TOOL_EXECUTION_CONTEXT.set(context)
 try:
  with non_dispatcher_owned_context():
   assert report_handler(**hook)['reason']=='owned_native_run_missing'
@@ -271,11 +271,11 @@ try:
  # Restore the actual supplied request for subsequent erasure/replay proof.
  report_handler.request_memory(request,scope)
  assert report_handler.request_memory.supplied_snapshot(scope)==payload['assistant_source_refs']
-finally:apsimo_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
+finally:pacomind_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
 async def semantic():
- from apsimo.turns.source_vectors import SourceVectors
- from apsimo.vector.indexes import EmbeddingIdentity, IndexCatalog
- from apsimo.vector.store import VectorStore
+ from pacomind.turns.source_vectors import SourceVectors
+ from pacomind.vector.indexes import EmbeddingIdentity, IndexCatalog
+ from pacomind.vector.store import VectorStore
  class Embeddings:
   index_identity=EmbeddingIdentity('completion-fixture','completion-fixture','unknown',3)
   async def embed_batch(self,texts):return [[1.,0.,0.] if 'calibration' in text.lower() else [0.,1.,0.] for text in texts]
@@ -301,9 +301,9 @@ assert ledger.search_sources('orchard',contact_id='owner',session_id='later')
 assert not ledger.search_sources('calibration finding',contact_id='owner',session_id='later')
 page=api.get('/v1/host/memory/sources/erasures',params={'contact_id':'owner','after':0});assert page.status_code==200
 outbox.apply_erasure_page('owner',page.json())
-token=apsimo_hermes._TOOL_EXECUTION_CONTEXT.set(context)
+token=pacomind_hermes._TOOL_EXECUTION_CONTEXT.set(context)
 try:invoke_hook('kanban_task_completed',**hook)
-finally:apsimo_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
+finally:pacomind_hermes._TOOL_EXECUTION_CONTEXT.reset(token)
 assert not outbox.snapshot()
 with ledger._connect() as conn:assert not conn.execute('SELECT 1 FROM turn_sources WHERE turn_id=?',(sid,)).fetchone()
 assert kb.latest_run(db,tid).summary==report
@@ -318,19 +318,19 @@ print('native completion context, source-only report, scoped recall and dependen
 def test_native_completed_report_source_handoff(artifacts, tmp_path, with_vectors, ownership):
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes for native completion integration')
-    dependencies = os.environ.get('COLONY_TEST_DEPENDENCY_PATH', '')
+    dependencies = os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH', '')
     if with_vectors and importlib.util.find_spec('lancedb') is None and not (dependencies and (Path(dependencies)/'lancedb').is_dir()):
         pytest.skip('Optional vector extra is qualified in the vector-enabled environment')
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path/'native'), HERMES_KANBAN_HOME=str(tmp_path/'native'),
-        HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'), COLONY_STATE_DIR=str(tmp_path/'state'),
+        HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'), PACOMIND_STATE_DIR=str(tmp_path/'state'),
         HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_GENERAL_PLUGIN_ACTIVE='1', COLONY_MEMORY_WORKER_TOOLS='0', COLONY_MEMORY_TURN_WRITER='disabled',
-        COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system',
-        COLONY_SKIP_DOTENV='1', COLONY_OWNER_CONTACT_ID='owner', COLONY_GUARD_CHAT_MODE='off',
-        COLONY_INTROSPECTION_ENABLED='false', LITELLM_LOCAL_MODEL_COST_MAP='True')
+        PACOMIND_GENERAL_PLUGIN_ACTIVE='1', PACOMIND_MEMORY_WORKER_TOOLS='0', PACOMIND_MEMORY_TURN_WRITER='disabled',
+        PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system',
+        PACOMIND_SKIP_DOTENV='1', PACOMIND_OWNER_CONTACT_ID='owner', PACOMIND_GUARD_CHAT_MODE='off',
+        PACOMIND_INTROSPECTION_ENABLED='false', LITELLM_LOCAL_MODEL_COST_MAP='True')
     if ownership == 'profile':
-        for key in ('COLONY_GENERAL_PLUGIN_ACTIVE','COLONY_MEMORY_WORKER_TOOLS','COLONY_MEMORY_TURN_WRITER'):
+        for key in ('PACOMIND_GENERAL_PLUGIN_ACTIVE','PACOMIND_MEMORY_WORKER_TOOLS','PACOMIND_MEMORY_TURN_WRITER'):
             env.pop(key)
     dispatched = run_python('-I', '-c', DISPATCH, artifacts[3], ownership, cwd=tmp_path, env=env)
     env = json.loads(dispatched.stdout.splitlines()[-1])

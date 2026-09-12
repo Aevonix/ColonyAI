@@ -10,10 +10,10 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host as host_mod
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.world_model.constants import RELATIONSHIP_TYPES
+from pacomind.api.routers import host as host_mod
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.world_model.constants import RELATIONSHIP_TYPES
 
 GUEST = "+15550000042"
 

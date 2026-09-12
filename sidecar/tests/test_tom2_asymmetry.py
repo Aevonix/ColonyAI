@@ -7,9 +7,9 @@ from __future__ import annotations
 import re
 import sqlite3
 
-from apsimo.tom.asymmetry import AsymmetryEngine, tom2_mode
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.tom2 import Tom2Store
+from pacomind.tom.asymmetry import AsymmetryEngine, tom2_mode
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.tom2 import Tom2Store
 
 _FACT_A = "Alice prefers morning meetings SECRETALPHA"
 _FACT_B = "Bob is moving to Lisbon SECRETBETA"
@@ -26,15 +26,15 @@ def _seeded_facts():
 
 
 def test_mode_defaults_off(monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2", raising=False)
-    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2", raising=False)
+    monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
     assert tom2_mode() == "off"
 
 
 def test_off_is_inert(monkeypatch):
     """Flag-off regression lock: nothing computed, nothing written."""
-    monkeypatch.delenv("COLONY_TOM2", raising=False)
-    monkeypatch.delenv("COLONY_AUTONOMY_PRESET", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2", raising=False)
+    monkeypatch.delenv("PACOMIND_AUTONOMY_PRESET", raising=False)
     facts, *_ = _seeded_facts()
     tom2 = Tom2Store()
     report = AsymmetryEngine(facts, tom2).run()
@@ -44,7 +44,7 @@ def test_off_is_inert(monkeypatch):
 
 
 def test_shadow_counts_only(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2", "shadow")
+    monkeypatch.setenv("PACOMIND_TOM2", "shadow")
     facts, *_ = _seeded_facts()
     tom2 = Tom2Store()
     report = AsymmetryEngine(facts, tom2).run()
@@ -59,7 +59,7 @@ def test_shadow_counts_only(monkeypatch):
 
 
 def test_live_writes_refs_and_is_idempotent(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2", "live")
+    monkeypatch.setenv("PACOMIND_TOM2", "live")
     facts, fa, fb, fl = _seeded_facts()
     tom2 = Tom2Store()
     engine = AsymmetryEngine(facts, tom2)
@@ -76,7 +76,7 @@ def test_live_writes_refs_and_is_idempotent(monkeypatch):
 
 
 def test_per_contact_row_cap(monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2", "live")
+    monkeypatch.setenv("PACOMIND_TOM2", "live")
     facts = SharedFactsStore(":memory:")
     facts.create_fact(contact_id="cid-a", fact="a1", confidence=0.9)
     for i in range(5):
@@ -90,7 +90,7 @@ def test_per_contact_row_cap(monkeypatch):
 def test_privacy_no_foreign_fact_text_in_raw_rows(monkeypatch, tmp_path):
     """THE row-level privacy proof: dump every column of every raw row of
     the tom2 DB and regex for fact text — none may appear; only ids do."""
-    monkeypatch.setenv("COLONY_TOM2", "live")
+    monkeypatch.setenv("PACOMIND_TOM2", "live")
     facts, fa, fb, fl = _seeded_facts()
     db_path = str(tmp_path / "tom2.db")
     tom2 = Tom2Store(db_path=db_path)

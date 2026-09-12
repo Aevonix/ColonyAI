@@ -1,4 +1,4 @@
-"""Tests for the unified colony-agent-bridge worker (v0.21.31).
+"""Tests for the unified pacomind-agent-bridge worker (v0.21.31).
 
 Covers:
 - dry-run mode (no network)
@@ -19,7 +19,7 @@ from unittest.mock import patch
 
 import pytest
 
-from apsimo.workers import agent_bridge, queue_worker
+from pacomind.workers import agent_bridge, queue_worker
 
 
 def _work_order_params():
@@ -49,14 +49,14 @@ def _work_order_params():
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
     for var in (
-        "COLONY_URL", "COLONY_API_KEY", "COLONY_INITIATIVE_WEBHOOK",
-        "COLONY_JOBS_WEBHOOK_URL", "COLONY_AGENT_NAME",
-        "COLONY_WORKER_NODE_ID", "COLONY_WORKER_MAX_JOBS",
-        "COLONY_BRIDGE_POLL_SECS", "COLONY_BRIDGE_SKILLS_HOURS",
-        "COLONY_BRIDGE_LOG_CHANNEL", "COLONY_BRIDGE_PLATFORM",
-        "COLONY_BRIDGE_STATE_DIR", "HERMES_SKILLS_DIR",
-        "COLONY_AGENT_WORKER_ROUTES", "COLONY_AGENT_JOB_CLAIMS_ENABLED",
-        "COLONY_HERMES_WEBHOOK_SECRET", "COLONY_HERMES_WEBHOOK_V1_COMPAT",
+        "PACOMIND_URL", "PACOMIND_API_KEY", "PACOMIND_INITIATIVE_WEBHOOK",
+        "PACOMIND_JOBS_WEBHOOK_URL", "PACOMIND_AGENT_NAME",
+        "PACOMIND_WORKER_NODE_ID", "PACOMIND_WORKER_MAX_JOBS",
+        "PACOMIND_BRIDGE_POLL_SECS", "PACOMIND_BRIDGE_SKILLS_HOURS",
+        "PACOMIND_BRIDGE_LOG_CHANNEL", "PACOMIND_BRIDGE_PLATFORM",
+        "PACOMIND_BRIDGE_STATE_DIR", "HERMES_SKILLS_DIR",
+        "PACOMIND_AGENT_WORKER_ROUTES", "PACOMIND_AGENT_JOB_CLAIMS_ENABLED",
+        "PACOMIND_HERMES_WEBHOOK_SECRET", "PACOMIND_HERMES_WEBHOOK_V1_COMPAT",
     ):
         monkeypatch.delenv(var, raising=False)
 
@@ -73,11 +73,11 @@ def _no_network(monkeypatch):
 
 def test_dry_run_no_network(monkeypatch, tmp_path, capsys):
     _no_network(monkeypatch)
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path / "state"))
     assert agent_bridge.main(["--dry-run"]) == 0
     out = capsys.readouterr().out
     assert "dry run" in out
-    assert "colony_url" in out
+    assert "pacomind_url" in out
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +85,7 @@ def test_dry_run_no_network(monkeypatch, tmp_path, capsys):
 # ---------------------------------------------------------------------------
 
 def test_health_sidecar_unreachable(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     monitor = agent_bridge.HealthMonitor(tmp_path)
 
@@ -97,7 +97,7 @@ def test_health_sidecar_unreachable(tmp_path, monkeypatch):
 
 
 def test_health_sidecar_unreachable_escalates(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     monitor = agent_bridge.HealthMonitor(tmp_path)
 
@@ -118,7 +118,7 @@ def test_health_sidecar_unreachable_escalates(tmp_path, monkeypatch):
 
 
 def test_health_autonomy_stuck(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     monitor = agent_bridge.HealthMonitor(tmp_path)
     # Seed a previous autonomy snapshot
@@ -139,7 +139,7 @@ def test_health_autonomy_stuck(tmp_path, monkeypatch):
 
 
 def test_health_initiatives_never_executed(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     monitor = agent_bridge.HealthMonitor(tmp_path)
 
@@ -161,7 +161,7 @@ def test_health_reads_status_and_does_not_pass_skipped_probe(tmp_path, monkeypat
     """A degraded sidecar must not report ok, an empty 200 health body is a
     failure, and an unreachable autonomy endpoint is a skipped probe, not a
     passed one."""
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     monitor = agent_bridge.HealthMonitor(tmp_path)
 
@@ -188,7 +188,7 @@ def test_health_reads_status_and_does_not_pass_skipped_probe(tmp_path, monkeypat
 
 
 def test_health_alert_cooldown(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     monitor = agent_bridge.HealthMonitor(tmp_path)
 
@@ -207,7 +207,7 @@ def test_health_alert_cooldown(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_poller_fires_pending_initiatives(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     poller = agent_bridge.InitiativePoller(tmp_path)
 
@@ -241,7 +241,7 @@ def test_poller_fires_pending_initiatives(tmp_path, monkeypatch):
 
 
 def test_poller_dedup_by_id_and_key(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     poller = agent_bridge.InitiativePoller(tmp_path)
 
@@ -283,7 +283,7 @@ def test_poller_dedup_by_id_and_key(tmp_path, monkeypatch):
 
 
 def test_poller_seen_set_rotation(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     poller = agent_bridge.InitiativePoller(tmp_path)
     poller._seen_ids = {f"id-{i}" for i in range(6000)}
     poller._save()
@@ -295,7 +295,7 @@ def test_poller_seen_set_rotation(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_cycle_runs_all_phases(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     bridge = agent_bridge.AgentBridge(cfg)
 
@@ -318,7 +318,7 @@ def test_cycle_runs_all_phases(tmp_path, monkeypatch):
 
 
 def test_bridge_starts_claim_before_webhook_dispatch(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
     cfg = agent_bridge._cfg()
     cfg["max_jobs"] = 1
     calls = []
@@ -361,10 +361,10 @@ def test_generic_worker_routes_are_exact_runtime_configuration(
 
     monkeypatch.setattr(queue_worker, "_post", fake_post)
     cfg = {
-        "colony_url": "http://colony",
+        "pacomind_url": "http://pacomind",
         "node_id": "generic-node",
     }
-    monkeypatch.setenv("COLONY_AGENT_WORKER_ROUTES", "agent_sync")
+    monkeypatch.setenv("PACOMIND_AGENT_WORKER_ROUTES", "agent_sync")
     queue_worker.register_worker(cfg)
     queue_worker.claim_job(cfg)
     assert len(captured) == 2
@@ -378,8 +378,8 @@ def test_generic_worker_routes_are_exact_runtime_configuration(
 def test_external_bridge_register_and_claim_use_same_narrow_route(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_AGENT_WORKER_ROUTES", "hermes_run")
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_AGENT_WORKER_ROUTES", "hermes_run")
     cfg = agent_bridge._cfg()
     bodies = []
 
@@ -399,8 +399,8 @@ def test_external_bridge_register_and_claim_use_same_narrow_route(
 def test_global_claim_kill_switch_stops_external_workers_but_not_initiatives(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_BRIDGE_STATE_DIR", str(tmp_path))
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_BRIDGE_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "false")
     cfg = agent_bridge._cfg()
     bridge = agent_bridge.AgentBridge(cfg)
     calls = []
@@ -430,7 +430,7 @@ def test_global_claim_kill_switch_stops_external_workers_but_not_initiatives(
 def test_health_alert_delivery_uses_exact_v2_signed_bytes(
     monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_HERMES_WEBHOOK_SECRET", "alert-secret")
+    monkeypatch.setenv("PACOMIND_HERMES_WEBHOOK_SECRET", "alert-secret")
     monkeypatch.setattr(queue_worker.time, "time", lambda: 1234567890)
     captured = []
 
@@ -464,7 +464,7 @@ def test_both_external_bridge_builders_forward_work_order_contract(
 ):
     params = _work_order_params()
     cfg = {
-        "colony_url": "http://colony",
+        "pacomind_url": "http://pacomind",
         "webhook_url": "http://agent/jobs",
         "jobs_webhook": "http://agent/jobs",
         "node_id": "worker",
@@ -506,7 +506,7 @@ def test_both_external_bridge_builders_forward_work_order_contract(
 
 
 def test_hermes_webhook_encoder_uses_pinned_v2_exact_body_hmac(monkeypatch):
-    monkeypatch.delenv("COLONY_HERMES_WEBHOOK_V1_COMPAT", raising=False)
+    monkeypatch.delenv("PACOMIND_HERMES_WEBHOOK_V1_COMPAT", raising=False)
     body, headers = queue_worker.encode_hermes_webhook(
         {"type": "agent_job", "payload": {"job_id": "j1"}},
         secret="route-secret",

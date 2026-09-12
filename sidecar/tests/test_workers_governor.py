@@ -13,23 +13,23 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 import pytest
 
-from apsimo.directives import (
+from pacomind.directives import (
     Directive,
     DirectiveGuard,
     DirectiveStore,
     Polarity,
     Verdict,
 )
-from apsimo.self_model import (
+from pacomind.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
-from apsimo.task_queue.governor import WorkerGovernor
-from apsimo.task_queue.models import (
+from pacomind.task_queue.governor import WorkerGovernor
+from pacomind.task_queue.models import (
     Job, JobCapabilityRequirement, JobStatus, JobType, WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
-from apsimo.workers import colony_worker as cw
-from apsimo.work_orders import WorkOrderV1
+from pacomind.task_queue.queue_manager import TaskQueueManager
+from pacomind.workers import pacomind_worker as cw
+from pacomind.work_orders import WorkOrderV1
 
 
 def _self_model(*, earned: bool = True):
@@ -96,7 +96,7 @@ def _mutating_job(**payload):
 # -- claim gate: capability coverage (server-side) -----------------------
 
 def test_live_refuses_worker_lacking_required_capability(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(self_model=_self_model())
     job = _read_job()  # requires "research"
     v = gov.evaluate_claim(job, worker_capabilities={"analyst"}, worker_node_id="w1")
@@ -106,7 +106,7 @@ def test_live_refuses_worker_lacking_required_capability(monkeypatch):
 
 
 def test_live_allows_worker_that_covers_capabilities(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(self_model=_self_model())
     job = _read_job()
     v = gov.evaluate_claim(job, worker_capabilities={"research", "read"})
@@ -114,7 +114,7 @@ def test_live_allows_worker_that_covers_capabilities(monkeypatch):
 
 
 def test_required_capability_via_tag_enforced(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(self_model=_self_model())
     job = _read_job()
     job.tags["required_capability"] = "gpu"
@@ -123,7 +123,7 @@ def test_required_capability_via_tag_enforced(monkeypatch):
 
 
 def test_effect_capability_cannot_be_mislabeled_read_only(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(
         directive_manager=_FakeDirectives(True),
         self_model=_self_model(),
@@ -144,7 +144,7 @@ def test_effect_capability_cannot_be_mislabeled_read_only(monkeypatch):
 # -- claim gate: boundary re-check ---------------------------------------
 
 def test_live_refuses_boundaried_job(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(directive_manager=_FakeDirectives(False, "leave X alone"),
                          self_model=_self_model())
     job = _read_job(description="analyze X")
@@ -153,7 +153,7 @@ def test_live_refuses_boundaried_job(monkeypatch):
 
 
 def test_live_allows_when_boundary_clear(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(directive_manager=_FakeDirectives(True),
                          self_model=_self_model())
     job = _read_job()
@@ -165,7 +165,7 @@ def test_injected_prompt_context_cannot_match_its_own_boundary(
         tmp_path, monkeypatch):
     """Control/context prose is not the autonomous action's subject."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     store = DirectiveStore(db_path=tmp_path / "directives.db")
     store.add(Directive(
         subject="private-surface-blackout",
@@ -195,7 +195,7 @@ def test_injected_prompt_context_cannot_match_its_own_boundary(
 @pytest.mark.parametrize("subject_field", ["target", "command", "path"])
 def test_genuine_job_subject_fields_still_match_boundaries(
         subject_field, tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     store = DirectiveStore(db_path=tmp_path / "directives.db")
     store.add(Directive(
         subject="private-surface-blackout",
@@ -221,7 +221,7 @@ def test_genuine_job_subject_fields_still_match_boundaries(
 
 def test_live_refuses_act_first_worker_when_confidence_is_not_earned(
         monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model(earned=False)
     sm.trust.set_stage("worker:research", "act_first", notify=False)
     gov = WorkerGovernor(
@@ -245,7 +245,7 @@ def test_live_refuses_act_first_worker_when_confidence_is_not_earned(
 ])
 def test_worker_immutable_floor_requires_exact_owner_approval(
         description, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(
         directive_manager=_FakeDirectives(True),
         self_model=_self_model(),
@@ -261,7 +261,7 @@ def test_worker_immutable_floor_requires_exact_owner_approval(
 
 
 def test_live_refuses_when_boundary_check_raises(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(
         directive_manager=_ExplodingDirectives(),
         self_model=_self_model(),
@@ -275,7 +275,7 @@ def test_live_refuses_when_boundary_check_raises(monkeypatch):
 
 
 def test_live_refuses_real_closed_directive_sqlite_store(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     store = DirectiveStore(db_path=tmp_path / "directives.db")
     store.add(Directive(
         subject="all autonomous action",
@@ -302,7 +302,7 @@ def test_live_refuses_real_closed_directive_sqlite_store(tmp_path, monkeypatch):
 
 
 def test_live_refuses_when_configured_boundary_dependency_is_missing(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     gov = WorkerGovernor(
         boundary_required=True,
         self_model=_self_model(),
@@ -318,7 +318,7 @@ def test_live_refuses_when_configured_boundary_dependency_is_missing(monkeypatch
 # -- mode semantics -------------------------------------------------------
 
 def test_shadow_observes_but_never_blocks(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     gov = WorkerGovernor(directive_manager=_FakeDirectives(False, "boundaried"),
                          self_model=_self_model())
     job = _read_job()
@@ -330,7 +330,7 @@ def test_shadow_observes_but_never_blocks(monkeypatch):
 
 
 def test_shadow_records_boundary_failure_without_blocking(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     gov = WorkerGovernor(
         directive_manager=_ExplodingDirectives(),
         self_model=_self_model(),
@@ -344,7 +344,7 @@ def test_shadow_records_boundary_failure_without_blocking(monkeypatch):
 
 
 def test_off_disables_governor(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     gov = WorkerGovernor(self_model=_self_model())
     v = gov.evaluate_claim(_read_job(), worker_capabilities=set())
     assert v["allowed"] is True and v["enforced"] is False
@@ -354,7 +354,7 @@ def test_off_disables_governor(monkeypatch):
 def test_off_mode_reports_unchecked_not_pass(monkeypatch):
     """Mode "off" checks nothing, so capability/boundary/trust must be None
     ("unchecked"), never a fabricated True ("checked and passed")."""
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     gov = WorkerGovernor(self_model=_self_model())
     v = gov.evaluate_claim(_read_job(), worker_capabilities=set())
     assert v["capability_ok"] is None
@@ -368,10 +368,10 @@ def test_off_mode_reports_unchecked_not_pass(monkeypatch):
 async def test_live_claim_route_holds_job_when_governor_unavailable(
     tmp_path, monkeypatch, governor,
 ):
-    from apsimo.api.routers import host as host_router
-    from apsimo.api.routers import task_queue as queue_router
+    from pacomind.api.routers import host as host_router
+    from pacomind.api.routers import task_queue as queue_router
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     previous = host_router._worker_governor
@@ -414,10 +414,10 @@ async def test_live_claim_route_holds_job_when_governor_unavailable(
 async def test_shadow_claim_route_reports_governor_failure_without_blocking(
     tmp_path, monkeypatch,
 ):
-    from apsimo.api.routers import host as host_router
-    from apsimo.api.routers import task_queue as queue_router
+    from pacomind.api.routers import host as host_router
+    from pacomind.api.routers import task_queue as queue_router
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     previous = host_router._worker_governor
@@ -456,7 +456,7 @@ async def test_shadow_claim_route_reports_governor_failure_without_blocking(
 async def test_live_central_claim_rejects_malformed_verdicts(
     tmp_path, monkeypatch, malformed,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     manager.queue.configure_governance(_MalformedGovernor(malformed))
@@ -486,7 +486,7 @@ async def test_live_central_claim_rejects_malformed_verdicts(
 async def test_live_central_claim_rejects_compatibility_governor(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     manager.queue.configure_governance(WorkerGovernor(
@@ -516,7 +516,7 @@ async def test_shadow_and_off_central_claims_preserve_usability(
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
-        monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+        monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
         shadow_job = Job(job_type=JobType.CUSTOM)
         await manager.queue.post(shadow_job)
         shadow = await manager.queue.claim_job(
@@ -529,7 +529,7 @@ async def test_shadow_and_off_central_claims_preserve_usability(
             shadow.job_id, "shadow-worker", shadow.claim_attempt_id,
         )
 
-        monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+        monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
         off = await manager.queue.claim_job(
             "off-worker", WorkerCapabilities(node_id="off-worker"))
         assert off is not None and off.job_id == shadow_job.job_id
@@ -543,7 +543,7 @@ async def test_shadow_and_off_central_claims_preserve_usability(
 async def test_embedded_worker_cannot_bypass_missing_live_authority(
     tmp_path, monkeypatch,
 ):
-    from apsimo.task_queue.worker import JobHandler, WorkerNode
+    from pacomind.task_queue.worker import JobHandler, WorkerNode
 
     class Handler(JobHandler):
         def __init__(self):
@@ -553,7 +553,7 @@ async def test_embedded_worker_cannot_bypass_missing_live_authority(
             self.called = True
             return {"status": "completed"}
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     handler = Handler()
@@ -597,7 +597,7 @@ async def test_dependency_unblock_cannot_release_governance_hold(
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
-        monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+        monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
         dependency = Job(job_type=JobType.CUSTOM)
         await manager.queue.post(dependency)
         claimed_dep = await manager.queue.claim_job(
@@ -618,7 +618,7 @@ async def test_dependency_unblock_cannot_release_governance_hold(
             depends_on=[dependency.job_id],
         )
         await manager.queue.post(dependent)
-        monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+        monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
         assert await manager.queue.claim_job(
             "raw", WorkerCapabilities(node_id="raw")) is None
         held = await manager.queue.get_job(dependent.job_id)
@@ -636,7 +636,7 @@ async def test_dependency_unblock_cannot_release_governance_hold(
 async def test_governance_hold_recovery_and_mode_rollback_are_exactly_once(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     try:
@@ -673,7 +673,7 @@ async def test_governance_hold_recovery_and_mode_rollback_are_exactly_once(
         await manager.queue.post(second)
         assert await manager.queue.claim_job(
             "raw", WorkerCapabilities(node_id="raw")) is None
-        monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+        monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
         assert await manager.queue.reconcile_governance_holds(force=True) == 1
         assert await manager.queue.reconcile_governance_holds(force=True) == 0
         rolled_back = await manager.queue.get_job(second.job_id)
@@ -696,7 +696,7 @@ async def test_directive_lift_releases_only_boundary_hold(
                 reason="ok" if self.allowed else "leave target alone",
             )
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     directives = MutableDirectives()
@@ -735,7 +735,7 @@ def test_job_action_includes_type_specific_command_path_and_endpoint(monkeypatch
             self.action = action
             return Verdict(allowed=True, reason="ok")
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     directives = CaptureDirectives()
     governor = WorkerGovernor(
         directive_manager=directives,
@@ -760,9 +760,9 @@ def test_job_action_includes_type_specific_command_path_and_endpoint(monkeypatch
 
 
 def test_global_act_pause_refuses_worker_claim(tmp_path, monkeypatch):
-    from apsimo.directives import DirectiveManager, DirectiveStore
+    from pacomind.directives import DirectiveManager, DirectiveStore
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     manager = DirectiveManager(DirectiveStore(
         db_path=str(tmp_path / "directives.db")))
     captured = manager.capture_from_message("pause autonomy")
@@ -790,7 +790,7 @@ def test_malformed_directive_verdict_fails_closed(monkeypatch):
         def check(self, action):
             return {"allowed": True}
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     governor = WorkerGovernor(
         directive_manager=MalformedDirectives(),
         self_model=_self_model(),
@@ -805,7 +805,7 @@ def test_malformed_directive_verdict_fails_closed(monkeypatch):
 def test_worker_governor_setter_syncs_and_clears_singleton_queue(
     tmp_path,
 ):
-    from apsimo.api.routers import host as host_router
+    from pacomind.api.routers import host as host_router
 
     class Queue:
         def __init__(self):
@@ -831,7 +831,7 @@ def test_worker_governor_setter_syncs_and_clears_singleton_queue(
 
 def test_server_orders_and_clears_governor_around_embedded_worker():
     import inspect
-    from apsimo import server
+    from pacomind import server
 
     source = inspect.getsource(server.lifespan)
     clear_at_entry = source.index("set_worker_governor(None)")
@@ -848,15 +848,15 @@ def test_server_orders_and_clears_governor_around_embedded_worker():
 
 def test_embedded_worker_enablement_is_explicit_and_default_compatible(
         monkeypatch):
-    from apsimo import server
+    from pacomind import server
 
-    monkeypatch.delenv("COLONY_EMBEDDED_WORKER_ENABLED", raising=False)
+    monkeypatch.delenv("PACOMIND_EMBEDDED_WORKER_ENABLED", raising=False)
     assert server._embedded_worker_enabled() is True
     assert server._configured_embedded_worker_enabled() is True
-    monkeypatch.setenv("COLONY_EMBEDDED_WORKER_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_EMBEDDED_WORKER_ENABLED", "false")
     assert server._embedded_worker_enabled() is False
     assert server._configured_embedded_worker_enabled() is False
-    monkeypatch.setenv("COLONY_EMBEDDED_WORKER_ENABLED", "invalid")
+    monkeypatch.setenv("PACOMIND_EMBEDDED_WORKER_ENABLED", "invalid")
     with pytest.raises(RuntimeError, match="must be true or false"):
         server._embedded_worker_enabled()
     with pytest.raises(RuntimeError, match="must be true or false"):
@@ -864,13 +864,13 @@ def test_embedded_worker_enablement_is_explicit_and_default_compatible(
 
 
 def test_embedded_worker_helper_matches_release_attestation_shape():
-    """Keep Colony compatible with the host's reviewed AST release gate."""
+    """Keep PacoMind compatible with the host's reviewed AST release gate."""
 
     import ast
     import inspect
     import textwrap
 
-    from apsimo import server
+    from pacomind import server
 
     helper = ast.parse(textwrap.dedent(
         inspect.getsource(server._embedded_worker_enabled)
@@ -900,7 +900,7 @@ def test_embedded_worker_helper_has_one_lifecycle_guard_call_site():
     import ast
     import inspect
 
-    from apsimo import server
+    from pacomind import server
 
     tree = ast.parse(inspect.getsource(server))
     calls = [
@@ -925,16 +925,16 @@ def test_embedded_worker_helper_has_one_lifecycle_guard_call_site():
 
 
 def test_invalid_worker_governor_mode_fails_closed(monkeypatch):
-    from apsimo.task_queue.governor import workers_mode
+    from pacomind.task_queue.governor import workers_mode
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "typo-live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "typo-live")
     with pytest.raises(RuntimeError, match="must be off, shadow, or live"):
         workers_mode()
 
 
 def test_queue_scheduler_is_independent_from_embedded_worker_source_gate():
     import inspect
-    from apsimo import server
+    from pacomind import server
 
     source = inspect.getsource(server.lifespan)
     scheduler_start = source.index("queue_scheduler = Scheduler(")
@@ -950,7 +950,7 @@ def test_queue_scheduler_is_independent_from_embedded_worker_source_gate():
 async def test_embedded_completion_always_uses_central_auditor(
     tmp_path, monkeypatch,
 ):
-    from apsimo.task_queue.worker import JobHandler, WorkerNode
+    from pacomind.task_queue.worker import JobHandler, WorkerNode
 
     class TrackingGovernor(WorkerGovernor):
         def __init__(self):
@@ -978,7 +978,7 @@ async def test_embedded_completion_always_uses_central_auditor(
                 "action_plane": {"state": "completed"},
             }
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     governor = TrackingGovernor()
@@ -1041,7 +1041,7 @@ def test_audit_allows_mutation_on_authorized_job():
     gov = WorkerGovernor()
     job = _mutating_job()
     audit = gov.audit_report(job, {"summary": "patched", "operations": ["commit"],
-                                   "commits": 1, "branch": "colony/fix"})
+                                   "commits": 1, "branch": "pacomind/fix"})
     assert audit["verdict"] == "clean"
 
 
@@ -1065,9 +1065,9 @@ async def test_read_only_worker_earns_bounded_live_trials_then_act_first(
 ):
     """Fresh no-effect work can graduate without an approval deadlock."""
 
-    monkeypatch.setenv("COLONY_TRUST_ASK_MIN_N", "3")
-    monkeypatch.setenv("COLONY_TRUST_ACT_MIN_N", "5")
-    monkeypatch.setenv("COLONY_TRUST_READ_ONLY_TRIAL_MAX", "5")
+    monkeypatch.setenv("PACOMIND_TRUST_ASK_MIN_N", "3")
+    monkeypatch.setenv("PACOMIND_TRUST_ACT_MIN_N", "5")
+    monkeypatch.setenv("PACOMIND_TRUST_READ_ONLY_TRIAL_MAX", "5")
     sm = _self_model(earned=False)
     governor = WorkerGovernor(
         directive_manager=_FakeDirectives(True),
@@ -1080,7 +1080,7 @@ async def test_read_only_worker_earns_bounded_live_trials_then_act_first(
         "summary": "fresh read-only result was independently verified",
     }
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     for index in range(3):
         claim = governor.evaluate_claim(job, {"research"}, "reader")
         assert claim.allowed is True
@@ -1094,7 +1094,7 @@ async def test_read_only_worker_earns_bounded_live_trials_then_act_first(
         )
     assert sm.trust.stage("worker:research") == "ask_first"
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     floor_job = _read_job(description="rotate the API key")
     assert governor.evaluate_claim(
         floor_job, {"research"}, "reader",
@@ -1136,9 +1136,9 @@ async def test_read_only_live_trial_budget_counts_unverified_attempts(
 ):
     """A worker cannot get unlimited trials by withholding attestation."""
 
-    monkeypatch.setenv("COLONY_TRUST_ASK_MIN_N", "1")
-    monkeypatch.setenv("COLONY_TRUST_ACT_MIN_N", "2")
-    monkeypatch.setenv("COLONY_TRUST_READ_ONLY_TRIAL_MAX", "1")
+    monkeypatch.setenv("PACOMIND_TRUST_ASK_MIN_N", "1")
+    monkeypatch.setenv("PACOMIND_TRUST_ACT_MIN_N", "2")
+    monkeypatch.setenv("PACOMIND_TRUST_READ_ONLY_TRIAL_MAX", "1")
     sm = _self_model(earned=False)
     governor = WorkerGovernor(
         directive_manager=_FakeDirectives(True),
@@ -1157,7 +1157,7 @@ async def test_read_only_live_trial_budget_counts_unverified_attempts(
     )
     assert sm.trust.stage("worker:research") == "ask_first"
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     assert governor.evaluate_claim(job, {"research"}).allowed is True
     await governor.record_outcome(
         job,
@@ -1174,7 +1174,7 @@ async def test_read_only_live_trial_budget_counts_unverified_attempts(
 
 @pytest.mark.asyncio
 async def test_record_outcome_live_feeds_real_trust_domain(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model(earned=False)
     gov = WorkerGovernor(self_model=sm)
     job = _read_job()
@@ -1200,7 +1200,7 @@ async def test_record_outcome_live_feeds_real_trust_domain(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_stable_worker_event_id_deduplicates_competence(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     gov = WorkerGovernor(self_model=sm)
     job = _read_job()
@@ -1221,7 +1221,7 @@ async def test_stable_worker_event_id_deduplicates_competence(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_duplicate_success_replay_does_not_redistill_skill(monkeypatch):
-    from apsimo.skills_memory import SkillStore
+    from pacomind.skills_memory import SkillStore
 
     class _LLM:
         def __init__(self):
@@ -1235,8 +1235,8 @@ async def test_duplicate_success_replay_does_not_redistill_skill(monkeypatch):
                 '"Verify the result"],"gotchas":[]}'
             ))
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
-    monkeypatch.setenv("COLONY_SKILLS_DISTILL", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_SKILLS_DISTILL", "live")
     sm = _self_model()
     skills = SkillStore()
     llm = _LLM()
@@ -1271,7 +1271,7 @@ async def test_duplicate_violation_replay_does_not_redeliver(monkeypatch):
         deliveries.append(payload)
         return True
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     governor = WorkerGovernor(
         self_model=_self_model(),
         delivery_router=deliver,
@@ -1297,7 +1297,7 @@ async def test_failed_violation_delivery_retries_before_outbox_ack(monkeypatch):
         calls += 1
         return calls > 1
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     governor = WorkerGovernor(
         self_model=_self_model(),
         delivery_router=deliver,
@@ -1321,7 +1321,7 @@ async def test_failed_violation_delivery_retries_before_outbox_ack(monkeypatch):
 async def test_failed_event_insert_rolls_back_competence_aggregate(monkeypatch):
     """A retry after an event-ledger failure must not double competence."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     gov = WorkerGovernor(self_model=sm)
     sm.store._conn.execute(
@@ -1359,7 +1359,7 @@ async def test_failed_event_insert_rolls_back_competence_aggregate(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_duplicate_replay_reconciles_trust_before_outbox_ack(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     gov = WorkerGovernor(self_model=sm)
     original = sm.trust.after_outcome
@@ -1391,7 +1391,7 @@ async def test_duplicate_replay_reconciles_trust_before_outbox_ack(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_record_outcome_shadow_is_calibration(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     sm = _self_model()
     gov = WorkerGovernor(self_model=sm)
     await gov.record_outcome(
@@ -1412,7 +1412,7 @@ async def test_record_outcome_shadow_is_calibration(monkeypatch):
 async def test_record_outcome_preserves_mode_captured_by_outbox(monkeypatch):
     """A delayed shadow result must not become live evidence after a flip."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     gov = WorkerGovernor(self_model=sm)
     report = {
@@ -1465,7 +1465,7 @@ class _Feedback:
 
 @pytest.mark.asyncio
 async def test_neutral_completion_records_no_competence_or_feedback(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     feedback = _Feedback()
     gov = WorkerGovernor(self_model=sm, feedback_store=feedback)
@@ -1482,7 +1482,7 @@ async def test_neutral_completion_records_no_competence_or_feedback(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_caller_cannot_assert_success_for_skipped_work(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     gov = WorkerGovernor(self_model=sm)
     await gov.record_outcome(
@@ -1498,7 +1498,7 @@ async def test_caller_cannot_assert_success_for_skipped_work(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_explicit_failure_remains_negative_trust_evidence(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     feedback = _Feedback()
     gov = WorkerGovernor(self_model=sm, feedback_store=feedback)
@@ -1511,17 +1511,17 @@ async def test_explicit_failure_remains_negative_trust_evidence(monkeypatch):
     assert events[0]["source"] == "task_queue.governor"
     assert events[0]["source_ref"] == job.job_id
     assert events[0]["evidence_status"] == "observed"
-    assert events[0]["outcome_contract"] == "colony.worker-outcome/v1"
+    assert events[0]["outcome_contract"] == "pacomind.worker-outcome/v1"
     assert events[0]["evidence"]["classification"] == "explicit_outcome"
     assert feedback.calls == []
 
 
 @pytest.mark.asyncio
 async def test_complete_endpoint_tags_skipped_as_neutral(tmp_path, monkeypatch):
-    from apsimo.api.routers import host as host_router
-    from apsimo.api.routers import task_queue as queue_router
+    from pacomind.api.routers import host as host_router
+    from pacomind.api.routers import task_queue as queue_router
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     previous = host_router._worker_governor
@@ -1565,10 +1565,10 @@ async def test_complete_endpoint_tags_skipped_as_neutral(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_work_order_queue_completion_is_transport_not_success(tmp_path, monkeypatch):
-    from apsimo.api.routers import host as host_router
-    from apsimo.api.routers import task_queue as queue_router
+    from pacomind.api.routers import host as host_router
+    from pacomind.api.routers import task_queue as queue_router
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     TaskQueueManager._instance = None
     manager = await TaskQueueManager.initialize(db_path=tmp_path / "queue.db")
     previous = host_router._worker_governor
@@ -1643,7 +1643,7 @@ async def test_work_order_queue_completion_is_transport_not_success(tmp_path, mo
 
 @pytest.mark.asyncio
 async def test_violation_records_and_trips_breaker(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     # Pre-graduate the domain to act_first so a violation can demote it.
     sm.trust.set_stage("worker:research", "act_first", notify=False)
@@ -1666,7 +1666,7 @@ async def test_violation_records_and_trips_breaker(monkeypatch):
 # -- status ---------------------------------------------------------------
 
 def test_status_reports_mode_and_worker_domains(monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
     sm = _self_model()
     sm.trust.set_stage("worker:research", "ask_first", notify=False)
     gov = WorkerGovernor(self_model=sm)
@@ -1694,16 +1694,16 @@ def test_worker_build_messages_includes_job_fields():
 
 
 def test_worker_config_defaults(monkeypatch):
-    for k in ("COLONY_WORKER_CAPABILITIES", "COLONY_WORKER_JOB_TYPES",
-              "COLONY_WORKER_NODE_ID"):
+    for k in ("PACOMIND_WORKER_CAPABILITIES", "PACOMIND_WORKER_JOB_TYPES",
+              "PACOMIND_WORKER_NODE_ID"):
         monkeypatch.delenv(k, raising=False)
-    monkeypatch.setenv("COLONY_AGENT_NAME", "Test Bot")
+    monkeypatch.setenv("PACOMIND_AGENT_NAME", "Test Bot")
     cfg = cw.load_config()
     assert cfg["node_id"] == "test-bot-worker"
     assert "research" in cfg["capabilities"]
 
 
-def test_external_colony_worker_starts_before_llm_and_completion(monkeypatch):
+def test_external_pacomind_worker_starts_before_llm_and_completion(monkeypatch):
     calls = []
 
     def fake_post(cfg, url, body, timeout=15):  # noqa: ARG001
@@ -1727,5 +1727,5 @@ def test_external_colony_worker_starts_before_llm_and_completion(monkeypatch):
             "files_touched": [], "commits": 0, "branch": "", "remaining_work": "",
         },
     )
-    assert cw.execute_job({"colony_url": "http://colony"}, {"job_id": "job-1"})
+    assert cw.execute_job({"pacomind_url": "http://pacomind"}, {"job_id": "job-1"})
     assert calls.index("start") < calls.index("llm") < calls.index("complete")

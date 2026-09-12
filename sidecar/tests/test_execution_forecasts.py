@@ -2,19 +2,19 @@
 from contextlib import closing
 import json
 import pytest
-from apsimo.api.routers import host
-from apsimo.self_model.expectations import ExpectationStore, ExpectationEngine
-from apsimo.self_model import execution_forecasts as forecasts
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.executions import ExecutionRegistry
+from pacomind.api.routers import host
+from pacomind.self_model.expectations import ExpectationStore, ExpectationEngine
+from pacomind.self_model import execution_forecasts as forecasts
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.executions import ExecutionRegistry
 from test_execution_registry import observation
 
 @pytest.fixture
 def runtime(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
-    monkeypatch.delenv('COLONY_OWNER_PERSON_ID', raising=False)
-    monkeypatch.setenv('COLONY_EXPECTATIONS', 'on')
-    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.delenv('PACOMIND_OWNER_PERSON_ID', raising=False)
+    monkeypatch.setenv('PACOMIND_EXPECTATIONS', 'on')
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(tmp_path))
     store = ExpectationStore(str(tmp_path/'expectations.db'))
     monkeypatch.setattr(host, '_expectations', ExpectationEngine(store))
     now = [1_800_000_000.]
@@ -63,7 +63,7 @@ def test_ledger_cycle_improves_next_estimate_and_erasure_removes_sample(runtime)
         rows = db.execute('SELECT messages_json FROM turn_sources').fetchall()
         assert rows and all(json.loads(row[0])[0]['content'] == '' for row in rows)
         assert db.execute('SELECT count(*) FROM turn_source_search').fetchone()[0] == 0
-        from apsimo.turns.source_vectors import chunks
+        from pacomind.turns.source_vectors import chunks
         assert all(list(chunks(db, source)) == [] for source in db.execute('SELECT * FROM turn_sources'))
     assert not ledger.search_sources('model-a', contact_id='contact-a', session_id='')
     ledger.erase_sources(contact_id='contact-a', turn_ids=[outcome['receipt_ref'].removeprefix('receipt:')])
@@ -132,9 +132,9 @@ def test_predecessor_schema_still_writes_and_metadata_expires(runtime):
         assert db.execute('SELECT count(*) FROM execution_runtime_observations').fetchone()[0] == 1
 
 def test_observer_failure_does_not_block_and_disabled_has_no_forecasts(runtime, monkeypatch):
-    monkeypatch.setenv('COLONY_EXPECTATIONS', 'off')
+    monkeypatch.setenv('PACOMIND_EXPECTATIONS', 'off')
     assert start(runtime)['accepted'] and history(runtime)['forecasts'] == []
-    monkeypatch.setenv('COLONY_EXPECTATIONS', 'on')
+    monkeypatch.setenv('PACOMIND_EXPECTATIONS', 'on')
     monkeypatch.setattr(forecasts, 'observe', lambda *a: (_ for _ in ()).throw(RuntimeError('private detail')))
     result = send(runtime, 'independent')
     assert result['accepted'] and result['forecast']['status'] == 'unavailable'

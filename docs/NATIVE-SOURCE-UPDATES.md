@@ -6,7 +6,7 @@ interruption and session recovery. This opt-in adapter API creates no task
 runner, durable queue or new authority grant.
 
 ```python
-from colony_hermes.input_provenance import SourceUpdate
+from pacomind_hermes.input_provenance import SourceUpdate
 
 update = SourceUpdate(
     update_id=retained_update_id,
@@ -57,7 +57,7 @@ its tools rather than forwarding stale instructions.
 
 Both callbacks are synchronous and must be bounded by the host. `validate()`
 must return exactly `True` after rechecking current local owner/transport
-grants. Canonical source checks remain in Colony's request path. A false return
+grants. Canonical source checks remain in PacoMind's request path. A false return
 or exception blocks dependent continuation.
 
 `observe(metadata)` must return exactly `True` after the host durably saves the
@@ -73,7 +73,7 @@ and `turn_id`, a request SHA-256, and an explicit `boundary`:
 | Stage | What it establishes |
 |---|---|
 | `middleware_visible` | The exact registered carrier survived Hermes request middleware. |
-| `native_request_visible` | The carrier survived Colony's turn-scoped Relay callback immediately before `next_call`; `boundary` is `relay_before_next_call`. Later downstream callbacks or the SDK may still change or fail the request. |
+| `native_request_visible` | The carrier survived PacoMind's turn-scoped Relay callback immediately before `next_call`; `boundary` is `relay_before_next_call`. Later downstream callbacks or the SDK may still change or fail the request. |
 
 The hash describes that boundary's request, encoded as sorted compact JSON with
 ASCII escapes. It is not a claim about final network bytes. The active object
@@ -106,4 +106,4 @@ This API does not physically delete native transcripts, remove unknown
 paraphrases, enable detached-child steering or change foreground busy policy.
 It does not make an ordinary foreground conversation share a build's execution
 session. Use the [current Hermes qualification target](HERMES-HOOK-COMPATIBILITY.md)
-and the `apsimo-hermes[native-memory]` extra for the native request boundary.
+and the `pacomind-hermes[native-memory]` extra for the native request boundary.

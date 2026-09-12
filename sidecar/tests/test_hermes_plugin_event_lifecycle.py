@@ -11,7 +11,7 @@ _PLUGIN_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 
 
 def _load_plugin():
-    name = "colony_hermes_event_lifecycle_test"
+    name = "pacomind_hermes_event_lifecycle_test"
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(
         name,
@@ -28,7 +28,7 @@ def _load_plugin():
 def test_general_plugin_exports_no_process_scoped_event_subscriber():
     module = _load_plugin()
     assert module.GOVERNED_EVENT_TYPES == ()
-    assert not hasattr(module, "ColonyEventSubscriber")
+    assert not hasattr(module, "PacoMindEventSubscriber")
     assert not hasattr(module, "_event_subscriber")
     source = (_PLUGIN_DIR / "__init__.py").read_text(encoding="utf-8")
     assert "register_hook(\"on_session_end\"" not in source

@@ -11,11 +11,11 @@ from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.auth_telemetry import AuthTelemetry
-from apsimo.api.authority import KeyringError, load_keyring
-from apsimo.api.contact_grants import ContactGrantRegistry
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
+from pacomind.api.auth_telemetry import AuthTelemetry
+from pacomind.api.authority import KeyringError, load_keyring
+from pacomind.api.contact_grants import ContactGrantRegistry
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
 
 
 OWNER = "cid-owner"
@@ -77,7 +77,7 @@ def _headers(
 ) -> dict[str, str]:
     return {
         "Authorization": "Bearer " + secret,
-        "X-Colony-Principal": principal,
+        "X-PacoMind-Principal": principal,
     }
 
 
@@ -102,15 +102,15 @@ async def test_telemetry_distinguishes_legacy_scoped_denials_and_hides_material(
     monkeypatch.setattr(host, "_graph", graph)
     monkeypatch.setattr(host, "_p8_runtime", None)
     monkeypatch.setattr(host, "_goals_store", None)
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_API_KEY", LEGACY_SECRET)
-    monkeypatch.setenv("COLONY_API_KEYRING_PATH", str(keyring))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_API_KEY", LEGACY_SECRET)
+    monkeypatch.setenv("PACOMIND_API_KEYRING_PATH", str(keyring))
 
     app = FastAPI()
 
     @app.get("/v1/host/private/{item_id}")
     async def private_item(item_id: str, request: Request):
-        return {"ok": True, "principal": request.state.colony_authority.principal_id}
+        return {"ok": True, "principal": request.state.pacomind_authority.principal_id}
 
     app.add_middleware(
         ApiKeyMiddleware,
@@ -134,7 +134,7 @@ async def test_telemetry_distinguishes_legacy_scoped_denials_and_hides_material(
             json={"contact_id": OWNER, "source_ids": ["unknown"]},
         )
         mismatch_headers = _headers()
-        mismatch_headers["X-Colony-Principal"] = "body-claimed-principal"
+        mismatch_headers["X-PacoMind-Principal"] = "body-claimed-principal"
         mismatch = await client.post(
             "/v1/host/memory/search",
             headers=mismatch_headers,
@@ -199,8 +199,8 @@ async def test_only_auth_admin_or_legacy_can_read_migration_status(tmp_path, mon
             scopes=["api:access"],
         ),
     ])
-    monkeypatch.setenv("COLONY_API_KEY", LEGACY_SECRET)
-    monkeypatch.setenv("COLONY_API_KEYRING_PATH", str(keyring))
+    monkeypatch.setenv("PACOMIND_API_KEY", LEGACY_SECRET)
+    monkeypatch.setenv("PACOMIND_API_KEYRING_PATH", str(keyring))
     app = FastAPI()
     app.add_middleware(
         ApiKeyMiddleware,
@@ -261,8 +261,8 @@ async def test_server_resolver_projects_exact_contact_without_body_broadening(
     ):
         monkeypatch.setattr(host, name, None)
 
-    from apsimo.identity import participants
-    from apsimo.identity.participants import Resolution
+    from pacomind.identity import participants
+    from pacomind.identity.participants import Resolution
 
     class _Resolver:
         def __init__(self, _store):
@@ -488,9 +488,9 @@ def test_keyring_person_authority_ids_are_exact_and_bounded(tmp_path):
 
 
 def test_websocket_auth_is_included_in_legacy_migration_evidence(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_API_KEY", LEGACY_SECRET)
-    monkeypatch.delenv("COLONY_API_KEYRING_PATH", raising=False)
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_API_KEY", LEGACY_SECRET)
+    monkeypatch.delenv("PACOMIND_API_KEYRING_PATH", raising=False)
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
     telemetry = AuthTelemetry()
     app = FastAPI()
     app.state.auth_telemetry = telemetry
@@ -513,7 +513,7 @@ def test_websocket_auth_is_included_in_legacy_migration_evidence(tmp_path, monke
 
 
 def test_doctor_reports_auth_migration_evidence(monkeypatch):
-    from apsimo import doctor
+    from pacomind import doctor
 
     healthy = {
         "auth": {"legacy_configured": False, "scoped_configured": True, "dual_accept": False},

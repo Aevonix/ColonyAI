@@ -8,8 +8,8 @@ import threading
 
 import pytest
 
-from apsimo.events.journal import replay_events
-from apsimo.events.stream import EventSubscriberBuffer
+from pacomind.events.journal import replay_events
+from pacomind.events.stream import EventSubscriberBuffer
 
 
 def test_subscriber_buffer_reports_overflow_and_resume_cursor():
@@ -56,9 +56,9 @@ async def test_cross_thread_publication_preserves_sequence_order():
 
 
 def test_host_persists_before_publishing_live_frame(tmp_path, monkeypatch):
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
     observed = []
 
     class _Subscriber:
@@ -91,8 +91,8 @@ def test_host_persists_before_publishing_live_frame(tmp_path, monkeypatch):
 
 
 def test_host_suppresses_live_frame_when_journal_fails(monkeypatch):
-    from apsimo.api.routers import host
-    from apsimo.events import journal
+    from pacomind.api.routers import host
+    from pacomind.events import journal
 
     published = []
 
@@ -117,11 +117,11 @@ def test_host_suppresses_live_frame_when_journal_fails(monkeypatch):
 def test_websocket_reconnect_replays_from_exact_sequence(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
-    monkeypatch.setenv("COLONY_API_KEY", "test-event-key")
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
-    monkeypatch.setenv("COLONY_EVENT_SUBSCRIBER_QUEUE_SIZE", "8")
+    monkeypatch.setenv("PACOMIND_API_KEY", "test-event-key")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_EVENT_SUBSCRIBER_QUEUE_SIZE", "8")
     app = FastAPI()
     app.include_router(host.router)
 
@@ -168,7 +168,7 @@ def test_websocket_accepts_scoped_event_principal_without_legacy_key(
         tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
     keyring = tmp_path / "api-principals.json"
     keyring.write_text(json.dumps({
@@ -187,9 +187,9 @@ def test_websocket_accepts_scoped_event_principal_without_legacy_key(
         }],
     }))
     keyring.chmod(0o600)
-    monkeypatch.delenv("COLONY_API_KEY", raising=False)
-    monkeypatch.setenv("COLONY_API_KEYRING_PATH", str(keyring))
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.delenv("PACOMIND_API_KEY", raising=False)
+    monkeypatch.setenv("PACOMIND_API_KEYRING_PATH", str(keyring))
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
 
     app = FastAPI()
     app.include_router(host.router)
@@ -209,10 +209,10 @@ def test_websocket_accepts_scoped_event_principal_without_legacy_key(
 def test_websocket_cursor_ahead_of_journal_replays_new_epoch(tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
-    from apsimo.api.routers import host
+    from pacomind.api.routers import host
 
-    monkeypatch.setenv("COLONY_API_KEY", "test-event-key")
-    monkeypatch.setenv("COLONY_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
+    monkeypatch.setenv("PACOMIND_API_KEY", "test-event-key")
+    monkeypatch.setenv("PACOMIND_EVENT_JOURNAL_DIR", str(tmp_path / "events"))
     first = host.broadcast_event({"type": "epoch.one", "payload": {"n": 1}})
     second = host.broadcast_event({"type": "epoch.two", "payload": {"n": 2}})
     assert first is not None and second is not None

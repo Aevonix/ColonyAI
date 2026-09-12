@@ -14,7 +14,7 @@ New automatic rules store a reference to the attributed owner source, source ver
 
 Identical active restatements are deduplicated against the first source. Erasing or correcting that source withdraws the rule even if another conversation repeated it. A later new explicit statement can create a new source-bound rule. This repair does not reconstruct provenance for old rows or erase historical logs and backups.
 
-The authorized manual directive API remains explicit operator intent and does not require a standing opener or a conversation source. Its existing revoke API remains the way to retire a manual rule. The standalone “pause autonomy” command keeps its existing meaning. No approval service or additional model call is introduced. The dead optional LLM extraction fallback has been removed. `COLONY_DIRECTIVE_LLM_ASSIST` no longer enables a consumer; automatic standing rules use the deterministic admission described above.
+The authorized manual directive API remains explicit operator intent and does not require a standing opener or a conversation source. Its existing revoke API remains the way to retire a manual rule. The standalone “pause autonomy” command keeps its existing meaning. No approval service or additional model call is introduced. The dead optional LLM extraction fallback has been removed. `PACOMIND_DIRECTIVE_LLM_ASSIST` no longer enables a consumer; automatic standing rules use the deterministic admission described above.
 
 ## Compatibility
 

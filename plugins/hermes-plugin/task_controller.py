@@ -19,7 +19,7 @@ from .task_sources import NativeTaskSources
 
 
 TOOL_SCHEMA = {
-    'name': 'colony_task',
+    'name': 'pacomind_task',
     'description': (
         'Run an accepted task in the background while this conversation continues. '
         'Submit a bounded request; inspect, steer or stop the returned task_id from '
@@ -47,7 +47,7 @@ class NativeTasks:
             raise ValueError('Choose the existing task database or a state path')
         self._database_factory = database
         self.path = None if database is not None else Path(
-            state_path or outbox.path.parent / 'colony-native-tasks.sqlite3').expanduser()
+            state_path or outbox.path.parent / 'pacomind-native-tasks.sqlite3').expanduser()
         if self.path is not None and self.path.resolve() == outbox.path.resolve():
             raise ValueError('Task associations cannot replace the turn outbox schema')
         self.storage = PrivateSQLitePath(self.path) if self.path is not None else None
@@ -116,7 +116,7 @@ class NativeTasks:
                 return await controller.dispatch(payload)
 
         adapter = ConnectedTaskAdapter(config, handoffs=self.handoffs)
-        if adapter.platform.value != 'colony_task':
+        if adapter.platform.value != 'pacomind_task':
             raise ValueError('The shared task adapter must retain its registered platform')
         return adapter
 

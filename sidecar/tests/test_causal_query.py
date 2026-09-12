@@ -7,11 +7,11 @@ from contextlib import asynccontextmanager
 
 import pytest
 
-from apsimo.world_model.causal_query import causal_chain, causal_edges
-from apsimo.world_model.config import WorldModelConfig
-from apsimo.world_model.entities import BaseEntity
-from apsimo.world_model.relationships import WorldRelationship
-from apsimo.world_model.store import WorldModelStore
+from pacomind.world_model.causal_query import causal_chain, causal_edges
+from pacomind.world_model.config import WorldModelConfig
+from pacomind.world_model.entities import BaseEntity
+from pacomind.world_model.relationships import WorldRelationship
+from pacomind.world_model.store import WorldModelStore
 
 
 @asynccontextmanager
@@ -79,7 +79,7 @@ def test_causal_edges_listing():
 
 @pytest.mark.asyncio
 async def test_endpoints_serve_causal_surface(monkeypatch):
-    from apsimo.api.routers import host as host_mod
+    from pacomind.api.routers import host as host_mod
     async with _seeded_store() as s:
         monkeypatch.setattr(host_mod, "_world_store", s)
         chain = await host_mod.world_causal_chain("we-a", direction="downstream")

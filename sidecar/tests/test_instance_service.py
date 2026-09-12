@@ -10,7 +10,7 @@ import subprocess
 import pytest
 import yaml
 
-from apsimo.services.instance import InstanceService, ServiceError
+from pacomind.services.instance import InstanceService, ServiceError
 
 
 class Manager:
@@ -82,7 +82,7 @@ def test_exact_instance_install_start_stop_and_uninstall(service_factory, platfo
         assert installed['installed'] and not installed['running']
         assert service.definition.stat().st_mode & 0o777 == 0o600
         assert service.log.stat().st_mode & 0o777 == 0o600
-        assert b'APSIMO_API_KEY' not in service.definition.read_bytes()
+        assert b'PACOMIND_API_KEY' not in service.definition.read_bytes()
         monkeypatch.setattr(service, 'healthy', lambda: True)
         assert service.start()['ready']
     other_bytes = other.definition.read_bytes()
@@ -185,20 +185,20 @@ def test_occupied_port_is_not_started_or_stopped(service_factory, monkeypatch):
 
 
 def test_selected_instance_and_managed_foreground_use_same_binding(tmp_path, monkeypatch):
-    from apsimo import cli
+    from pacomind import cli
     state, home = tmp_path/'instance', tmp_path/'hermes'
     state.mkdir(); home.mkdir()
     (state/'instance.json').write_text(json.dumps({'version': 1, 'profile': 'local', 'hermes_home': str(home)}))
-    (home/'config.yaml').write_text(yaml.safe_dump({'plugins': {'apsimo': {'instance_dir': str(state)}}}))
-    (state/'.env').write_text(f'APSIMO_STATE_DIR={state}\nAPSIMO_INSTALL_PROFILE=local\nAPSIMO_API_KEY=private-secret\n')
-    monkeypatch.setattr(os, 'environ', {'APSIMO_STATE_DIR': str(state), 'APSIMO_INSTANCE_SELECTED': '1'})
+    (home/'config.yaml').write_text(yaml.safe_dump({'plugins': {'pacomind': {'instance_dir': str(state)}}}))
+    (state/'.env').write_text(f'PACOMIND_STATE_DIR={state}\nPACOMIND_INSTALL_PROFILE=local\nPACOMIND_API_KEY=private-secret\n')
+    monkeypatch.setattr(os, 'environ', {'PACOMIND_STATE_DIR': str(state), 'PACOMIND_INSTANCE_SELECTED': '1'})
     service = InstanceService.selected()
     assert service.hermes_home == home and service.state == state
-    os.environ['APSIMO_INSTANCE_SERVICE'] = service.label
+    os.environ['PACOMIND_INSTANCE_SERVICE'] = service.label
     assert cli._is_service_loaded() is False
     assert b'private-secret' not in service.render()
     (state/'instance.json').unlink()
-    with pytest.raises(ValueError, match='no legacy fallback'):
+    with pytest.raises(ValueError, match='Selected private instance is incomplete'):
         InstanceService.selected()
 
 
@@ -222,19 +222,19 @@ def test_launchd_preserves_venv_and_literal_paths(service_factory):
     make, _ = service_factory
     service = make('space%name$dollar', 'darwin')
     payload = plistlib.loads(service.render())
-    assert payload['ProgramArguments'] == [service.python, '-m', 'apsimo', '--instance', str(service.state), 'start']
+    assert payload['ProgramArguments'] == [service.python, '-m', 'pacomind', '--instance', str(service.state), 'start']
     assert payload['EnvironmentVariables']['HERMES_HOME'] == str(service.hermes_home)
     assert payload['RunAtLoad'] and payload['KeepAlive'] and payload['Umask'] == 0o077
 
 
 @pytest.mark.parametrize('platform', ['linux','darwin'])
-def test_existing_legacy_service_keeps_one_identity_during_environment_upgrade(service_factory, platform):
+def test_existing_service_keeps_its_identity_during_environment_upgrade(service_factory, platform):
     import hashlib
     make, manager = service_factory
     original = make('retained', platform)
     suffix = hashlib.sha256(os.fsencode(original.state)).hexdigest()[:20]
-    label = 'ai.colony.instance.' + suffix
-    name = label+'.plist' if platform=='darwin' else 'colony-'+suffix+'.service'
+    label = 'ai.pacomind.instance.' + suffix
+    name = label+'.plist' if platform=='darwin' else 'pacomind-'+suffix+'.service'
     definition = original.state/'service'/name
     definition.parent.mkdir(parents=True)
     definition.write_bytes(b'original selected environment')
@@ -245,6 +245,6 @@ def test_existing_legacy_service_keeps_one_identity_during_environment_upgrade(s
     assert old.name == name and old.label == label and old.link == link
     old.install()
     assert old.backup.read_bytes() == b'original selected environment'
-    assert not original.link.exists()
-    assert b'apsimo' in definition.read_bytes()
-    assert not any(original.name in call for call in manager.calls)
+    assert original.link.resolve() == definition
+    assert b'pacomind' in definition.read_bytes()
+    assert old.name == original.name

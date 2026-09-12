@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from neo4j import AsyncGraphDatabase
-from apsimo.intelligence.components.initiative_engine import InitiativeEngine, InitiativeConfig
+from pacomind.intelligence.components.initiative_engine import InitiativeEngine, InitiativeConfig
 
 
 class SimpleGraph:
@@ -20,9 +20,9 @@ class SimpleGraph:
 
 
 async def main():
-    uri = os.environ.get("COLONY_NEO4J_URI", "bolt://localhost:7687")
-    user = os.environ.get("COLONY_NEO4J_USER", "neo4j")
-    password = os.environ.get("COLONY_NEO4J_PASSWORD", "password")
+    uri = os.environ.get("PACOMIND_NEO4J_URI", "bolt://localhost:7687")
+    user = os.environ.get("PACOMIND_NEO4J_USER", "neo4j")
+    password = os.environ.get("PACOMIND_NEO4J_PASSWORD", "password")
     driver = AsyncGraphDatabase.driver(uri, auth=(user, password))
     graph = SimpleGraph(driver)
 

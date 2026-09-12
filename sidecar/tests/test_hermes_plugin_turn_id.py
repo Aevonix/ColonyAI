@@ -1,4 +1,4 @@
-"""The canonical Hermes plugin forwards host turn IDs to Colony V2."""
+"""The canonical Hermes plugin forwards host turn IDs to PacoMind V2."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ _CLIENT_PATH = (
 
 
 def _load_client_module():
-    name = "colony_hermes_client_turn_id_test"
+    name = "pacomind_hermes_client_turn_id_test"
     spec = importlib.util.spec_from_file_location(name, _CLIENT_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
@@ -34,7 +34,7 @@ class _Response:
 
 def test_stable_turn_id_uses_v2_put_and_is_url_escaped(monkeypatch):
     module = _load_client_module()
-    client = module.ColonyClient(url="http://sidecar.test")
+    client = module.PacoMindClient(url="http://sidecar.test")
     calls = []
     monkeypatch.setattr(
         client,
@@ -61,7 +61,7 @@ def test_stable_turn_id_uses_v2_put_and_is_url_escaped(monkeypatch):
 
 def test_missing_turn_id_keeps_v1_compatibility_path(monkeypatch):
     module = _load_client_module()
-    client = module.ColonyClient(url="http://sidecar.test")
+    client = module.PacoMindClient(url="http://sidecar.test")
     calls = []
     monkeypatch.setattr(
         client,

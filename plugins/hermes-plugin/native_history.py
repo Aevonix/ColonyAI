@@ -132,7 +132,7 @@ def project(payload, rows, spans, rules, matches):
     if result['mode'] == 'discover':
         result['results'] = [entry for entry in result['results'] if entry.get('match_message_id') not in denied]
         result['count'] = len(result['results'])
-    result['apsimo_native_history_read_v1'] = True
+    result['pacomind_native_history_read_v1'] = True
     result['memory_erasure'] = {'scope':'known_canonical_sources_and_exact_native_turns',
         'omitted_native_rows':len(denied), 'untracked_native_rows':len(untracked),
         'untracked_titles_and_previews':'omitted; open a session for message evidence',

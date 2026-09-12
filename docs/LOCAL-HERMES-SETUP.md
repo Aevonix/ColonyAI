@@ -4,41 +4,41 @@ The current qualification target uses Hermes **0.21.2**
 ([qualification build](HERMES-HOOK-COMPATIBILITY.md)), Python 3.12, and one local
 OpenAI-compatible chat endpoint. Install Hermes separately using its
 [native installation guide](https://hermes-agent.nousresearch.com/docs/getting-started/installation).
-Apsimo does not patch or download Hermes, models, containers or machine services.
+PacoMind does not patch or download Hermes, models, containers or machine services.
 
-Phase 1 is the first supported Apsimo baseline and is still being validated.
+Phase 1 is the first supported PacoMind baseline and is still being validated.
 This guide covers current installations. It does not provide an upgrade path
-from older ColonyAI releases or promise support for their aliases and layouts.
+from older PacoMind releases or promise support for their aliases and layouts.
 
 Install the matching published packages in a private Python environment. This
-path needs no Apsimo checkout or source edits. The environment may be shared
+path needs no PacoMind checkout or source edits. The environment may be shared
 with Hermes, but the commands below keep an existing Hermes installation intact:
 
 ```bash
-python3 -m venv "$HOME/.local/share/apsimo/venv"
-source "$HOME/.local/share/apsimo/venv/bin/activate"
-python -m pip install "apsimo[hermes]==1.4.4" "apsimo-hermes[native-memory]==1.4.4"
-apsimo init --hermes-python /path/to/hermes/.venv/bin/python
+python3.12 -m venv "$HOME/.local/share/pacomind/venv"
+source "$HOME/.local/share/pacomind/venv/bin/activate"
+python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
+pacomind init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
 Use a Python version supported above. Replace the interpreter placeholder with
-the Python from the Hermes runtime you actually run. Keeping both Apsimo
+the Python from the Hermes runtime you actually run. Keeping both PacoMind
 packages at the same version avoids attaching an older adapter to a newer
-sidecar. `apsimo init --help` lists the wizard's optional and unattended flags.
+sidecar. `pacomind init --help` lists the wizard's optional and unattended flags.
 
 A separate Hermes environment needs its own native core dependencies. It does
-not need Apsimo's CLI dependency `typer` or a preinstalled Apsimo adapter; setup
-can attach the private adapter directly from the Apsimo environment.
+not need PacoMind's CLI dependency `typer` or a preinstalled PacoMind adapter; setup
+can attach the private adapter directly from the PacoMind environment.
 
 The wizard asks for your name, optional owner messaging accounts, the agent's name, the model API root and model,
 whether to enable accepted local drafts, whether to enable general native tasks
-(default no), then whether to start Apsimo. An API
+(default no), then whether to start PacoMind. An API
 key is prompted without echo. For unattended
-setup use `COLONY_MODEL_API_KEY` in the process environment, never a command-line
+setup use `PACOMIND_MODEL_API_KEY` in the process environment, never a command-line
 key. A model that requires no key works too. Fresh model configurations use Hermes's `custom` provider with the selected endpoint; existing model configuration is preserved.
 
 ```bash
-apsimo init --non-interactive \
+pacomind init --non-interactive \
   --hermes-python /path/to/hermes/.venv/bin/python \
   --hermes-home "$HOME/.hermes-orion" \
   --agent-name Orion --contact-name Owner \
@@ -49,9 +49,9 @@ apsimo init --non-interactive \
 lists live profiles through the selected Hermes runtime and asks which home to
 attach. Listing reads profile names and paths, not their private configuration.
 Noninteractive setup retains the `~/.hermes` default. Only the selected home's
-configuration is inspected or changed. `--dir` selects private Apsimo state,
-otherwise the selected instance or `APSIMO_STATE_DIR` is used. New instances
-default to `<selected Hermes home>/apsimo`. Both the selected Hermes home and Apsimo
+configuration is inspected or changed. `--dir` selects private PacoMind state,
+otherwise the selected instance or `PACOMIND_STATE_DIR` is used. New instances
+default to `<selected Hermes home>/pacomind`. Both the selected Hermes home and PacoMind
 state must stay outside Git checkouts, including when `--dir` is separate.
 Select that same Hermes home when launching Hermes:
 
@@ -64,7 +64,7 @@ Setup checks native runtime imports/version, canonical adapter resources, the
 selected model with one neutral completion, the free local sidecar port, and
 configuration conflicts before it writes the private instance. `--adapter-wheel`
 can select an already-built canonical wheel instead of an installed
-`apsimo-hermes` distribution. This is also usable from built Apsimo wheels with
+`pacomind-hermes` distribution. This is also usable from built PacoMind wheels with
 no editable source checkout.
 
 The selected model hostname is recorded for runtime routing, and setup checks
@@ -75,23 +75,23 @@ continue to resolve and check that configured host when its address changes.
 ## WhatsApp read receipts for a selected profile
 
 For an existing Hermes home, preview and then apply the supported channel
-preference without initializing an identity, attaching Apsimo, probing a model
+preference without initializing an identity, attaching PacoMind, probing a model
 or restarting a service:
 
 ```bash
-apsimo init --hermes-home "$HOME/.hermes-orion" \
+pacomind init --hermes-home "$HOME/.hermes-orion" \
   --preferences-only --whatsapp-read-receipts on --preview
-apsimo init --hermes-home "$HOME/.hermes-orion" \
+pacomind init --hermes-home "$HOME/.hermes-orion" \
   --preferences-only --whatsapp-read-receipts on
 ```
 
 Use `off` to disable receipts. Omitting the option preserves the existing
 setting. Preference-only mode requires an existing `config.yaml` and rejects
-instance/setup options. It does not require an Apsimo instance manifest.
+instance/setup options. It does not require an PacoMind instance manifest.
 `--hermes-home`, then `HERMES_HOME`, then `~/.hermes` selects the profile in this
 mode. The preview lists changed setting paths without displaying other config
 values. Applying uses the existing atomic writer and retains the exact previous
-config in a private `.config.yaml.colony-backup-*` file; repeating an unchanged
+config in a private `.config.yaml.pacomind-backup-*` file; repeating an unchanged
 choice adds no backup.
 
 The preference is qualified against the current qualification build. It writes
@@ -132,10 +132,10 @@ also get that model in native Hermes config. An existing Hermes model is kept.
 
 Accepted local drafts are optional. With `--local-work`, setup checks function
 calling and creates a named `planning` role bound to the selected local model.
-It creates a native `colony-drafts` board and constrained worker profile.
+It creates a native `pacomind-drafts` board and constrained worker profile.
 The selected Hermes gateway dispatcher must be running.
 The board remains idle until the owner accepts a specific question and local text
-sources through `colony_accept_local_draft`. No existing commitment is required;
+sources through `pacomind_accept_local_draft`. No existing commitment is required;
 an optional commitment ID associates the draft with a broader obligation.
 
 The worker reads those sources, produces a cited draft and retains its execution
@@ -147,7 +147,7 @@ two environments need no shared dependencies. See
 [accepted local work](ACCEPTED-LOCAL-WORK.md) for limits and cancellation.
 If native registration fails after attachment, rerun the same command with
 `--local-work`. It resumes the prepared profile using the retained planning
-role, identity and credentials. Restart an already-running Apsimo instance and
+role, identity and credentials. Restart an already-running PacoMind instance and
 Hermes gateway to load the new binding.
 
 Graph/vector retrieval, embedding downloads and consequential background workers
@@ -165,7 +165,7 @@ native `goal_mode` continuation. It works on a new attachment or an existing
 private instance:
 
 ```sh
-apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --native-goals
+pacomind init --non-interactive --hermes-home "$HOME/.hermes-orion" --native-goals
 ```
 
 For a fresh attachment, also supply the interpreter, identity and model options
@@ -177,17 +177,17 @@ Setup adds `kanban` to the existing profile's global toolsets and CLI selection,
 preserving other selections, identity, model and authority configuration. Hermes
 gates Kanban globally: enabling it can expose task tools to authorized turns on
 other channels of the same profile even when those channels have saved tool
-lists. Guest authority remains constrained by the existing Apsimo middleware.
+lists. Guest authority remains constrained by the existing PacoMind middleware.
 This is not blanket consent for consequential external actions.
 
 The agent can use native `kanban_create` with the existing profile as `assignee`,
 `goal_mode: true` and a chosen `goal_max_turns`. Setup prints that profile name
 and selects the current native board plus the exact accepted-draft board, when
-installed. An existing explicit `COLONY_HERMES_WORK_BOARDS` list is retained;
+installed. An existing explicit `PACOMIND_HERMES_WORK_BOARDS` list is retained;
 other boards remain outside the observation view. No board is enumerated or
 created by this opt-in, and no new worker profile or executor is added.
 
-The selected Hermes gateway must be running to dispatch tasks. Apsimo does not
+The selected Hermes gateway must be running to dispatch tasks. PacoMind does not
 start or restart it. For a new profile, run it in a separate terminal using the
 same interpreter selected during setup:
 
@@ -221,7 +221,7 @@ The server has no global legacy bearer key. The native local CLI is explicitly
 bound to the owner. During creation you can also enroll your messaging accounts:
 
 ```bash
-apsimo init --hermes-python /path/to/hermes/.venv/bin/python \
+pacomind init --hermes-python /path/to/hermes/.venv/bin/python \
   --hermes-home "$HOME/.hermes-orion" \
   --owner-handle telegram=123456789
 ```
@@ -238,9 +238,9 @@ RCS handles share SMS storage, while transport admission remains explicit.
 
 Hermes still owns channel credentials, sender admission and delivery. Enrollment
 does not enable a channel, alter its allowlist, send a message or connect a device.
-It is available when creating an Apsimo instance, including attaching to an
+It is available when creating an PacoMind instance, including attaching to an
 existing Hermes home. Rerunning setup preserves identity and credentials;
-passing enrollment flags to an existing Apsimo instance returns an explicit error
+passing enrollment flags to an existing PacoMind instance returns an explicit error
 instead of silently changing its owner. Other people and hardware require their
 authenticated transport integration and scoped grants.
 Native owner tools remain available; consequential effects remain subject to
@@ -248,7 +248,7 @@ the existing application consent rules. Public guest context needs the existing
 scoped projection contract and is not enabled by this local profile.
 
 Canonical adapter bytes are retained in private state. If the selected Hermes
-interpreter already has both native Apsimo entry points, setup verifies their
+interpreter already has both native PacoMind entry points, setup verifies their
 package bytes against the selected artifact and uses that installed package.
 It records the loading mode, package version and source paths in `instance.json`.
 A different or incomplete installed adapter is rejected before attachment;
@@ -261,31 +261,31 @@ Other profiles and running Hermes sessions are not restarted or modified by
 attachment. Start a new Hermes session afterward.
 
 For a new home, `SOUL.md` contains the chosen identity. An existing SOUL, channels,
-model and unrelated settings are retained. An incumbent non-Apsimo memory
+model and unrelated settings are retained. An incumbent non-PacoMind memory
 provider requires an explicit wizard choice or `--replace-memory-provider`;
-its data is retained. An existing Apsimo directory adapter or native JSON config
+its data is retained. An existing PacoMind directory adapter or native JSON config
 requires an explicit upgrade rather than being silently replaced.
 
 ## Update an existing attachment
 
-This procedure updates a current Apsimo attachment. It is not a ColonyAI
+This procedure updates a current PacoMind attachment. It is not a PacoMind
 migration or a guarantee that arbitrary old databases can be downgraded.
 
 Stop the selected Hermes gateway and its workers using their existing host
-lifecycle, then stop this Apsimo instance (`apsimo --instance /private/path stop`,
+lifecycle, then stop this PacoMind instance (`pacomind --instance /private/path stop`,
 or `service stop` for a managed instance). Complete or cancel in-flight work
 through Hermes before stopping it. Keep the private instance and Hermes home.
 
-Update both Apsimo distributions in the environment that runs Apsimo, selecting
+Update both PacoMind distributions in the environment that runs PacoMind, selecting
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "apsimo[hermes]==1.4.4" "apsimo-hermes[native-memory]==1.4.4"
-apsimo init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
+python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
+pacomind init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
-Replace the example versions with the release you are selecting. A Hermes interpreter with
-native installed Apsimo entry points also needs that adapter package updated explicitly in its
+For a pinned deployment, select the same published release for both packages.
+A Hermes interpreter with installed PacoMind entry points also needs that adapter updated in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
 it does not copy a second active adapter or install packages itself.
@@ -300,20 +300,20 @@ worker manifests, and retains the previous directory as `adapter-previous-*`.
 It retains identity, credentials, config, model roles, databases, native boards
 and worker configuration. Local changes to managed adapter files are reported
 before replacement. Repeating the same refresh leaves matching bytes unchanged.
-The instance records the Apsimo environment running this command; supply
+The instance records the PacoMind environment running this command; supply
 `--hermes-python` only when deliberately selecting another supported native
 interpreter. No model probe, service restart or new consent process runs here.
-If the Apsimo interpreter moved and this instance uses a user service, run the
+If the PacoMind interpreter moved and this instance uses a user service, run the
 existing `service install` command from the new environment while the service
 is stopped, then `service start`. Refresh preserves the old service definition;
 updating the instance manifest alone does not move the service interpreter.
 
-Start Apsimo and Hermes through their existing lifecycle, then check `status`
+Start PacoMind and Hermes through their existing lifecycle, then check `status`
 and `doctor` and recall a harmless fact from a new session. A package version
 alone is not evidence that the attached code or retained memory works. On an
 ordinary write failure refresh restores the files it changed. If the process
 itself is interrupted, keep both runtimes stopped and restore the retained
-adapter directory and corresponding `.colony-backup-*` manifest files before
+adapter directory and corresponding `.pacomind-backup-*` manifest files before
 retrying. Database downgrade or rollback is outside this code-only refresh.
 
 ## Develop from a checkout
@@ -323,8 +323,8 @@ root in your development environment:
 
 ```bash
 python -m pip install . ./sidecar
-apsimo init --hermes-python /path/to/hermes/.venv/bin/python \
-  --hermes-home "$HOME/.hermes-apsimo-dev"
+pacomind init --hermes-python /path/to/hermes/.venv/bin/python \
+  --hermes-home "$HOME/.hermes-pacomind-dev"
 ```
 
 Keep generated profiles and private state outside the checkout. After changing
@@ -335,14 +335,14 @@ adapter. Source development is optional for a normal published installation.
 ## Start, observe and recover
 
 ```bash
-apsimo --instance "$HOME/.hermes-orion/apsimo" start --detach
-apsimo --instance "$HOME/.hermes-orion/apsimo" status
-apsimo --instance "$HOME/.hermes-orion/apsimo" doctor
-apsimo --instance "$HOME/.hermes-orion/apsimo" stop
+pacomind --instance "$HOME/.hermes-orion/pacomind" start --detach
+pacomind --instance "$HOME/.hermes-orion/pacomind" status
+pacomind --instance "$HOME/.hermes-orion/pacomind" doctor
+pacomind --instance "$HOME/.hermes-orion/pacomind" stop
 ```
 
 With the selected `HERMES_HOME`, start/status/stop also discover the instance
-from `plugins.colony.instance_dir`. They never fall back to another instance's
+from `plugins.pacomind.instance_dir`. They never fall back to another instance's
 `.env`. The private instance's `.env` governs startup; edit that file for lasting
 changes. Its `sidecar.log` and process record belong to that instance. A busy port
 is not permission to stop its occupant. Stop checks the recorded process's
@@ -361,11 +361,11 @@ it; `service start` waits for both the manager's process and authenticated HTTP
 health before reporting readiness.
 
 ```sh
-apsimo --instance /private/path service install
-apsimo --instance /private/path service start
-apsimo --instance /private/path service status
-apsimo --instance /private/path service stop
-apsimo --instance /private/path service uninstall
+pacomind --instance /private/path service install
+pacomind --instance /private/path service start
+pacomind --instance /private/path service status
+pacomind --instance /private/path service stop
+pacomind --instance /private/path service uninstall
 ```
 
 Linux uses `systemctl --user`; macOS uses a LaunchAgent in the logged-in user's
@@ -397,9 +397,9 @@ two disposable instances through the installed CLI and actual native manager.
 It checks HTTP turn capture and later recall, kills only one newly created
 service PID to verify manager recovery, verifies the second instance stays up,
 and uninstalls both registrations while retaining their private data. Normal
-unit runs skip this test. Set `COLONY_TEST_USER_SERVICE=1`,
-`COLONY_TEST_SERVICE_PYTHON` to the installed Apsimo interpreter, and
-`COLONY_TEST_HERMES_PYTHON` to a supported Hermes interpreter to run it explicitly.
+unit runs skip this test. Set `PACOMIND_TEST_USER_SERVICE=1`,
+`PACOMIND_TEST_SERVICE_PYTHON` to the installed PacoMind interpreter, and
+`PACOMIND_TEST_HERMES_PYTHON` to a supported Hermes interpreter to run it explicitly.
 It uses a loopback model fixture; this is process/persistence evidence, not a
 model-quality or actual reboot test.
 
@@ -421,10 +421,10 @@ retains it; it is not an upgrade command.
 
 To undo an attachment, stop this instance and Hermes, restore the original
 `config.yaml` and `.env` from `hermes-original` (remove only wizard-created files
-when no original existed), and remove the selected `plugins/apsimo` and `plugins/apsimo-memory`
-adapters only if this setup created them in private-directory mode. Keep the private Apsimo
+when no original existed), and remove the selected `plugins/pacomind` and `plugins/pacomind-memory`
+adapters only if this setup created them in private-directory mode. Keep the private PacoMind
 state and Hermes transcripts. No database rollback is part of installation or
 recovery. Compare files before restoring if you have edited them since setup.
 
 Private identity comes from the guided setup and the agent's retained experience.
-The obsolete `apsimo seed` command and `/v1/host/seed` endpoint have been removed.
+The obsolete `pacomind seed` command and `/v1/host/seed` endpoint have been removed.

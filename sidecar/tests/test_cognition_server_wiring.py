@@ -4,8 +4,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.server import _attach_cognition_spine
-from apsimo.chain.node import get_or_create_node_id
+from pacomind.server import _attach_cognition_spine
+from pacomind.chain.node import get_or_create_node_id
 
 
 class _ProjectStore:
@@ -41,21 +41,21 @@ def _dependencies(*, planning=0, active=0):
 
 
 def test_default_off_does_not_create_database(tmp_path, monkeypatch):
-    monkeypatch.delenv("COLONY_COGNITION_SPINE", raising=False)
+    monkeypatch.delenv("PACOMIND_COGNITION_SPINE", raising=False)
     deps = _dependencies()
 
     result = _attach_cognition_spine(state_dir=tmp_path, **deps)
 
     assert result is None
     assert deps["workspace"].cognition_spine is None
-    assert not (tmp_path / "colony-cognition.db").exists()
+    assert not (tmp_path / "pacomind-cognition.db").exists()
 
 
 def test_enabled_spine_attaches_with_fixed_policy_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_PROJECTS_MAX_CONCURRENT", "2")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MAX_CONCURRENT", "2")
     monkeypatch.setenv(
-        "COLONY_COGNITION_AVAILABLE_CAPABILITIES",
+        "PACOMIND_COGNITION_AVAILABLE_CAPABILITIES",
         "reasoning,memory:read,web:read",
     )
     deps = _dependencies(planning=1)
@@ -64,7 +64,7 @@ def test_enabled_spine_attaches_with_fixed_policy_config(tmp_path, monkeypatch):
 
     assert spine is deps["workspace"].cognition_spine
     assert spine._enforce_runtime_contract is True
-    assert (tmp_path / "colony-cognition.db").exists()
+    assert (tmp_path / "pacomind-cognition.db").exists()
     assert spine._available_capabilities == {
         "reasoning", "memory:read", "web:read",
     }
@@ -89,30 +89,30 @@ def test_enabled_spine_attaches_with_fixed_policy_config(tmp_path, monkeypatch):
 def test_live_spine_rejects_non_live_project_engine(
     tmp_path, monkeypatch, projects_mode,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", projects_mode)
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", projects_mode)
 
     with pytest.raises(RuntimeError, match="ProjectEngine live mode"):
         _attach_cognition_spine(state_dir=tmp_path, **_dependencies())
 
-    assert not (tmp_path / "colony-cognition.db").exists()
+    assert not (tmp_path / "pacomind-cognition.db").exists()
 
 
 def test_live_spine_rejects_missing_work_order_adapter(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     deps = _dependencies()
     deps["project_engine"]._work_orders = None
 
     with pytest.raises(RuntimeError, match="WorkOrder adapter"):
         _attach_cognition_spine(state_dir=tmp_path, **deps)
 
-    assert not (tmp_path / "colony-cognition.db").exists()
+    assert not (tmp_path / "pacomind-cognition.db").exists()
 
 
 def test_live_spine_rejects_unreadable_directives(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     deps = _dependencies()
 
     def _failed_check(_action):
@@ -123,7 +123,7 @@ def test_live_spine_rejects_unreadable_directives(tmp_path, monkeypatch):
     with pytest.raises(RuntimeError, match="DirectiveGuard"):
         _attach_cognition_spine(state_dir=tmp_path, **deps)
 
-    assert not (tmp_path / "colony-cognition.db").exists()
+    assert not (tmp_path / "pacomind-cognition.db").exists()
 
 
 @pytest.mark.parametrize(
@@ -135,38 +135,38 @@ def test_live_spine_rejects_unreadable_directives(tmp_path, monkeypatch):
 def test_enabled_spine_rejects_partial_attachment(
     tmp_path, monkeypatch, missing,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     deps = _dependencies()
     deps[missing] = None
 
     with pytest.raises(RuntimeError, match=missing):
         _attach_cognition_spine(state_dir=tmp_path, **deps)
 
-    assert not (tmp_path / "colony-cognition.db").exists()
+    assert not (tmp_path / "pacomind-cognition.db").exists()
 
 
 @pytest.mark.parametrize("value", ["zero", "0", "101", "-1"])
 def test_enabled_spine_rejects_invalid_project_limit(
     tmp_path, monkeypatch, value,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "shadow")
-    monkeypatch.setenv("COLONY_PROJECTS_MAX_CONCURRENT", value)
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "shadow")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MAX_CONCURRENT", value)
 
-    with pytest.raises(RuntimeError, match="COLONY_PROJECTS_MAX_CONCURRENT"):
+    with pytest.raises(RuntimeError, match="PACOMIND_PROJECTS_MAX_CONCURRENT"):
         _attach_cognition_spine(state_dir=tmp_path, **_dependencies())
 
-    assert not (tmp_path / "colony-cognition.db").exists()
+    assert not (tmp_path / "pacomind-cognition.db").exists()
 
 
 def _configure_thought_owner(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     owner = get_or_create_node_id(tmp_path)
-    monkeypatch.setenv("COLONY_THOUGHT_WORKER_NODE_ID", owner)
+    monkeypatch.setenv("PACOMIND_THOUGHT_WORKER_NODE_ID", owner)
     return owner
 
 
 def test_live_spine_rejects_missing_router(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     _configure_thought_owner(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError, match="LLM router"):
         _attach_cognition_spine(
@@ -178,7 +178,7 @@ def test_live_spine_rejects_missing_router(tmp_path, monkeypatch):
 
 
 def test_live_spine_rejects_disabled_thought_handler(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     _configure_thought_owner(tmp_path, monkeypatch)
     with pytest.raises(RuntimeError, match="embedded strict ThoughtJobV1"):
         _attach_cognition_spine(
@@ -193,13 +193,13 @@ def test_live_spine_rejects_disabled_thought_handler(tmp_path, monkeypatch):
 def test_live_spine_rejects_missing_or_wrong_thought_owner(
     tmp_path, monkeypatch, configured,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     if configured:
-        monkeypatch.setenv("COLONY_THOUGHT_WORKER_NODE_ID", configured)
+        monkeypatch.setenv("PACOMIND_THOUGHT_WORKER_NODE_ID", configured)
     else:
-        monkeypatch.delenv("COLONY_THOUGHT_WORKER_NODE_ID", raising=False)
-    with pytest.raises(RuntimeError, match="COLONY_THOUGHT_WORKER_NODE_ID"):
+        monkeypatch.delenv("PACOMIND_THOUGHT_WORKER_NODE_ID", raising=False)
+    with pytest.raises(RuntimeError, match="PACOMIND_THOUGHT_WORKER_NODE_ID"):
         _attach_cognition_spine(
             state_dir=tmp_path,
             llm_router=object(),
@@ -211,7 +211,7 @@ def test_live_spine_rejects_missing_or_wrong_thought_owner(
 def test_live_spine_attaches_with_matching_production_thought_owner(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_COGNITION_SPINE", "live")
+    monkeypatch.setenv("PACOMIND_COGNITION_SPINE", "live")
     _configure_thought_owner(tmp_path, monkeypatch)
     deps = _dependencies()
     spine = _attach_cognition_spine(

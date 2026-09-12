@@ -6,11 +6,11 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apsimo.world_model.config import WorldModelConfig
-from apsimo.world_model.entities import PersonEntity
-from apsimo.world_model.relationships import WorldRelationship
-from apsimo.world_model.sqlite.backend import SQLiteBackend
-from apsimo.world_model.store import WorldModelStore
+from pacomind.world_model.config import WorldModelConfig
+from pacomind.world_model.entities import PersonEntity
+from pacomind.world_model.relationships import WorldRelationship
+from pacomind.world_model.sqlite.backend import SQLiteBackend
+from pacomind.world_model.store import WorldModelStore
 
 
 def _iso(days_ago: float) -> str:

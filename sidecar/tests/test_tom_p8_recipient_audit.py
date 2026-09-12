@@ -11,21 +11,21 @@ import sqlite3
 
 import pytest
 
-from apsimo.tom import recipient_audit
-from apsimo.tom.recipient_audit import (
+from pacomind.tom import recipient_audit
+from pacomind.tom.recipient_audit import (
     RecipientAuditConflictError,
     RecipientSimulationAuditStore,
     evaluation_event_from_result,
     open_recipient_simulation_audit_store,
     sample_event,
 )
-from apsimo.tom.recipient_simulator import (
+from pacomind.tom.recipient_simulator import (
     RecipientSimulationRequestV1,
     RecipientSimulationResultV1,
     RepairSuggestionV1,
     SimulationRiskV1,
 )
-from apsimo.tom.visibility import ViewerContextV1, content_digest
+from pacomind.tom.visibility import ViewerContextV1, content_digest
 
 
 NOW = datetime(2026, 7, 12, 12, 0, tzinfo=timezone.utc)
@@ -147,7 +147,7 @@ def _evaluation(
 
 def test_off_factory_creates_no_directory_or_database(tmp_path, monkeypatch):
     path = tmp_path / "nested" / "recipient-audit.db"
-    monkeypatch.delenv("COLONY_RECIPIENT_SIMULATOR_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_RECIPIENT_SIMULATOR_MODE", raising=False)
     assert open_recipient_simulation_audit_store(path) is None
     assert not path.exists()
     assert not path.parent.exists()

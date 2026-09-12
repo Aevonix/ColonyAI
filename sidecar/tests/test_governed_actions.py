@@ -1,4 +1,4 @@
-"""Exact, durable boundary for owner-authorized Colony actions.
+"""Exact, durable boundary for owner-authorized PacoMind actions.
 
 The transport body is intentionally not an identity surface.  These tests
 pin the dedicated scoped principal, the immutable execution request, and the
@@ -19,23 +19,23 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.authority import (
+from pacomind.api.authority import (
     KeyringError,
     RequestAuthority,
     load_keyring,
     required_scope,
 )
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import governed_actions as action_router
-from apsimo.governed_actions import (
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import governed_actions as action_router
+from pacomind.governed_actions import (
     ACTION_TOOL_NAMES,
-    ColonySubsystemActionExecutor,
+    PacoMindSubsystemActionExecutor,
     GovernedActionLedger,
     GovernedActionService,
     canonical_json,
     sha256_json,
 )
-import apsimo.governed_actions as governed_actions_module
+import pacomind.governed_actions as governed_actions_module
 
 
 NOW = 1_900_000_000.0
@@ -66,44 +66,44 @@ def _authority(
 
 def _args(tool: str) -> dict:
     return {
-        "colony_autonomy_disable": {},
-        "colony_autonomy_enable": {},
-        "colony_create_commitment": {
+        "pacomind_autonomy_disable": {},
+        "pacomind_autonomy_enable": {},
+        "pacomind_create_commitment": {
             "description": "Send the report",
             "due_at": "2030-03-01T12:00:00+00:00",
             "priority": 80,
         },
-        "colony_initiative_feedback": {
+        "pacomind_initiative_feedback": {
             "initiative_id": "initiative-1",
             "action": "actioned",
             "details": {"source": "deck"},
         },
-        "colony_record_insight": {
+        "pacomind_record_insight": {
             "content": "Prefers concise status updates",
             "insight_type": "preference",
             "confidence": 0.8,
         },
-        "colony_research": {"topic": "bounded agent execution", "depth": "quick"},
-        "colony_resolve_commitment": {
+        "pacomind_research": {"topic": "bounded agent execution", "depth": "quick"},
+        "pacomind_resolve_commitment": {
             "commitment_id": "commitment-1",
             "outcome": "done",
             "reason": "Delivered",
         },
-        "colony_task_complete": {"task_id": "task-1"},
-        "colony_task_dismiss": {"task_id": "task-1", "reason": "stale"},
-        "colony_task_snooze": {"task_id": "task-1", "hours": 24, "reason": "Later"},
+        "pacomind_task_complete": {"task_id": "task-1"},
+        "pacomind_task_dismiss": {"task_id": "task-1", "reason": "stale"},
+        "pacomind_task_snooze": {"task_id": "task-1", "hours": 24, "reason": "Later"},
     }[tool]
 
 
 def _request(
     *,
-    tool: str = "colony_task_complete",
+    tool: str = "pacomind_task_complete",
     args: dict | None = None,
     action_id: str = "123e4567-e89b-42d3-a456-426614174000",
 ) -> dict:
     args = _args(tool) if args is None else args
     approval = {
-        "schema": "ColonyOwnerApprovalExecutionBindingV1",
+        "schema": "PacoMindOwnerApprovalExecutionBindingV1",
         "version": 1,
         "approval_id": "APR-OWNER0000001",
         "decision_id": "DEC-OWNER-0001",
@@ -113,7 +113,7 @@ def _request(
         "expires_at": NOW + 120,
     }
     unsigned = {
-        "schema": "ColonyGovernedActionExecutionV1",
+        "schema": "PacoMindGovernedActionExecutionV1",
         "version": 1,
         "action_id": action_id,
         "action_digest": "b" * 64,
@@ -151,7 +151,7 @@ class FakeExecutor:
             or "autonomy"
         )
         return {
-            "schema": "ColonyGovernedActionEffectV1",
+            "schema": "PacoMindGovernedActionEffectV1",
             "version": 1,
             "effect_id": target,
             "outcome": "completed",
@@ -182,7 +182,7 @@ async def test_exact_request_executes_once_and_replay_is_byte_stable(tmp_path):
     observed = await service.observe(body["action_id"], _authority())
 
     assert first == replay == observed
-    assert first["schema"] == "ColonyGovernedActionExecutionResultV1"
+    assert first["schema"] == "PacoMindGovernedActionExecutionResultV1"
     assert first["status"] == "completed"
     assert first["effect_state"] == "performed"
     assert first["effect_digest"] == sha256_json(first["effect"])
@@ -308,7 +308,7 @@ async def test_invalid_effect_projection_is_ambiguous_after_single_dispatch(tmp_
         async def perform(self, request, owner_person_id):
             self.perform_calls.append((request, owner_person_id))
             return {
-                "schema": "ColonyGovernedActionEffectV1",
+                "schema": "PacoMindGovernedActionEffectV1",
                 "version": 1,
                 "effect_id": "task-1",
                 "outcome": "completed",
@@ -488,17 +488,17 @@ async def test_deep_huge_and_nonfinite_documents_fail_before_ledger(tmp_path):
 @pytest.mark.parametrize(
     ("tool", "args"),
     (
-        ("colony_task_complete", {"task_id": "task@other"}),
+        ("pacomind_task_complete", {"task_id": "task@other"}),
         (
-            "colony_resolve_commitment",
+            "pacomind_resolve_commitment",
             {"commitment_id": "commitment@other"},
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             {"initiative_id": "initiative@other", "action": "actioned"},
         ),
         (
-            "colony_initiative_feedback",
+            "pacomind_initiative_feedback",
             {
                 "initiative_id": "initiative-1",
                 "action": "actioned",
@@ -666,7 +666,7 @@ async def test_http_boundary_enforces_dedicated_keyring_role(tmp_path):
     body = _request()
     headers = {
         "Authorization": "Bearer dedicated-governed-action-secret",
-        "X-Colony-Principal": "host-action-worker",
+        "X-PacoMind-Principal": "host-action-worker",
     }
     async with AsyncClient(
         transport=ASGITransport(app=app), base_url="http://test"
@@ -729,7 +729,7 @@ async def test_http_boundary_rejects_declared_and_chunked_oversize_before_execut
     path = "/v1/host/actions/" + body["action_id"]
     headers = {
         "Authorization": "Bearer dedicated-governed-action-secret",
-        "X-Colony-Principal": "host-action-worker",
+        "X-PacoMind-Principal": "host-action-worker",
         "Content-Type": "application/json",
     }
 
@@ -843,7 +843,7 @@ async def test_generic_subsystem_adapter_maps_every_action_without_context_forwa
     async def disable():
         running["value"] = False
 
-    executor = ColonySubsystemActionExecutor(
+    executor = PacoMindSubsystemActionExecutor(
         graph=_Graph(),
         goals=_Goals(),
         commitments=_Commitments(),
@@ -866,10 +866,10 @@ async def test_generic_subsystem_adapter_maps_every_action_without_context_forwa
 
 
 @pytest.mark.asyncio
-async def test_record_insight_matches_live_colony_graph_contract(monkeypatch):
+async def test_record_insight_matches_live_pacomind_graph_contract(monkeypatch):
     import inspect
 
-    from apsimo.intelligence.graph.client import ColonyGraph
+    from pacomind.intelligence.graph.client import PacoMindGraph
 
     writes = []
 
@@ -882,24 +882,24 @@ async def test_record_insight_matches_live_colony_graph_contract(monkeypatch):
         "person_id",
         "source_type",
         "content_hash",
-    } <= set(inspect.signature(ColonyGraph.store_memory).parameters)
+    } <= set(inspect.signature(PacoMindGraph.store_memory).parameters)
 
     async def store_memory(_self, **kwargs):
         writes.append(kwargs)
         return "insight-live-1"
 
-    monkeypatch.setattr(ColonyGraph, "store_memory", store_memory)
-    graph = object.__new__(ColonyGraph)
-    executor = ColonySubsystemActionExecutor(graph=graph)
-    args = _args("colony_record_insight")
-    request = _request(tool="colony_record_insight", args=args)
+    monkeypatch.setattr(PacoMindGraph, "store_memory", store_memory)
+    graph = object.__new__(PacoMindGraph)
+    executor = PacoMindSubsystemActionExecutor(graph=graph)
+    args = _args("pacomind_record_insight")
+    request = _request(tool="pacomind_record_insight", args=args)
 
     await executor.prepare(request, OWNER)
     effect = await executor.perform(request, OWNER)
 
     assert effect["effect_id"] == "insight-live-1"
     expected_content_hash = sha256_json({
-        "schema": "ColonyGovernedInsightIdentityV1",
+        "schema": "PacoMindGovernedInsightIdentityV1",
         "version": 1,
         "person_id": OWNER,
         "insight_type": args["insight_type"],
@@ -925,7 +925,7 @@ async def test_record_insight_matches_live_colony_graph_contract(monkeypatch):
     await executor.perform(request, other_owner)
     assert writes[-1]["person_id"] == other_owner
     assert writes[-1]["content_hash"] == sha256_json({
-        "schema": "ColonyGovernedInsightIdentityV1",
+        "schema": "PacoMindGovernedInsightIdentityV1",
         "version": 1,
         "person_id": other_owner,
         "insight_type": args["insight_type"],
@@ -937,10 +937,10 @@ async def test_record_insight_matches_live_colony_graph_contract(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_record_insight_contract_drift_fails_during_read_only_prepare():
-    executor = ColonySubsystemActionExecutor(graph=object())
+    executor = PacoMindSubsystemActionExecutor(graph=object())
     with pytest.raises(RuntimeError, match="insight writer"):
         await executor.prepare(
-            _request(tool="colony_record_insight"),
+            _request(tool="pacomind_record_insight"),
             OWNER,
         )
 

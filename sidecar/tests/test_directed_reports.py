@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import asyncio
 
-from apsimo.directed import DirectedActionService, ScopedTaskStore
-from apsimo.directed.service import report_token_for
-from apsimo.self_model import (
+from pacomind.directed import DirectedActionService, ScopedTaskStore
+from pacomind.directed.service import report_token_for
+from pacomind.self_model import (
     ActionJournal, CompetenceStore, SelfModel, TrustEngine,
 )
 
@@ -68,7 +68,7 @@ def test_strict_accepts_dispatched_and_rejects_double_report():
 
 
 def test_dry_echo_records_no_trust_outcome(monkeypatch):
-    monkeypatch.setenv("COLONY_DIRECTED_MODE", "dry_run")
+    monkeypatch.setenv("PACOMIND_DIRECTED_MODE", "dry_run")
     sm = _self_model()
     svc = _service(sm)
 
@@ -82,7 +82,7 @@ def test_dry_echo_records_no_trust_outcome(monkeypatch):
 
 
 def test_strict_verifies_report_token_when_key_set(monkeypatch):
-    monkeypatch.setenv("COLONY_DIRECTED_HMAC_KEY", "test-secret")
+    monkeypatch.setenv("PACOMIND_DIRECTED_HMAC_KEY", "test-secret")
     svc = _service()
 
     async def run():
@@ -98,7 +98,7 @@ def test_strict_verifies_report_token_when_key_set(monkeypatch):
 
 def test_legacy_flag_off_accepts_any_status(monkeypatch):
     """Flag-off regression lock: =0 restores accept-in-any-status."""
-    monkeypatch.setenv("COLONY_DIRECTED_STRICT_REPORTS", "0")
+    monkeypatch.setenv("PACOMIND_DIRECTED_STRICT_REPORTS", "0")
     sm = _self_model()
     svc = _service(sm)
 

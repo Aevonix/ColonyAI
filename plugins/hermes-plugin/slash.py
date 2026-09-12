@@ -1,4 +1,4 @@
-"""Fail-closed slash surface for the governed Colony plugin.
+"""Fail-closed slash surface for the governed PacoMind plugin.
 
 Hermes slash callbacks do not carry the transport/tool-call attestation needed
 to construct a ``HermesToolActionIntentV1``.  They remain registered as explicit
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 
 _DISABLED = (
-    "Disabled: use the governed colony_* tools in an attested turn or the "
+    "Disabled: use the governed pacomind_* tools in an attested turn or the "
     "Operator Deck action plane."
 )
 

@@ -1,0 +1,206 @@
+"""Directive / boundary data model.
+
+A Directive is a durable standing instruction from the owner, captured from
+conversation or set explicitly. It has a polarity:
+
+* PROHIBIT -- "don't / avoid / ignore / stop / leave alone X". A binding
+  boundary: autonomous actions that match it are REFUSED.
+* REQUIRE  -- "always / make sure to / from now on do X". A standing
+  obligation surfaced to the reasoner and the initiative layer.
+* PREFER   -- a soft preference (context only, never blocks).
+
+Directives are deployment-agnostic: the subject text and match terms come
+from the owner's own words / config, never hardcoded here.
+"""
+
+from __future__ import annotations
+
+import re
+import json
+import time
+import uuid
+from dataclasses import dataclass, field
+from enum import Enum
+from typing import Any, Dict, List, Optional
+
+
+class Polarity(str, Enum):
+    PROHIBIT = "prohibit"
+    REQUIRE = "require"
+    PREFER = "prefer"
+
+
+# Marker term for the one-command global pause (Amendment 1.5). A PROHIBIT
+# directive carrying this term refuses EVERY act-capability action while
+# active. It never matches by keyword (leading underscores keep it out of
+# normalize_terms output), so only the explicit kill switch can set it.
+GLOBAL_PAUSE_TERM = "__all_autonomy__"
+
+
+class Level(str, Enum):
+    """How deep a PROHIBIT boundary cuts.
+
+    Boundaries bind ACTION, not judgment or perception, except when the
+    boundary is explicitly about perception (privacy). Ignorance-based safety
+    is brittle: perception and learning stay maximally broad while action is
+    gated.
+
+    ACT (default): blocks mutations, delegated tasks, and autonomous outbound
+        actions about the subject. Reads, awareness, reflection, and answering
+        the owner's direct questions remain OPEN.
+    OBSERVE: full blackout -- blocks reads/perception too. Chosen only when
+        the owner uses explicit perception language ("don't look at / don't
+        read / stay out of / don't monitor").
+    """
+    ACT = "act"
+    OBSERVE = "observe"
+
+
+def default_level() -> "Level":
+    """Config knob: what an unqualified prohibition means (default act)."""
+    import os
+    raw = os.environ.get("PACOMIND_BOUNDARY_DEFAULT_LEVEL", "act").strip().lower()
+    try:
+        return Level(raw)
+    except ValueError:
+        return Level.ACT
+
+
+# Explicit perception language -> OBSERVE (full blackout).
+PERCEPTION_RE = re.compile(
+    r"\b(?:look(?:ing)?\s+at|read(?:ing)?(?!-only\b)|watch(?:ing)?|monitor(?:ing)?|"
+    r"track(?:ing)?|stay\s+out\s+of|snoop|peek|observe|observing|"
+    r"even\s+look)\b", re.IGNORECASE,
+)
+
+
+def level_from_text(text: Optional[str]) -> "Level":
+    """Derive the boundary level from the owner's phrasing."""
+    if text and PERCEPTION_RE.search(str(text)):
+        return Level.OBSERVE
+    return default_level()
+
+
+class DirectiveStatus(str, Enum):
+    ACTIVE = "active"
+    REVOKED = "revoked"
+    EXPIRED = "expired"
+    SUPERSEDED = "superseded"
+
+
+# Generic tokens that carry no discriminating meaning for subject matching.
+_STOPWORDS = frozenset({
+    "the", "a", "an", "to", "of", "on", "in", "for", "with", "about", "at",
+    "my", "your", "me", "you", "it", "that", "this", "any", "some", "and",
+    "or", "please", "just", "really", "anymore", "again", "do", "not", "dont",
+    "don", "ever", "stop", "avoid", "ignore", "never", "leave", "alone",
+    "touch", "is", "are", "be", "when", "if", "should", "would", "can",
+    # generic filler verbs / quantifiers that carry no subject meaning
+    "track", "tracking", "anything", "everything", "something", "stuff",
+    "thing", "things", "worry", "worrying", "bother", "bothering", "mention",
+    "mentioning", "care", "dealing", "deal", "regarding", "worried",
+})
+
+_WORD = re.compile(r"[a-z0-9][a-z0-9_+.\-/]*")
+
+
+def normalize_terms(text: Optional[str]) -> List[str]:
+    """Lowercase significant tokens from a subject/target string."""
+    if not text:
+        return []
+    toks = _WORD.findall(str(text).lower())
+    return [t for t in toks if t not in _STOPWORDS and len(t) > 1]
+
+
+@dataclass
+class Directive:
+    """A standing owner directive / boundary."""
+
+    subject: str                     # human-readable subject ("repo pacomind-web")
+    polarity: Polarity = Polarity.PROHIBIT
+    raw_text: str = ""               # the owner's original words
+    match_terms: List[str] = field(default_factory=list)   # normalized subject tokens
+    entity_ids: List[str] = field(default_factory=list)    # optional graph entity ids
+    action_kinds: List[str] = field(default_factory=list)  # limit to kinds; empty = all
+    source: str = "owner_explicit"   # owner_explicit | inferred | config
+    confidence: float = 0.9
+    status: DirectiveStatus = DirectiveStatus.ACTIVE
+    level: Optional[Level] = None    # act | observe (PROHIBIT only; None -> derive)
+    id: str = field(default_factory=lambda: f"dir-{uuid.uuid4().hex[:12]}")
+    created_at: float = field(default_factory=time.time)
+    updated_at: float = field(default_factory=time.time)
+    expires_at: Optional[float] = None
+    evidence: Optional[Dict[str, Any]] = None
+
+    def __post_init__(self) -> None:
+        if isinstance(self.polarity, str):
+            self.polarity = Polarity(self.polarity)
+        if isinstance(self.status, str):
+            self.status = DirectiveStatus(self.status)
+        if isinstance(self.level, str):
+            self.level = Level(self.level)
+        if self.level is None:
+            # Conservative migration/default: derive from phrasing; only
+            # perception-explicit wording escalates to a full blackout.
+            self.level = level_from_text(self.raw_text or self.subject)
+        if not self.match_terms:
+            self.match_terms = normalize_terms(self.subject)
+
+    def is_active(self, now: Optional[float] = None) -> bool:
+        if self.status != DirectiveStatus.ACTIVE:
+            return False
+        if self.expires_at is not None and (now or time.time()) > self.expires_at:
+            return False
+        return True
+
+    def to_row(self) -> Dict[str, Any]:
+        row = {
+            "id": self.id,
+            "subject": self.subject,
+            "polarity": self.polarity.value,
+            "raw_text": self.raw_text,
+            "match_terms": " ".join(self.match_terms),
+            "entity_ids": " ".join(self.entity_ids),
+            "action_kinds": " ".join(self.action_kinds),
+            "source": self.source,
+            "confidence": self.confidence,
+            "status": self.status.value,
+            "level": self.level.value if self.level else "act",
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+            "expires_at": self.expires_at,
+        }
+
+        if self.evidence is not None:
+            # Existing metadata column, no second prose copy or schema. Older
+            # readers see an empty subject rather than resurrecting erased text.
+            row.update(subject='', raw_text='', match_terms='',
+                       source='canonical-directive-v1:'+json.dumps({**self.evidence, 'method': self.source}, sort_keys=True, separators=(',', ':')))
+        return row
+
+    @classmethod
+    def from_row(cls, row: Dict[str, Any]) -> "Directive":
+        def _split(v: Any) -> List[str]:
+            return [t for t in str(v or "").split(" ") if t]
+        source = row.get('source', 'owner_explicit') or 'owner_explicit'
+        evidence = None
+        if source.startswith('canonical-directive-v1:'):
+            evidence = json.loads(source.removeprefix('canonical-directive-v1:'))
+            source = evidence.get('method', 'owner_explicit')
+        return cls(
+            evidence=evidence,
+            id=row["id"],
+            subject=row["subject"],
+            polarity=Polarity(row["polarity"]),
+            raw_text=row.get("raw_text", "") or "",
+            match_terms=_split(row.get("match_terms")),
+            entity_ids=_split(row.get("entity_ids")),
+            action_kinds=_split(row.get("action_kinds")),
+            source=source,
+            confidence=float(row.get("confidence", 0.9) or 0.9),
+            status=DirectiveStatus(row.get("status", "active")),
+            level=(Level(row["level"]) if row.get("level") else None),
+            created_at=float(row.get("created_at") or time.time()),
+            updated_at=float(row.get("updated_at") or time.time()),
+            expires_at=(float(row["expires_at"]) if row.get("expires_at") not in (None, "") else None),
+        )

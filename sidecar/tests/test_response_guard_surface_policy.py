@@ -5,8 +5,8 @@ from typing import get_args
 
 import pytest
 
-from apsimo.gate.response_guard import unavailable_guard_result
-from apsimo.gate.surface_policy import (
+from pacomind.gate.response_guard import unavailable_guard_result
+from pacomind.gate.surface_policy import (
     ALL_SURFACES,
     EXCLUDED_SPEECH_SURFACES,
     GUARDED_ARTIFACT_SURFACES,

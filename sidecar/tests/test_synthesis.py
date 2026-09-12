@@ -7,13 +7,13 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from apsimo.autonomy.synthesis import (
+from pacomind.autonomy.synthesis import (
     ConversationSynthesisTask,
     SynthesisState,
     _parse_turn_content,
 )
-from apsimo.goals.inference import ConversationMessage, IntentSignal
-from apsimo.goals.models import GoalStatus
+from pacomind.goals.inference import ConversationMessage, IntentSignal
+from pacomind.goals.models import GoalStatus
 
 
 # ── Parse turn content ───────────────────────────────────────────────────────
@@ -136,7 +136,7 @@ async def test_synthesis_finds_and_creates_goals():
 
     class FakeGraph:
         driver = MagicMock()
-        database = "colony"
+        database = "pacomind"
 
         def __init__(self):
             self.driver.session = lambda **kw: FakeSession()
@@ -209,7 +209,7 @@ async def test_synthesis_deduplicates_candidates():
 
     class FakeGraph:
         driver = MagicMock()
-        database = "colony"
+        database = "pacomind"
 
         def __init__(self):
             self.driver.session = lambda **kw: FakeSession()
@@ -262,7 +262,7 @@ async def test_synthesis_respects_watermark():
 
     class FakeGraph:
         driver = MagicMock()
-        database = "colony"
+        database = "pacomind"
 
         def __init__(self):
             self.driver.session = lambda **kw: FakeSession()
@@ -318,7 +318,7 @@ async def test_synthesis_respects_max_goals_per_run():
 
     class FakeGraph:
         driver = MagicMock()
-        database = "colony"
+        database = "pacomind"
 
         def __init__(self):
             self.driver.session = lambda **kw: FakeSession()
@@ -372,7 +372,7 @@ async def test_synthesis_skips_duplicate_existing_goal():
 
     class FakeGraph:
         driver = MagicMock()
-        database = "colony"
+        database = "pacomind"
 
         def __init__(self):
             self.driver.session = lambda **kw: FakeSession()
@@ -437,7 +437,7 @@ async def test_synthesis_telemetry_touch():
 
     class FakeGraph:
         driver = MagicMock()
-        database = "colony"
+        database = "pacomind"
 
         def __init__(self):
             self.driver.session = lambda **kw: FakeSession()

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from apsimo.router.tiers import ModelTier, TierConfig
-from apsimo.task_queue.handlers.inference import InferenceHandler
+from pacomind.router.tiers import ModelTier, TierConfig
+from pacomind.task_queue.handlers.inference import InferenceHandler
 
 
 class _FakeRouter:
@@ -80,7 +80,7 @@ def test_gate_payload_opt_out():
 
 
 def test_gate_env_off(monkeypatch):
-    monkeypatch.setenv("COLONY_CONTEXT_GATE", "off")
+    monkeypatch.setenv("PACOMIND_CONTEXT_GATE", "off")
     doc = _big_doc()
     messages = [{"role": "user", "content": doc}]
     h = _handler(useful_ctx=2000)

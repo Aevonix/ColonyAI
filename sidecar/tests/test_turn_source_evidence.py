@@ -8,14 +8,14 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.api.schemas.host import TurnSyncRequest
-from apsimo.turns import TurnIdempotencyLedger, canonical_turn_digest
+from pacomind.api.routers import host
+from pacomind.api.schemas.host import TurnSyncRequest
+from pacomind.turns import TurnIdempotencyLedger, canonical_turn_digest
 
 
 @pytest.fixture
 def source_app(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     for name in ("_graph", "_contacts_store", "_presence_store", "_context_provenance", "_telemetry", "_p8_runtime", "_reranker", "_context_recall_selector", "_comms_log"):
         monkeypatch.setattr(host, name, None)
     app = FastAPI()
@@ -47,7 +47,7 @@ async def recalled(client, *, contact="contact-a", session="session-a", query="h
     assert response.status_code == 200, response.text
     return "\n".join(
         section["body"] for section in response.json()["sections"]
-        if section["id"] == "colony-memory"
+        if section["id"] == "pacomind-memory"
     )
 
 
@@ -115,7 +115,7 @@ async def test_media_references_retained_but_not_lexically_indexed(source_app, t
         stored = json.loads(conn.execute("SELECT messages_json FROM turn_sources").fetchone()[0])[0]
         assert stored["content"][0] == blocks[0]
         assert stored["content"][1]["type"] == "image_unretained"
-        from apsimo.turns.idempotency import source_message_hash
+        from pacomind.turns.idempotency import source_message_hash
         assert source_message_hash("session-a", stored) == source_message_hash("session-a", {"role": "user", "content": blocks})
 
 
@@ -141,7 +141,7 @@ async def test_empty_checkpoint_is_rejected_without_storing_garbage(source_app, 
 
 @pytest.mark.asyncio
 async def test_repeated_event_keeps_its_date_until_context_time_selection(source_app, monkeypatch):
-    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+    monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
     text = "The camera spotted a crate by the loading door."
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url="http://test") as client:
         for turn, day in (("earlier-event", "2026-03-01"), ("later-event", "2026-03-03")):

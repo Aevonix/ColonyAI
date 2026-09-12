@@ -2,7 +2,7 @@
 fail-closed Neo4j handling and the post-prune sweep gate.
 
 Locks: dry_run deletes nothing, Neo4j failure aborts BEFORE any deletion,
-and the post-prune sweep only activates when COLONY_MEMORY_PRUNE_MODE=live
+and the post-prune sweep only activates when PACOMIND_MEMORY_PRUNE_MODE=live
 (default shadow = no sweep, byte-identical to pre-U11 behavior).
 """
 
@@ -12,15 +12,15 @@ import tempfile
 
 import pytest
 
-from apsimo.intelligence.graph import client as client_mod
-from apsimo.vector.collections import Collection
+from pacomind.intelligence.graph import client as client_mod
+from pacomind.vector.collections import Collection
 
 
 # --- VectorStore.list_ids (real LanceDB) --------------------------------------
 
 @pytest.mark.asyncio
 async def test_list_ids_projected_query():
-    from apsimo.vector.store import VectorStore
+    from pacomind.vector.store import VectorStore
     with tempfile.TemporaryDirectory() as d:
         vs = VectorStore(data_dir=d)
         await vs.connect(dimensions=4)
@@ -92,7 +92,7 @@ class _Fixture:
         self.graph_ids = list(graph_ids)
         self.fail = fail
         self.vec = _FakeVectorStore(vector_ids)
-        g = client_mod.ColonyGraph.__new__(client_mod.ColonyGraph)
+        g = client_mod.PacoMindGraph.__new__(client_mod.PacoMindGraph)
         g.driver = _FakeDriver(self)
         g.database = "neo4j"
         g._vector_store = self.vec
@@ -153,7 +153,7 @@ async def test_no_vector_store_reports_unavailable():
 # --- post-prune sweep gate --------------------------------------------------------
 
 def _loop_with_graph(graph):
-    from apsimo.autonomy.loop import AutonomyLoop, LoopStats
+    from pacomind.autonomy.loop import AutonomyLoop, LoopStats
 
     class _Reg:
         pass
@@ -188,7 +188,7 @@ class _SweepRecordingGraph:
 @pytest.mark.asyncio
 async def test_sweep_not_run_in_default_shadow_mode(monkeypatch):
     """Regression lock: default prune mode never triggers the sweep."""
-    monkeypatch.delenv("COLONY_MEMORY_PRUNE_MODE", raising=False)
+    monkeypatch.delenv("PACOMIND_MEMORY_PRUNE_MODE", raising=False)
     graph = _SweepRecordingGraph()
     loop = _loop_with_graph(graph)
     await loop._phase_memory_pruning()
@@ -198,7 +198,7 @@ async def test_sweep_not_run_in_default_shadow_mode(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sweep_runs_bounded_in_live_mode(monkeypatch):
-    monkeypatch.setenv("COLONY_MEMORY_PRUNE_MODE", "live")
+    monkeypatch.setenv("PACOMIND_MEMORY_PRUNE_MODE", "live")
     graph = _SweepRecordingGraph()
     loop = _loop_with_graph(graph)
     await loop._phase_memory_pruning()
@@ -208,7 +208,7 @@ async def test_sweep_runs_bounded_in_live_mode(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_sweep_failure_does_not_fail_prune_phase(monkeypatch):
-    monkeypatch.setenv("COLONY_MEMORY_PRUNE_MODE", "live")
+    monkeypatch.setenv("PACOMIND_MEMORY_PRUNE_MODE", "live")
     graph = _SweepRecordingGraph()
 
     async def _boom(**kwargs):

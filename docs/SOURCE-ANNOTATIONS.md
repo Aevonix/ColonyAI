@@ -19,7 +19,7 @@ claim another author or turn an ordinary message into an authorized correction.
 ```
 
 The source version comes from structured source references returned by recall.
-The native `colony_memory_annotate` coordination tool exposes only `source_id`,
+The native `pacomind_memory_annotate` coordination tool exposes only `source_id`,
 `source_version`, `excerpt` and `correction`. It requires an attested owner or
 system turn and the exact revision in that turn's actually supplied recall
 snapshot. Guest and missing transport scopes cannot annotate. Contact and session

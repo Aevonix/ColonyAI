@@ -4,9 +4,9 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.memory.recall import pack_memory_context
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.memory.recall import pack_memory_context
+from pacomind.turns import TurnIdempotencyLedger
 from test_procedure_source_context import ProcedureModel, candidates
 from test_source_claim_projection import Model, claim, ingest
 from test_turn_source_evidence import source_app
@@ -30,7 +30,7 @@ async def test_ordinary_source_to_fresh_context_keeps_rows_columns_and_completio
     projection = SourceClaimProjection(TurnIdempotencyLedger(tmp_path/'turn-idempotency.db'))
     model = Model({TEXT: claim(COLUMNS, 'separate Source evidence and Observed result columns',
         subject='note', predicate='columns', memory_kind='decision')})
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         await ingest(client, 'new-layout', TEXT, contact='person')
         assert await projection.process_one(model)
@@ -52,7 +52,7 @@ async def test_ordinary_source_to_fresh_context_keeps_rows_columns_and_completio
             'incoming_message': {'role': 'user', 'content': query},
             'include_initiatives': False})
         assert response.status_code == 200
-        memory = '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'colony-memory')
+        memory = '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
         assert memory.count(TEXT) == 1
         if unresolved:
             assert 'query_time_unresolved' in memory

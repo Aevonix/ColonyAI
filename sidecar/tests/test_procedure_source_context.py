@@ -6,11 +6,11 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.memory.recall import pack_memory_context
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.source_read import read
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.memory.recall import pack_memory_context
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.source_read import read
 from test_source_claim_projection import Model, claim
 from test_turn_source_evidence import source_app
 
@@ -70,8 +70,8 @@ async def test_actual_context_keeps_steps_limitation_and_condition_together(sour
     assert len(rows) == len(selected) == 1
     assert rows[0]['atomic_evidence'] and rows[0]['content'] == TEXT
     assert rows[0]['epistemic_state'] == 'quotation'
-    monkeypatch.setenv('COLONY_RECALL_CONTEXT_MAX_CHARS', str(budget))
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_CONTEXT_MAX_CHARS', str(budget))
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         response = await client.post('/v1/host/context/assemble', json={
             'identity': {'host_id': 'test-host'},
@@ -79,7 +79,7 @@ async def test_actual_context_keeps_steps_limitation_and_condition_together(sour
             'incoming_message': {'role': 'user', 'content': 'bench sensor procedure'},
             'include_initiatives': False})
     assert response.status_code == 200, response.text
-    body = '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'colony-memory')
+    body = '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
     assert len(body) <= budget
     assert all(clause in body for clause in (STEPS, LIMITATION, CONDITION))
 
@@ -186,7 +186,7 @@ async def test_audio_message_unit_preserves_derived_status_and_current_ownership
 
 @pytest.mark.asyncio
 async def test_complete_message_keeps_current_annotation_and_erasure_dependencies(tmp_path):
-    from apsimo.turns.source_annotations import expand, current_candidates
+    from pacomind.turns.source_annotations import expand, current_candidates
     ledger = TurnIdempotencyLedger(tmp_path/'ledger.db')
     projection = await project(ledger)
     ref = ledger.source_references(['procedure'], contact_id='person', session_id='later')[0]

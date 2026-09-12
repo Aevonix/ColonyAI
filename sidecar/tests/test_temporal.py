@@ -1,17 +1,17 @@
-"""Unit tests for apsimo.util.temporal (v0.21.0)."""
+"""Unit tests for pacomind.util.temporal (v0.21.0)."""
 
 import os
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apsimo.util import temporal as T
+from pacomind.util import temporal as T
 
 
 @pytest.fixture(autouse=True)
 def _isolated_state(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    for k in ("COLONY_AGENT_TIMEZONE", "COLONY_DEFAULT_CONTACT_TIMEZONE", "TZ"):
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    for k in ("PACOMIND_AGENT_TIMEZONE", "PACOMIND_DEFAULT_CONTACT_TIMEZONE", "TZ"):
         monkeypatch.delenv(k, raising=False)
     yield
 
@@ -30,11 +30,11 @@ def test_agent_timezone_default_and_set():
     T.set_agent_timezone("America/New_York")
     assert T.agent_timezone() == "America/New_York"
     # env overrides stored
-    os.environ["COLONY_AGENT_TIMEZONE"] = "Europe/London"
+    os.environ["PACOMIND_AGENT_TIMEZONE"] = "Europe/London"
     try:
         assert T.agent_timezone() == "Europe/London"
     finally:
-        del os.environ["COLONY_AGENT_TIMEZONE"]
+        del os.environ["PACOMIND_AGENT_TIMEZONE"]
 
 
 def test_set_agent_timezone_invalid():

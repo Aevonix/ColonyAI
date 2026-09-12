@@ -1,6 +1,6 @@
 """H1.1: the generic supervised-live rung (self_model/supervised.py).
 
-Locks: COLONY_SUPERVISED_LIVE_DOMAINS defaults empty (rung off everywhere);
+Locks: PACOMIND_SUPERVISED_LIVE_DOMAINS defaults empty (rung off everywhere);
 the beliefs legacy alias still works; reversible() fails CLOSED on unknown
 domains/ops; effective_mode degrades to the env mode on trust errors and
 never upgrades past what stage + flag earn.
@@ -8,7 +8,7 @@ never upgrades past what stage + flag earn.
 
 import pytest
 
-from apsimo.self_model.supervised import (
+from pacomind.self_model.supervised import (
     REVERSIBLE_CONTRACT, effective_mode, reversible, supervised_domains,
     supervised_enabled,
 )
@@ -16,8 +16,8 @@ from apsimo.self_model.supervised import (
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv("COLONY_SUPERVISED_LIVE_DOMAINS", raising=False)
-    monkeypatch.delenv("COLONY_BELIEFS_SUPERVISED_LIVE", raising=False)
+    monkeypatch.delenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", raising=False)
+    monkeypatch.delenv("PACOMIND_BELIEFS_SUPERVISED_LIVE", raising=False)
 
 
 # --- flag parsing ------------------------------------------------------------
@@ -31,7 +31,7 @@ def test_default_no_domains_supervised():
 
 
 def test_generic_flag_parses_csv(monkeypatch):
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", " Beliefs, world_model ,")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", " Beliefs, world_model ,")
     assert supervised_domains() == {"beliefs", "world_model"}
     assert supervised_enabled("beliefs")
     assert supervised_enabled("WORLD_MODEL")
@@ -39,10 +39,10 @@ def test_generic_flag_parses_csv(monkeypatch):
 
 
 def test_legacy_beliefs_alias(monkeypatch):
-    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "1")
+    monkeypatch.setenv("PACOMIND_BELIEFS_SUPERVISED_LIVE", "1")
     assert supervised_enabled("beliefs")
     assert not supervised_enabled("world_model")   # alias is beliefs-only
-    monkeypatch.setenv("COLONY_BELIEFS_SUPERVISED_LIVE", "0")
+    monkeypatch.setenv("PACOMIND_BELIEFS_SUPERVISED_LIVE", "0")
     assert not supervised_enabled("beliefs")
 
 
@@ -87,7 +87,7 @@ def test_no_trust_degrades_to_env_mode():
 
 
 def test_trust_error_degrades_to_env_mode(monkeypatch):
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "beliefs")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", "beliefs")
     assert effective_mode("beliefs", "shadow", _BrokenTrust()) == "shadow"
 
 
@@ -95,7 +95,7 @@ def test_stage_ladder(monkeypatch):
     # rung off: ask_first stays shadow (the historical catch-22 posture)
     assert effective_mode("beliefs", "shadow", _Trust("ask_first")) == "shadow"
     # rung on: ask_first becomes supervised; act_first is live; shadow stays shadow
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "beliefs")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", "beliefs")
     assert effective_mode("beliefs", "shadow", _Trust("shadow")) == "shadow"
     assert effective_mode("beliefs", "shadow", _Trust("ask_first")) == "supervised"
     assert effective_mode("beliefs", "shadow", _Trust("act_first")) == "live"
@@ -108,7 +108,7 @@ def test_stage_ladder(monkeypatch):
 def test_trust_snapshot_shows_rung(monkeypatch):
     """TrustEngine.snapshot() (surfaced via GET /v1/host/self) carries the
     rung: supervised_enabled + effective_rung per domain."""
-    from apsimo.self_model import (
+    from pacomind.self_model import (
         ActionJournal, CompetenceStore, TrustEngine,
     )
     trust = TrustEngine(CompetenceStore(), journal=ActionJournal())
@@ -119,7 +119,7 @@ def test_trust_snapshot_shows_rung(monkeypatch):
     assert snap["beliefs"]["supervised_enabled"] is False
     assert snap["beliefs"]["effective_rung"] == "ask_first"
 
-    monkeypatch.setenv("COLONY_SUPERVISED_LIVE_DOMAINS", "beliefs")
+    monkeypatch.setenv("PACOMIND_SUPERVISED_LIVE_DOMAINS", "beliefs")
     snap = {r["domain"]: r for r in trust.snapshot()}
     assert snap["beliefs"]["supervised_enabled"] is True
     assert snap["beliefs"]["effective_rung"] == "supervised"

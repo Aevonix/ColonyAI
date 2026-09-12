@@ -5,8 +5,8 @@ channel (SMS/RCS/voice/...) instead of pooling unresolved senders under a single
 
 import pytest
 
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
 
 # Framework test fixtures only — 555-prefix numbers and example.com are reserved/non-routable.
 PHONE = "+15550101234"

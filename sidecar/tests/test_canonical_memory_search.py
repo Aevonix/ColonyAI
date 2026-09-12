@@ -6,9 +6,9 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.routers import host
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.turns import TurnIdempotencyLedger
 from test_scoped_api_authority import _principal, _write_keyring
 from test_turn_source_evidence import source_app, recalled
 from test_source_vectors import setup, drain, Pipeline
@@ -16,10 +16,10 @@ from test_source_vectors import setup, drain, Pipeline
 
 @pytest.fixture
 def memory_app(source_app, tmp_path, monkeypatch):
-    from apsimo import vector
+    from pacomind import vector
     monkeypatch.setattr(vector, 'get_store', lambda: None)
     monkeypatch.setattr(vector, 'get_pipeline', lambda: None)
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     monkeypatch.setattr(host, '_facts_store', None)
     path = tmp_path/'keys.json'
     scopes = ['memory:search', 'memory:read', 'memory:write', 'context:read', 'api:access', 'turns:write']
@@ -82,7 +82,7 @@ async def test_search_matches_automatic_scope_and_correction_budget(memory_app, 
         assert 'nine is unsupported' in corrected['content']
         assert {ref['source_id'] for ref in corrected['source_refs']} == {'report', annotation['source_id']}
         assert corrected['content'] == await recalled(client, contact='person', session='later')
-        monkeypatch.setenv('COLONY_RECALL_CONTEXT_MAX_CHARS', '100')
+        monkeypatch.setenv('PACOMIND_RECALL_CONTEXT_MAX_CHARS', '100')
         empty = await search(client)
         assert empty['content'] == '' and empty['count'] == 0 and empty['source_refs'] == []
 
@@ -138,7 +138,7 @@ async def test_search_annotation_freshness_is_per_receipt_and_can_recover(memory
 
 @pytest.mark.asyncio
 async def test_search_uses_real_semantic_index_and_keeps_lexical_on_model_swap(memory_app, tmp_path, monkeypatch):
-    from apsimo import vector
+    from pacomind import vector
     app, _ = memory_app
     ledger, store, pipeline, projection = await setup(tmp_path)
     await drain(projection)
@@ -160,8 +160,8 @@ async def test_search_uses_real_semantic_index_and_keeps_lexical_on_model_swap(m
 
 @pytest.mark.asyncio
 async def test_unprojected_lance_table_is_not_healthy_empty_search(memory_app, tmp_path, monkeypatch):
-    from apsimo import vector
-    from apsimo.vector import Collection
+    from pacomind import vector
+    from pacomind.vector import Collection
     app, _ = memory_app
     _, store, pipeline, projection = await setup(tmp_path)
     monkeypatch.setattr(vector, 'get_store', lambda: store)
@@ -201,7 +201,7 @@ async def test_unprojected_lance_table_is_not_healthy_empty_search(memory_app, t
 
 @pytest.mark.asyncio
 async def test_erasure_during_semantic_await_never_returns_stale_excerpt(memory_app, tmp_path, monkeypatch):
-    from apsimo import vector
+    from pacomind import vector
     app, _ = memory_app
     ledger, store, pipeline, projection = await setup(tmp_path)
     await drain(projection)
@@ -219,7 +219,7 @@ async def test_erasure_during_semantic_await_never_returns_stale_excerpt(memory_
 
 @pytest.mark.asyncio
 async def test_direct_reasoning_tool_uses_only_trusted_request_scope(memory_app, monkeypatch):
-    from apsimo.reasoning import ToolExecutor
+    from pacomind.reasoning import ToolExecutor
     app, _ = memory_app
     class Graph:
         async def recall(self, **kwargs):
@@ -228,7 +228,7 @@ async def test_direct_reasoning_tool_uses_only_trusted_request_scope(memory_app,
     monkeypatch.setattr(host, '_tool_executor', executor)
     async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
         async def invoke(person, args, context=True):
-            request = {'identity': {'host_id': 'fixture'}, 'name': 'colony_memory_search', 'arguments': args}
+            request = {'identity': {'host_id': 'fixture'}, 'name': 'pacomind_memory_search', 'arguments': args}
             if context:
                 request['context'] = {'contact_id': person, 'session_id': 'later'}
             r = await client.post('/v1/host/reasoning/tools/invoke', headers={'Authorization':'Bearer '+person}, json=request)
@@ -248,14 +248,14 @@ async def test_direct_reasoning_tool_uses_only_trusted_request_scope(memory_app,
 
 @pytest.mark.asyncio
 async def test_reasoning_http_loop_supplies_canonical_tool_packet_to_processor(memory_app, monkeypatch):
-    from apsimo.reasoning import ToolExecutor, ReasoningLoop
+    from pacomind.reasoning import ToolExecutor, ReasoningLoop
     app, _ = memory_app
     class Processor:
         def __init__(self): self.calls = []
         async def complete(self, messages, **kwargs):
             self.calls.append(messages)
             calls = [] if len(self.calls) > 1 else [SimpleNamespace(id='search', function=SimpleNamespace(
-                name='colony_memory_search', arguments=json.dumps({'query':'hydrofoil'})))]
+                name='pacomind_memory_search', arguments=json.dumps({'query':'hydrofoil'})))]
             return SimpleNamespace(content='done' if not calls else '', usage={},
                 raw=SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(tool_calls=calls))]))
     processor = Processor()
@@ -266,7 +266,7 @@ async def test_reasoning_http_loop_supplies_canonical_tool_packet_to_processor(m
         r = await client.post('/v1/host/reasoning/turn', json={
             'identity':{'host_id':'fixture'}, 'context':{'contact_id':'person','session_id':'later'},
             'messages':[{'role':'user','content':'Find the hydrofoil time.'}],
-            'available_tools':['colony_memory_search']})
+            'available_tools':['pacomind_memory_search']})
         assert r.status_code == 200 and r.json()['status'] == 'completed', r.text
     evidence = json.loads(next(m['content'] for m in processor.calls[-1] if m['role']=='tool'))
     assert 'Friday at nine' in evidence['content'] and evidence['source_refs'][0]['source_id'] == 'report'

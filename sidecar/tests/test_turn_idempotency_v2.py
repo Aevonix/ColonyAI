@@ -13,9 +13,9 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.contacts.comms import CommsLog
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.routers import host
+from pacomind.contacts.comms import CommsLog
+from pacomind.turns import TurnIdempotencyLedger
 
 
 class _CountingGraph:
@@ -57,7 +57,7 @@ def _payload(turn_id: str = "turn-001", *, topic: str = "alpha") -> dict:
 
 @pytest.fixture
 def graph(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
     value = _CountingGraph()
     monkeypatch.setattr(host, "_graph", value)
     # Keep this contract test focused on synchronous ingestion effects.

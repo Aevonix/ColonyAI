@@ -8,13 +8,13 @@ import json
 
 import pytest
 
-from apsimo.task_queue.models import (
+from pacomind.task_queue.models import (
     Job,
     JobStatus,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
-from apsimo.task_queue.scheduler import Scheduler
+from pacomind.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.scheduler import Scheduler
 
 
 async def _manager(tmp_path, *, claim_timeout_secs=30.0):
@@ -37,7 +37,7 @@ async def _claim(manager, job, worker="worker-a"):
 
 @pytest.mark.asyncio
 async def test_stale_attempt_cannot_start_same_worker_reclaim(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         job = Job()
@@ -67,7 +67,7 @@ async def test_stale_attempt_cannot_start_same_worker_reclaim(tmp_path, monkeypa
 @pytest.mark.asyncio
 async def test_same_attempt_lifecycle_replays_are_idempotent(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         started = await _claim(manager, Job())
@@ -106,7 +106,7 @@ async def test_pre_migration_null_attempt_holds_restart_and_cannot_finish(
         tmp_path, monkeypatch):
     """A new server never downgrades to the legacy NULL attempt protocol."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     db_path = tmp_path / "queue.db"
     manager = await _manager(tmp_path)
     try:
@@ -157,7 +157,7 @@ async def test_pre_migration_null_attempt_holds_restart_and_cannot_finish(
 @pytest.mark.asyncio
 async def test_missing_dependencies_are_rejected_and_never_unblocked(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         with pytest.raises(ValueError, match="does not exist"):
@@ -184,7 +184,7 @@ async def test_missing_dependencies_are_rejected_and_never_unblocked(
 
 @pytest.mark.asyncio
 async def test_start_rejects_deadline_and_claim_lease_expiry(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path, claim_timeout_secs=0.02)
     try:
         deadline_job = Job(
@@ -214,7 +214,7 @@ async def test_start_rejects_deadline_and_claim_lease_expiry(tmp_path, monkeypat
 @pytest.mark.asyncio
 async def test_late_completion_becomes_server_timeout_not_success(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         job = Job(timeout_secs=0.02)
@@ -241,7 +241,7 @@ async def test_late_completion_becomes_server_timeout_not_success(
 
 @pytest.mark.asyncio
 async def test_timing_never_reuses_prior_same_worker_attempt(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         job = Job(max_retries=3)
@@ -277,7 +277,7 @@ async def test_timing_never_reuses_prior_same_worker_attempt(tmp_path, monkeypat
 
 @pytest.mark.asyncio
 async def test_reads_wait_for_transaction_rollback(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     job = Job()
     claimed = await _claim(manager, job)
@@ -312,7 +312,7 @@ async def test_reads_wait_for_transaction_rollback(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_repeated_cancellation_cannot_escape_rollback(tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     job = Job()
     claimed = await _claim(manager, job)
@@ -369,7 +369,7 @@ async def test_slow_outcome_delivery_never_blocks_queue_reads(
         tmp_path, monkeypatch):
     """Durable governor work runs outside the queue transaction/response."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     blocking = _BlockingOutcomeGovernor()
     manager.queue.configure_governance(blocking)
@@ -399,7 +399,7 @@ async def test_slow_outcome_delivery_never_blocks_queue_reads(
 @pytest.mark.asyncio
 async def test_scheduler_uses_separate_claim_and_heartbeat_timeouts(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path, claim_timeout_secs=10.0)
     scheduler = Scheduler(
         manager.queue,
@@ -427,7 +427,7 @@ async def test_scheduler_uses_separate_claim_and_heartbeat_timeouts(
 @pytest.mark.asyncio
 async def test_running_liveness_loss_is_durable_failure_but_claim_loss_is_neutral(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         running = await _claim(
@@ -461,7 +461,7 @@ async def test_running_liveness_loss_is_durable_failure_but_claim_loss_is_neutra
 @pytest.mark.asyncio
 async def test_node_death_releases_claim_and_records_running_failure(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         first = await _claim(manager, Job(), worker="dead-node")
@@ -517,7 +517,7 @@ class _RecordingOutcomeGovernor(_BlockingOutcomeGovernor):
 @pytest.mark.asyncio
 async def test_completion_outcome_outbox_recovers_after_cancel_and_restart(
         tmp_path, monkeypatch):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     db_path = tmp_path / "queue.db"
     manager = await _manager(tmp_path)
     blocking = _BlockingOutcomeGovernor()
@@ -568,7 +568,7 @@ async def test_outbox_preserves_claim_mode_across_runtime_flip(
         tmp_path, monkeypatch):
     """A shadow-authorized attempt can never become live trust evidence."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     manager = await _manager(tmp_path)
     governor = _RecordingOutcomeGovernor()
     manager.queue.configure_governance(governor)
@@ -578,7 +578,7 @@ async def test_outbox_preserves_claim_mode_across_runtime_flip(
         assert await manager.queue.start_job(
             claimed.job_id, "worker-a", claimed.claim_attempt_id,
         )
-        monkeypatch.setenv("COLONY_WORKERS_MODE", "live")
+        monkeypatch.setenv("PACOMIND_WORKERS_MODE", "live")
         result = await manager.queue.complete_job(
             claimed.job_id,
             "worker-a",
@@ -598,7 +598,7 @@ async def test_prune_preserves_job_until_pending_outcome_is_delivered(
         tmp_path, monkeypatch):
     """Retention must not orphan durable competence evidence."""
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     old_job = Job(posted_at=datetime.now(timezone.utc) - timedelta(days=60))
     claimed = await _claim(manager, old_job)
@@ -630,7 +630,7 @@ async def test_prune_preserves_job_until_pending_outcome_is_delivered(
 async def test_late_complete_cannot_reverse_failed_attempt(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         job = Job(max_retries=1)
@@ -683,7 +683,7 @@ async def test_late_complete_cannot_reverse_failed_attempt(
 async def test_deadline_maintenance_never_rewrites_neutral(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
     manager = await _manager(tmp_path)
     try:
         job = Job(
@@ -703,7 +703,7 @@ async def test_deadline_maintenance_never_rewrites_neutral(
 async def test_shadow_effect_is_held_without_execution(
     tmp_path, monkeypatch,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "shadow")
     manager = await _manager(tmp_path)
     try:
         job = Job(payload={"risk": "mutation", "action": "write"})

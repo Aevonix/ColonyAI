@@ -4,10 +4,10 @@ import json
 
 import pytest
 
-from apsimo.task_queue.models import Job
-from apsimo.task_queue.queue_manager import QueueManager
-from apsimo.turns.executions import request_work_context
-from apsimo.turns.reported_workers import reported_worker_view
+from pacomind.task_queue.models import Job
+from pacomind.task_queue.queue_manager import QueueManager
+from pacomind.turns.executions import request_work_context
+from pacomind.turns.reported_workers import reported_worker_view
 
 
 @pytest.mark.asyncio
@@ -58,7 +58,7 @@ async def test_retained_pending_jobs_survive_reopen_and_busy_running_work_cannot
 
 def test_selected_process_snapshot_preserves_delivery_stages_and_hides_private_fields(tmp_path, monkeypatch):
     path = tmp_path/'heartbeat.json'
-    snapshot = {'schema':'ColonyWorkSnapshotV1', 'available':True, 'observed_at':1000,
+    snapshot = {'schema':'PacoMindWorkSnapshotV1', 'available':True, 'observed_at':1000,
         'total':2, 'pending_total':1, 'terminal_total':1, 'state_counts':{'accepted':1,'ambiguous':1},
         'source_status':{'outbox':'observed','provider':'observed'}, 'items':[
             {'delivery_id':'delivery-a','intent_id':'intent-a','state':'accepted','provider_state':'provider_started',
@@ -66,7 +66,7 @@ def test_selected_process_snapshot_preserves_delivery_stages_and_hides_private_f
             {'delivery_id':'delivery-b','intent_id':'intent-b','state':'ambiguous','provider_state':'receipt_recorded',
              'observation_state':'ambiguous','evidence_sha256':'a'*64}]}
     path.write_text(json.dumps({'updated_at':1000,'ready':True,'state':{'work_snapshot':snapshot}}))
-    monkeypatch.setenv('COLONY_WORKER_STATUS_PATHS', json.dumps({'Delivery':str(path)}))
+    monkeypatch.setenv('PACOMIND_WORKER_STATUS_PATHS', json.dumps({'Delivery':str(path)}))
     full = reported_worker_view(now=1001)
     report = full['items'][0]
     assert report['state']=='reported_ready' and report['liveness']=='unverified'
@@ -83,12 +83,12 @@ def test_selected_process_snapshot_preserves_delivery_stages_and_hides_private_f
 def test_missing_delivery_store_is_partial_and_terminal_download_never_becomes_live(tmp_path, monkeypatch):
     path = tmp_path/'delivery.json'
     path.write_text(json.dumps({'updated_at':1000,'ready':True,'state':{'work_snapshot':{
-        'schema':'ColonyWorkSnapshotV1','available':False,'observed_at':1000,
+        'schema':'PacoMindWorkSnapshotV1','available':False,'observed_at':1000,
         'reason':'delivery_ledger_unavailable','items':[]}}}))
     terminal = tmp_path/'download.json'
     terminal.write_text(json.dumps({'updated_at':1000,'state':'completed','task_id':'download',
                                    'started_at':900,'finished_at':999,'exit_code':0}))
-    monkeypatch.setenv('COLONY_WORKER_STATUS_PATHS', json.dumps({'Delivery':str(path),'Download':str(terminal)}))
+    monkeypatch.setenv('PACOMIND_WORKER_STATUS_PATHS', json.dumps({'Delivery':str(path),'Download':str(terminal)}))
     view = reported_worker_view(now=1001)
     assert view['partial'] and view['items'][0]['work_snapshot']['available'] is False
     download = view['items'][1]

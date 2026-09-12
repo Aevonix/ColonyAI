@@ -48,7 +48,7 @@ class NativeMemoryRequests:
             logger.warning('Native memory request coverage needs Hermes 0.21.1 and NeMo Relay 0.8.3')
             return False
         key = (scope.session_id, scope.task_id, scope.turn_id)
-        consumer = 'colony.memory:' + str(turn.handle.uuid)
+        consumer = 'pacomind.memory:' + str(turn.handle.uuid)
         with self._lock:
             if key in self._turns:
                 return True

@@ -9,7 +9,7 @@ def test_native_video_frame_reaches_sdk_and_is_withheld_after_correction_and_era
     old = "httpx.Client=lambda **kw: original_client(**{**kw,'transport':httpx.MockTransport(respond)})"
     assert probe.count(old) == 1
     # Preserve a real Client type for the actual OpenAI SDK's subclass/type
-    # checks, while all Colony and SDK traffic stays in controlled transports.
+    # checks, while all PacoMind and SDK traffic stays in controlled transports.
     probe = probe.replace(old, """class FixtureClient(original_client):
     def __init__(self,**kwargs):
         if not isinstance(kwargs.get('transport'),httpx.MockTransport):
@@ -18,8 +18,8 @@ def test_native_video_frame_reaches_sdk_and_is_withheld_after_correction_and_era
 httpx.Client=FixtureClient""")
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
     assert probe.count(old) == 1
-    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='apsimo_memory_annotate'"))
-    old = "name='apsimo_memory_annotate',arguments=json.dumps(args)"
+    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='pacomind_memory_annotate'"))
+    old = "name='pacomind_memory_annotate',arguments=json.dumps(args)"
     assert probe.count(old) == 1
     probe = probe.replace(old, 'name=tool,arguments=json.dumps(args)')
     old = "return json.JSONDecoder().raw_decode(results[0]['content'])[0]"
@@ -88,7 +88,7 @@ prime('reader','reader-task','reader-turn')
 agent._model_supports_vision=lambda: True
 agent._provider_supports_vision_tool_messages=lambda: True
 args={**ref,'view':'video','asset_hash':asset,'requested_ms':1000}
-opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',call='call_video',tool='apsimo_memory_read_source')
+opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',call='call_video',tool='pacomind_memory_read_source')
 if ACTUAL_BACKEND:
     actual_result=dispatch.last_result
     assert isinstance(actual_result['content'],list),actual_result
@@ -104,7 +104,7 @@ if ACTUAL_BACKEND:
         -video_meta['origin_pts']*Fraction(video_meta['origin_time_base']))*1000
     assert relative==video_meta['actual_ms']
     assert Image.open(io.BytesIO(pixels)).size==(video_meta['width'],video_meta['height'])==(160,120)
-    import apsimo.turns.video as decoder_module
+    import pacomind.turns.video as decoder_module
     async def forbid_decode(*a,**kw): raise AssertionError('Metadata revalidation decoded again')
     decoder_module.decode_video=forbid_decode
 else:
@@ -115,7 +115,7 @@ assert isinstance(result['content'],list) and base64.b64decode(result['content']
 assert encoded not in result['content'][0]['text']
 messages=[{'role':'user','content':compose_user_api_content('',recalled,'')},
     {'role':'assistant','content':'','tool_calls':[{'id':'call_video','type':'function','function':{
-        'name':'apsimo_memory_read_source','arguments':json.dumps(args)}}]},result]
+        'name':'pacomind_memory_read_source','arguments':json.dumps(args)}}]},result]
 responses={'input':_chat_messages_to_responses_input(copy.deepcopy(messages))}
 _,anthropic=convert_messages_to_anthropic(copy.deepcopy(messages))
 requests=[{'messages':messages},responses,{'messages':anthropic}]

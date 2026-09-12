@@ -114,7 +114,7 @@ def _request_note(request, text):
         result['messages'] = rows
     else:
         return None
-    return {'request': result, 'source': 'apsimo', 'reason': 'current_skill_instructions'}
+    return {'request': result, 'source': 'pacomind', 'reason': 'current_skill_instructions'}
 
 
 def _invalidate_native_caches(task_id, *, catalog):

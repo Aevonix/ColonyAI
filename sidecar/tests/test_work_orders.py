@@ -6,30 +6,30 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.initiatives.approval_authority import (
+from pacomind.initiatives.approval_authority import (
     ApprovalAuthorityStore,
     build_action_binding,
     build_approval_presentation,
 )
-from apsimo.projects import Project, ProjectEngine, ProjectStore, Step
-from apsimo.self_model import (
+from pacomind.projects import Project, ProjectEngine, ProjectStore, Step
+from pacomind.self_model import (
     ActionJournal,
     CompetenceStore,
     SelfModel,
     TrustEngine,
 )
-from apsimo.task_queue.governor import WorkerGovernor
-from apsimo.task_queue.models import (
+from pacomind.task_queue.governor import WorkerGovernor
+from pacomind.task_queue.models import (
     Job,
     JobResult,
     JobStatus,
     JobType,
     WorkerCapabilities,
 )
-from apsimo.task_queue.queue_manager import TaskQueueManager
-from apsimo.task_queue.queue_manager import QueueManager
-from apsimo.workers.queue_worker import AGENT_ACTION_CAPABILITIES
-from apsimo.work_orders import (
+from pacomind.task_queue.queue_manager import TaskQueueManager
+from pacomind.task_queue.queue_manager import QueueManager
+from pacomind.workers.queue_worker import AGENT_ACTION_CAPABILITIES
+from pacomind.work_orders import (
     QueueWorkOrderAdapter,
     ReceiptVerifierConfigurationError,
     WorkOrderV1,
@@ -143,8 +143,8 @@ def test_receipt_verifier_loader_builds_exact_configured_factory(monkeypatch):
     module = SimpleNamespace(factory=SimpleNamespace(Verifier=Verifier))
     monkeypatch.setattr(importlib, "import_module", lambda name: module)
     verifier = load_receipt_verifier_from_env({
-        "COLONY_WORK_ORDER_RECEIPT_VERIFIER": "test_plugin:factory.Verifier",
-        "COLONY_WORK_ORDER_RECEIPT_VERIFIER_CONFIG": (
+        "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER": "test_plugin:factory.Verifier",
+        "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER_CONFIG": (
             '{"action_db":"/state/actions.db","expected_executor_identity":"node-a"}'
         ),
     })
@@ -156,14 +156,14 @@ def test_receipt_verifier_loader_builds_exact_configured_factory(monkeypatch):
 
 
 @pytest.mark.parametrize("environment", [
-    {"COLONY_WORK_ORDER_RECEIPT_VERIFIER": "not-an-import"},
+    {"PACOMIND_WORK_ORDER_RECEIPT_VERIFIER": "not-an-import"},
     {
-        "COLONY_WORK_ORDER_RECEIPT_VERIFIER": "plugin:Verifier",
-        "COLONY_WORK_ORDER_RECEIPT_VERIFIER_CONFIG": "[]",
+        "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER": "plugin:Verifier",
+        "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER_CONFIG": "[]",
     },
     {
-        "COLONY_WORK_ORDER_RECEIPT_VERIFIER": "plugin:Verifier",
-        "COLONY_WORK_ORDER_RECEIPT_VERIFIER_CONFIG": "{broken",
+        "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER": "plugin:Verifier",
+        "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER_CONFIG": "{broken",
     },
 ])
 def test_receipt_verifier_loader_rejects_invalid_configuration(environment):
@@ -179,7 +179,7 @@ def test_receipt_verifier_loader_rejects_invalid_interface(monkeypatch):
     )
     with pytest.raises(ReceiptVerifierConfigurationError, match="verify interface"):
         load_receipt_verifier_from_env({
-            "COLONY_WORK_ORDER_RECEIPT_VERIFIER": "plugin:Verifier",
+            "PACOMIND_WORK_ORDER_RECEIPT_VERIFIER": "plugin:Verifier",
         })
 
 
@@ -451,7 +451,7 @@ async def test_effect_work_order_materializes_one_canonical_request_at_birth(
     assert request["scope_digest"] == job.tags["approval_scope_digest"]
     assert request["presentation_digest"] == job.tags["approval_presentation_digest"]
     assert job.tags["approval_expires_at"] == request["expires_at"]
-    assert request["presentation"]["schema"] == "ColonyApprovalPresentationV1"
+    assert request["presentation"]["schema"] == "PacoMindApprovalPresentationV1"
     assert request["presentation"]["summary"]
     assert request["presentation"]["risk"] == job.payload["risk_class"]
     assert request["presentation"]["effect"] == job.payload["risk_class"]
@@ -586,7 +586,7 @@ async def test_ambiguous_effect_work_order_waits_for_independent_reconciliation(
 async def test_queue_work_order_is_neutral_until_independent_attestation(
     tmp_path, monkeypatch, worker_mode,
 ):
-    monkeypatch.setenv("COLONY_WORKERS_MODE", worker_mode)
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", worker_mode)
     competence = CompetenceStore()
     journal = ActionJournal()
     trust = TrustEngine(competence, journal=journal)
@@ -674,11 +674,11 @@ async def test_queue_work_order_is_neutral_until_independent_attestation(
 async def test_posted_turn_work_order_holds_before_claim_and_releases_same_row(
     tmp_path, monkeypatch,
 ):
-    from apsimo.server import _work_order_runtime_hold_reason
+    from pacomind.server import _work_order_runtime_hold_reason
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
     projects = ProjectStore(str(tmp_path / "runtime-projects.db"))
     concerns = SimpleNamespace(
         get=lambda concern_id: (
@@ -726,7 +726,7 @@ async def test_posted_turn_work_order_holds_before_claim_and_releases_same_row(
         await restarted.start()
         assert await restarted.claim_job("runtime-worker", caps) is None
 
-        monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
+        monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
         restarted.configure_runtime_claim_hold(
             lambda candidate: _work_order_runtime_hold_reason(
                 candidate, projects, concerns,
@@ -750,11 +750,11 @@ async def test_posted_turn_work_order_holds_before_claim_and_releases_same_row(
 async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
     tmp_path, monkeypatch,
 ):
-    from apsimo.server import _work_order_runtime_hold_reason
+    from pacomind.server import _work_order_runtime_hold_reason
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
     projects = ProjectStore(str(tmp_path / "claimed-projects.db"))
     concerns = SimpleNamespace(
         get=lambda _concern_id: SimpleNamespace(producer_name="turn_concerns"),
@@ -775,7 +775,7 @@ async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
         assert first is not None
         first_attempt = first.claim_attempt_id
 
-        monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
+        monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
         assert await queue.start_job(
             first.job_id, "runtime-worker", first_attempt,
         ) is False
@@ -790,7 +790,7 @@ async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
             )
         )
 
-        monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
+        monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
         second = await queue.claim_job("runtime-worker", caps)
         assert second is not None
         assert second.job_id == first.job_id
@@ -800,7 +800,7 @@ async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
         ) is True
 
         # Rollback does not kill effects that have already crossed RUNNING.
-        monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
+        monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
         assert await queue.start_job(
             second.job_id, "runtime-worker", second.claim_attempt_id,
         ) is True
@@ -814,11 +814,11 @@ async def test_claimed_turn_work_order_holds_before_start_then_reclaims(
 async def test_runtime_turn_fence_leaves_other_work_orders_and_jobs_unchanged(
     tmp_path, monkeypatch,
 ):
-    from apsimo.server import _work_order_runtime_hold_reason
+    from pacomind.server import _work_order_runtime_hold_reason
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "shadow")
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "shadow")
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
     projects = ProjectStore(str(tmp_path / "ordinary-projects.db"))
 
     class MustNotReadConcern:
@@ -875,7 +875,7 @@ async def test_runtime_turn_fence_leaves_other_work_orders_and_jobs_unchanged(
 def test_runtime_turn_fence_ignores_noncanonical_non_cognition_schema_hint(
     tmp_path,
 ):
-    from apsimo.server import _work_order_runtime_hold_reason
+    from pacomind.server import _work_order_runtime_hold_reason
 
     projects = ProjectStore(str(tmp_path / "schema-hint-projects.db"))
     malformed = SimpleNamespace(
@@ -893,11 +893,11 @@ def test_runtime_turn_fence_ignores_noncanonical_non_cognition_schema_hint(
 async def test_cognition_work_order_callback_failure_is_durably_held(
     tmp_path, monkeypatch,
 ):
-    from apsimo.server import _work_order_runtime_hold_reason
+    from pacomind.server import _work_order_runtime_hold_reason
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
     projects = ProjectStore(str(tmp_path / "callback-source-projects.db"))
     missing_ledger = ProjectStore(str(tmp_path / "callback-missing-projects.db"))
     job = runtime_fence_work_order(projects, suffix="callback-failure")
@@ -927,7 +927,7 @@ async def test_cognition_work_order_callback_failure_is_durably_held(
 
 
 def test_startup_fence_is_narrow_to_declared_cognition_work_orders():
-    from apsimo.server import _cognition_work_order_startup_hold_reason
+    from pacomind.server import _cognition_work_order_startup_hold_reason
 
     assert _cognition_work_order_startup_hold_reason(SimpleNamespace(
         payload={"schema": "WorkOrderV1", "source": "cognition_spine"},
@@ -948,14 +948,14 @@ def test_startup_fence_is_narrow_to_declared_cognition_work_orders():
 async def test_project_setup_failure_keeps_startup_fence_until_full_wiring(
     tmp_path, monkeypatch,
 ):
-    from apsimo.server import (
+    from pacomind.server import (
         _install_cognition_work_order_runtime_fence,
         _install_cognition_work_order_startup_fence,
     )
 
-    monkeypatch.setenv("COLONY_WORKERS_MODE", "off")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.delenv("COLONY_ACTION_PLANE_WORKER_NODE_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_WORKERS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.delenv("PACOMIND_ACTION_PLANE_WORKER_NODE_ID", raising=False)
     projects = ProjectStore(str(tmp_path / "startup-projects.db"))
     turn_job = runtime_fence_work_order(projects, suffix="startup-failure")
     ordinary_job = Job(
@@ -1045,7 +1045,7 @@ async def test_skipped_action_plane_result_stays_distinct_from_success():
 
 @pytest.mark.asyncio
 async def test_live_project_uses_work_order_not_local_reasoning(monkeypatch):
-    monkeypatch.setenv("COLONY_PROJECTS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_PROJECTS_MODE", "live")
     manager = FakeManager()
     store = ProjectStore()
     adapter = QueueWorkOrderAdapter(

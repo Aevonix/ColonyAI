@@ -7,10 +7,10 @@ import sqlite3
 from fastapi.testclient import TestClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.commitments.local_work import LocalWork
-from apsimo.commitments.store import CommitmentStore
-from apsimo.initiatives.store import InitiativeStore
+from pacomind.api.routers import host
+from pacomind.commitments.local_work import LocalWork
+from pacomind.commitments.store import CommitmentStore
+from pacomind.initiatives.store import InitiativeStore
 from test_scoped_api_authority import _app, _principal, _write_keyring
 
 

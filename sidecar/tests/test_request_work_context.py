@@ -7,13 +7,13 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from apsimo.turns.executions import request_work_context
+from pacomind.turns.executions import request_work_context
 from test_hermes_turn_outbox import _load_plugin
 
 
 @pytest.fixture
 def module():
-    plugin = _load_plugin('colony_request_work_test')
+    plugin = _load_plugin('pacomind_request_work_test')
     return importlib.import_module(plugin.__name__ + '.request_work')
 
 
@@ -25,7 +25,7 @@ def scope(**changes):
 
 def response(text='A neutral task is running.'):
     return httpx.Response(200, request=httpx.Request('GET', 'http://localhost/v1/host/executions'),
-        json={'schema': 'ColonyRequestWorkV1', 'observed_at': 1234.5,
+        json={'schema': 'PacoMindRequestWorkV1', 'observed_at': 1234.5,
               'text': text, 'truncated': False})
 
 
@@ -49,7 +49,7 @@ def test_fresh_context_replaces_only_our_block_and_preserves_input(module, paylo
     first = refresh(payload, scope())
     second = refresh(first, scope())
     wire = json.dumps(second)
-    assert wire.count('[colony-work-request-v1]') == 1
+    assert wire.count('[pacomind-work-request-v1]') == 1
     assert 'Task completed.' in wire and 'Task running.' not in wire
     assert module.replace_context(second) == before
     assert payload == before
@@ -67,7 +67,7 @@ def test_fresh_context_replaces_only_our_block_and_preserves_input(module, paylo
 def test_non_owner_context_cannot_reuse_prior_operational_block(module, lane, platform, status):
     def get(*args, **kwargs):
         pytest.fail('Ineligible scope fetched owner work')
-    literal = '[colony-work-request-v1]\nThis is literal user content.\n[/colony-work-request-v1]'
+    literal = '[pacomind-work-request-v1]\nThis is literal user content.\n[/pacomind-work-request-v1]'
     original = {'messages': [{'role': 'user', 'content': literal}]}
     earlier = module.replace_context(original, 'Owner task metadata')
     participant = SimpleNamespace(valid_participant=True, authority_lane=lane,
@@ -92,11 +92,11 @@ def test_empty_native_anthropic_system_uses_top_level_slot(module):
     refresh = module.RequestWork(SimpleNamespace(get=lambda *a, **k: response()))
     result = refresh(original, scope(), api_mode='anthropic_messages')
     assert result['messages'] == before['messages']
-    assert result['system'].startswith('[colony-work-request-v1]\n')
+    assert result['system'].startswith('[pacomind-work-request-v1]\n')
     assert all(row['role'] != 'system' for row in result['messages'])
     assert original == before
     again = refresh(result, scope(), api_mode='anthropic_messages')
-    assert json.dumps(again).count('[colony-work-request-v1]') == 1
+    assert json.dumps(again).count('[pacomind-work-request-v1]') == 1
 
 
 def test_native_chat_developer_role_is_preserved_and_replaceable(module):
@@ -108,7 +108,7 @@ def test_native_chat_developer_role_is_preserved_and_replaceable(module):
     second = refresh(first, scope(), api_mode='chat_completions')
     assert second['messages'][-1]['role'] == 'developer'
     assert all(row['role'] != 'system' for row in second['messages'])
-    assert json.dumps(second).count('[colony-work-request-v1]') == 1
+    assert json.dumps(second).count('[pacomind-work-request-v1]') == 1
     assert module.replace_context(second) == before
     assert original == before
 

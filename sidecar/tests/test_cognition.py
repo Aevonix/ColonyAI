@@ -4,8 +4,8 @@ import os
 import pytest
 from unittest.mock import patch
 
-from apsimo.cognition.prompt import build_cognition_prompt, COGNITION_SYSTEM_PROMPT
-from apsimo.cognition.trigger import trigger_cognition, _cognition_enabled, _cognition_model
+from pacomind.cognition.prompt import build_cognition_prompt, COGNITION_SYSTEM_PROMPT
+from pacomind.cognition.trigger import trigger_cognition, _cognition_enabled, _cognition_model
 
 
 class TestCognitionPrompt:
@@ -67,14 +67,14 @@ class TestCognitionPrompt:
 class TestCognitionTrigger:
     @pytest.mark.asyncio
     async def test_disabled_returns_not_accepted(self):
-        with patch.dict(os.environ, {"COLONY_COGNITION_ENABLED": "false"}):
+        with patch.dict(os.environ, {"PACOMIND_COGNITION_ENABLED": "false"}):
             result = await trigger_cognition("turn_sync", {"conversation_text": "test"})
             assert result["accepted"] is False
             assert "disabled" in result["message"]
 
     @pytest.mark.asyncio
     async def test_no_model_returns_not_accepted(self):
-        with patch.dict(os.environ, {"COLONY_COGNITION_ENABLED": "true", "COLONY_COGNITION_MODEL": ""}):
+        with patch.dict(os.environ, {"PACOMIND_COGNITION_ENABLED": "true", "PACOMIND_COGNITION_MODEL": ""}):
             result = await trigger_cognition("turn_sync", {"conversation_text": "test"})
             assert result["accepted"] is False
             assert "MODEL" in result["message"]
@@ -82,23 +82,23 @@ class TestCognitionTrigger:
     @pytest.mark.asyncio
     async def test_enabled_with_model_accepts(self):
         with patch.dict(os.environ, {
-            "COLONY_COGNITION_ENABLED": "true",
-            "COLONY_COGNITION_MODEL": "gemma-4-31b",
-            "COLONY_COGNITION_THROTTLE_SECONDS": "0",
+            "PACOMIND_COGNITION_ENABLED": "true",
+            "PACOMIND_COGNITION_MODEL": "gemma-4-31b",
+            "PACOMIND_COGNITION_THROTTLE_SECONDS": "0",
         }):
             result = await trigger_cognition("turn_sync", {"conversation_text": "I'll check tomorrow"})
             assert result["accepted"] is True
 
     @pytest.mark.asyncio
     async def test_high_priority_bypasses_throttle(self):
-        import apsimo.cognition.trigger as trig
+        import pacomind.cognition.trigger as trig
         # Set a recent trigger time
         trig._last_trigger_time = 9999999999.0
 
         with patch.dict(os.environ, {
-            "COLONY_COGNITION_ENABLED": "true",
-            "COLONY_COGNITION_MODEL": "gemma-4-31b",
-            "COLONY_COGNITION_THROTTLE_SECONDS": "300",
+            "PACOMIND_COGNITION_ENABLED": "true",
+            "PACOMIND_COGNITION_MODEL": "gemma-4-31b",
+            "PACOMIND_COGNITION_THROTTLE_SECONDS": "300",
         }):
             result = await trigger_cognition(
                 "turn_sync",
@@ -109,13 +109,13 @@ class TestCognitionTrigger:
 
     @pytest.mark.asyncio
     async def test_normal_priority_throttled(self):
-        import apsimo.cognition.trigger as trig
+        import pacomind.cognition.trigger as trig
         trig._last_trigger_time = 9999999999.0
 
         with patch.dict(os.environ, {
-            "COLONY_COGNITION_ENABLED": "true",
-            "COLONY_COGNITION_MODEL": "gemma-4-31b",
-            "COLONY_COGNITION_THROTTLE_SECONDS": "300",
+            "PACOMIND_COGNITION_ENABLED": "true",
+            "PACOMIND_COGNITION_MODEL": "gemma-4-31b",
+            "PACOMIND_COGNITION_THROTTLE_SECONDS": "300",
         }):
             result = await trigger_cognition(
                 "turn_sync",
@@ -130,18 +130,18 @@ class TestCognitionConfig:
     def test_enabled_default_false(self):
         with patch.dict(os.environ, {}, clear=True):
             # Remove the key entirely
-            os.environ.pop("COLONY_COGNITION_ENABLED", None)
+            os.environ.pop("PACOMIND_COGNITION_ENABLED", None)
             assert _cognition_enabled() is False
 
     def test_enabled_true(self):
-        with patch.dict(os.environ, {"COLONY_COGNITION_ENABLED": "true"}):
+        with patch.dict(os.environ, {"PACOMIND_COGNITION_ENABLED": "true"}):
             assert _cognition_enabled() is True
 
     def test_model_unset(self):
         with patch.dict(os.environ, {}, clear=True):
-            os.environ.pop("COLONY_COGNITION_MODEL", None)
+            os.environ.pop("PACOMIND_COGNITION_MODEL", None)
             assert _cognition_model() is None
 
     def test_model_set(self):
-        with patch.dict(os.environ, {"COLONY_COGNITION_MODEL": "gpt-4o-mini"}):
+        with patch.dict(os.environ, {"PACOMIND_COGNITION_MODEL": "gpt-4o-mini"}):
             assert _cognition_model() == "gpt-4o-mini"

@@ -14,10 +14,10 @@ from unittest.mock import Mock, patch, AsyncMock
 import pytest
 from fastapi.testclient import TestClient
 
-from apsimo.agents.store import AgentStore, InviteStore
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.initiatives.assignment import AssignmentEngine
-from apsimo.agents.websocket import WebSocketManager
+from pacomind.agents.store import AgentStore, InviteStore
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.initiatives.assignment import AssignmentEngine
+from pacomind.agents.websocket import WebSocketManager
 
 # Previously skipped due to SQLite threading with TestClient.
 # Fixed by adding check_same_thread=False to AgentStore._connect().
@@ -31,20 +31,20 @@ class TestAgentEndpoints:
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         """Create a test client with stores injected.
 
-        Sets COLONY_API_KEY so /agents/register and /agents/connect — which
+        Sets PACOMIND_API_KEY so /agents/register and /agents/connect — which
         live under _ALWAYS_AUTH_REQUIRED in middleware.py — are reachable.
         Without a key those endpoints (correctly) return 503 in dev mode.
         """
-        from apsimo.api.routers.host import (
+        from pacomind.api.routers.host import (
             set_agent_store,
             set_invite_store,
             set_initiative_store,
             set_assignment_engine,
             set_websocket_manager,
         )
-        from apsimo.server import create_app
+        from pacomind.server import create_app
 
-        monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+        monkeypatch.setenv("PACOMIND_API_KEY", "test-api-key")
 
         agent_store = AgentStore(state_dir=tmp_path)
         invite_store = InviteStore(state_dir=tmp_path)
@@ -80,7 +80,7 @@ class TestAgentEndpoints:
         assert response.status_code == 200
         data = response.json()
         assert "code" in data
-        assert data["code"].startswith("COLONY-")
+        assert data["code"].startswith("PACOMIND-")
         assert "setup_command" in data
         assert "expires_at" in data
 
@@ -285,20 +285,20 @@ class TestInitiativeEndpoints:
     def client(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
         """Create a test client with stores injected.
 
-        Sets COLONY_API_KEY so /agents/register and /agents/connect — which
+        Sets PACOMIND_API_KEY so /agents/register and /agents/connect — which
         live under _ALWAYS_AUTH_REQUIRED in middleware.py — are reachable.
         Without a key those endpoints (correctly) return 503 in dev mode.
         """
-        from apsimo.api.routers.host import (
+        from pacomind.api.routers.host import (
             set_agent_store,
             set_invite_store,
             set_initiative_store,
             set_assignment_engine,
             set_websocket_manager,
         )
-        from apsimo.server import create_app
+        from pacomind.server import create_app
 
-        monkeypatch.setenv("COLONY_API_KEY", "test-api-key")
+        monkeypatch.setenv("PACOMIND_API_KEY", "test-api-key")
 
         agent_store = AgentStore(state_dir=tmp_path)
         invite_store = InviteStore(state_dir=tmp_path)
@@ -359,7 +359,7 @@ class TestInitiativeEndpoints:
     def test_status_filter_finds_active_work_beyond_default_page(
         self, client: TestClient
     ) -> None:
-        from apsimo.api.routers import host
+        from pacomind.api.routers import host
 
         store = host._initiative_store
         terminal_ids = set()

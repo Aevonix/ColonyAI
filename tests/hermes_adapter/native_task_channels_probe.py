@@ -16,15 +16,15 @@ if dependencies:
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import executions, host
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.turns import get_turn_idempotency_ledger
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import executions, host
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.turns import get_turn_idempotency_ledger
 
 home = Path(os.environ['HERMES_HOME'])
 home.mkdir(mode=0o700)
-state = Path(os.environ['COLONY_STATE_DIR'])
+state = Path(os.environ['PACOMIND_STATE_DIR'])
 state.mkdir(mode=0o700)
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 contacts = SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db')))
@@ -40,7 +40,7 @@ async def seed():
 
 owner = asyncio.run(seed())
 host._contacts_store = contacts
-os.environ['COLONY_OWNER_CONTACT_ID'] = owner
+os.environ['PACOMIND_OWNER_CONTACT_ID'] = owner
 secret = 'isolated-native-task-fixture-key'
 keyring = home/'keys.json'
 keyring.write_text(json.dumps({'version': 1, 'principals': [{
@@ -52,11 +52,11 @@ keyring.chmod(0o600)
 (home/'config.yaml').write_text(json.dumps({
     'model': {'provider': 'custom', 'default': 'fixture-model', 'base_url': 'http://model.fixture/v1'},
     'auxiliary': {'title_generation': {'enabled': False}},
-    'terminal': {'cwd': str(home)}, 'agent': {'max_turns': 4}, 'toolsets': ['apsimo'],
-    'display': {'platforms': {'colony_task': {'streaming': False, 'tool_progress': 'off'}}},
-    'memory': {'provider': 'apsimo-memory', 'config': {
+    'terminal': {'cwd': str(home)}, 'agent': {'max_turns': 4}, 'toolsets': ['pacomind'],
+    'display': {'platforms': {'pacomind_task': {'streaming': False, 'tool_progress': 'off'}}},
+    'memory': {'provider': 'pacomind-memory', 'config': {
         'contact_id': owner, 'url': 'http://fixture', 'api_key': secret}},
-    'plugins': {'enabled': ['apsimo'], 'apsimo': {
+    'plugins': {'enabled': ['pacomind'], 'pacomind': {
         'owner_contact_id': owner, 'url': 'http://fixture', 'api_key': secret,
         'turn_outbox_path': str(home/'outbox.db'), 'execution_registry_enabled': True,
         'native_tasks': {'enabled': True, 'state_path': str(home/'native-tasks.db')}}}}))
@@ -124,8 +124,8 @@ def respond(request):
         # Release controlled provider work during cleanup without replacing an
         # earlier test failure with an assertion from a cancelled request.
         return answer(body, 'Fixture cleanup after qualification ended.')
-    from apsimo_hermes.native_task_platform import ACTIVE
-    from apsimo_hermes.input_provenance import current
+    from pacomind_hermes.native_task_platform import ACTIVE
+    from pacomind_hermes.input_provenance import current
     active = ACTIVE.get()
     if active is not None:
         row = adapter.handoffs.get(active['id'])
@@ -152,10 +152,10 @@ def respond(request):
             held[name].set()
             assert release[name].wait(35), 'Held ' + name + ' request was never released'
             if name == 'alpha':
-                return tool(body, 'apsimo_memory_read_source', row['source']['source_refs'][0])
+                return tool(body, 'pacomind_memory_read_source', row['source']['source_refs'][0])
             return answer(body, 'TASK_BETA completed with its own retained source.')
         text = json.dumps(body['messages'])
-        assert update_text in text and 'colony-task-update-v1' in text, text
+        assert update_text in text and 'pacomind-task-update-v1' in text, text
         updates = adapter.handoffs.updates(row['id'])
         from agent import relay_runtime
         turn = relay_runtime.current_turn()
@@ -187,9 +187,9 @@ def respond(request):
     if step == 1:
         if tag.startswith('SUBMIT_'):
             name = tag.removeprefix('SUBMIT_')
-            return tool(body, 'apsimo_task', {'operation': 'submit',
+            return tool(body, 'pacomind_task', {'operation': 'submit',
                 'request': 'TASK_' + name + ': Compare my violet calibration notes and retain the result.'})
-        return tool(body, 'apsimo_task', {'operation': 'steer' if tag == 'STEER_ALPHA' else 'stop',
+        return tool(body, 'pacomind_task', {'operation': 'steer' if tag == 'STEER_ALPHA' else 'stop',
             'task_id': task_ids['alpha'], **({'request': update_text} if tag == 'STEER_ALPHA' else {})})
     results = [row['content'] for row in body['messages'] if row.get('role') == 'tool']
     tool_results[tag] = results
@@ -224,7 +224,7 @@ socket.create_connection = no_network
 from hermes_cli.plugins import get_plugin_manager
 manager = get_plugin_manager()
 manager.discover_and_load()
-assert manager._plugins['apsimo'].enabled, manager._plugins['apsimo'].error
+assert manager._plugins['pacomind'].enabled, manager._plugins['pacomind'].error
 from gateway.config import GatewayConfig, PlatformConfig, Platform
 from gateway.platform_registry import platform_registry
 from gateway.run import GatewayRunner
@@ -236,9 +236,9 @@ import tools.tirith_security
 tools.tirith_security.ensure_installed = lambda **kwargs: False
 config = GatewayConfig(sessions_dir=home/'sessions', loop_watchdog=False)
 platform_config = PlatformConfig(enabled=True, typing_indicator=False, gateway_restart_notification=False)
-config.platforms = {Platform('colony_task'): platform_config}
+config.platforms = {Platform('pacomind_task'): platform_config}
 runner = GatewayRunner(config)
-adapter = platform_registry.create_adapter('colony_task', platform_config)
+adapter = platform_registry.create_adapter('pacomind_task', platform_config)
 assert adapter is not None
 runner.adapters[adapter.platform] = adapter
 runner.delivery_router.adapters = runner.adapters
@@ -346,7 +346,7 @@ async def exercise():
             'native_session_id', 'native_task_id', 'native_turn_id', 'response', 'stop'))
         assert len(generation['alpha']) == 2 and len(generation['beta']) == 1
         assert 'Native task participant does not match its owner' in (home/'logs'/'errors.log').read_text()
-        assert all(handle.gateway != 'colony_task' for handle in await contacts.get_handles(owner))
+        assert all(handle.gateway != 'pacomind_task' for handle in await contacts.get_handles(owner))
         print(json.dumps({'cross_channel_native_tasks': True, 'separate_native_roots': 2,
             'foreground_completed_while_tasks_held': True, 'steering_in_actual_sdk_request': True,
             'matching_native_stop_terminal': True, 'late_reply_suppressed': True,

@@ -14,10 +14,10 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.contact_grants import ContactGrantRegistry
-from apsimo.api.authority import KeyringError, load_keyring
-from apsimo.api.routers import host
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.contact_grants import ContactGrantRegistry
+from pacomind.api.authority import KeyringError, load_keyring
+from pacomind.api.routers import host
 
 
 class _Graph:
@@ -101,7 +101,7 @@ def _app(
 def _headers(secret: str, principal: str | None = None) -> dict[str, str]:
     headers = {"Authorization": f"Bearer {secret}"}
     if principal is not None:
-        headers["X-Colony-Principal"] = principal
+        headers["X-PacoMind-Principal"] = principal
     return headers
 
 
@@ -205,11 +205,11 @@ def graph(monkeypatch, tmp_path):
     monkeypatch.setattr(host, "_contacts_store", None)
     monkeypatch.setattr(host, "_context_provenance", None)
     monkeypatch.setattr(host, "_telemetry", None)
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("COLONY_OWNER_PERSON_ID", "contact-owner")
-    monkeypatch.setenv("COLONY_SHARED_PERSON_ID", "audience-shared")
-    monkeypatch.setenv("COLONY_GLOBAL_PERSON_ID", "audience-global")
-    monkeypatch.setenv("COLONY_DEV_PERSON_ID", "dev-anonymous")
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("PACOMIND_OWNER_PERSON_ID", "contact-owner")
+    monkeypatch.setenv("PACOMIND_SHARED_PERSON_ID", "audience-shared")
+    monkeypatch.setenv("PACOMIND_GLOBAL_PERSON_ID", "audience-global")
+    monkeypatch.setenv("PACOMIND_DEV_PERSON_ID", "dev-anonymous")
     return graph
 
 
@@ -547,13 +547,13 @@ async def test_sender_resolving_adapter_cannot_inherit_viewer_without_contact_st
 async def test_turn_concern_journal_scope_is_sealed_from_scoped_authority(
     tmp_path, graph, monkeypatch,
 ):
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])
     app = _app(keyring)
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -602,13 +602,13 @@ async def test_turn_concern_journal_scope_is_sealed_from_scoped_authority(
 async def test_scoped_unkeyed_turn_gets_deterministic_server_lineage_id(
     tmp_path, graph, monkeypatch,
 ):
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])
     app = _app(keyring)
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -653,7 +653,7 @@ async def test_server_resolved_attested_sender_gets_subject_private_turn_scope(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -678,8 +678,8 @@ async def test_server_resolved_attested_sender_gets_subject_private_turn_scope(
         contact_grants=ContactGrantRegistry(tmp_path / "contact-grants.json"),
     )
     monkeypatch.setattr(host, "_contacts_store", Contacts())
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -718,7 +718,7 @@ async def test_dynamic_sender_grant_retry_keeps_attribution_and_digest_stable(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -741,8 +741,8 @@ async def test_dynamic_sender_grant_retry_keeps_attribution_and_digest_stable(
         contact_grants=ContactGrantRegistry(tmp_path / "contact-grants.json"),
     )
     monkeypatch.setattr(host, "_contacts_store", Contacts())
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -776,7 +776,7 @@ async def test_dynamic_sender_grant_cap_failure_does_not_attest_identity(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -800,8 +800,8 @@ async def test_dynamic_sender_grant_cap_failure_does_not_attest_identity(
     _write_keyring(keyring, [principal])
     app = _app(keyring, contact_grants=registry)
     monkeypatch.setattr(host, "_contacts_store", Contacts())
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -833,8 +833,8 @@ async def test_structured_sender_platform_cannot_hide_behind_voice_lane(
     tmp_path, graph, monkeypatch, platform,
 ):
     from types import SimpleNamespace
-    from apsimo.events import journal as event_journal
-    from apsimo.self_model.event_concerns import project_conversation_turn
+    from pacomind.events import journal as event_journal
+    from pacomind.self_model.event_concerns import project_conversation_turn
 
     class Contacts:
         async def resolve_messaging_handle(self, _platform, _user_id):
@@ -858,10 +858,10 @@ async def test_structured_sender_platform_cannot_hide_behind_voice_lane(
         contact_grants=ContactGrantRegistry(tmp_path / "contact-grants.json"),
     )
     monkeypatch.setattr(host, "_contacts_store", Contacts())
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     monkeypatch.setenv(
-        "COLONY_TURN_CONCERNS_EXCLUDED_PLATFORMS", "rcs,operator",
+        "PACOMIND_TURN_CONCERNS_EXCLUDED_PLATFORMS", "rcs,operator",
     )
     recorded = []
     monkeypatch.setattr(
@@ -901,7 +901,7 @@ async def test_resolved_sender_in_static_grant_needs_no_dynamic_platform_grant(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     class Contacts:
         async def resolve_verified_handles(self, platform, user_ids):
@@ -921,8 +921,8 @@ async def test_resolved_sender_in_static_grant_needs_no_dynamic_platform_grant(
     _write_keyring(keyring, [principal])
     app = _app(keyring)
     monkeypatch.setattr(host, "_contacts_store", Contacts())
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -959,7 +959,7 @@ async def test_resolved_static_sender_without_resolve_scope_is_not_attested(
     tmp_path, graph, monkeypatch,
 ):
     from types import SimpleNamespace
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     class Contacts:
         async def resolve_messaging_handle(self, platform, user_id):
@@ -975,8 +975,8 @@ async def test_resolved_static_sender_without_resolve_scope_is_not_attested(
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])
     app = _app(keyring)
     monkeypatch.setattr(host, "_contacts_store", Contacts())
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -1010,7 +1010,7 @@ async def test_resolved_static_sender_without_resolve_scope_is_not_attested(
 async def test_unresolved_structured_sender_cannot_fall_back_to_viewer_attestation(
     tmp_path, graph, monkeypatch,
 ):
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     principal = _principal(scopes=["turns:write", "turns:resolve-sender"])
     principal["attested_contact_grants"] = {
@@ -1021,8 +1021,8 @@ async def test_unresolved_structured_sender_cannot_fall_back_to_viewer_attestati
     _write_keyring(keyring, [principal])
     app = _app(keyring)
     # The graph fixture deliberately leaves the contacts resolver detached.
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -1056,11 +1056,11 @@ async def test_unresolved_structured_sender_cannot_fall_back_to_viewer_attestati
 async def test_legacy_body_claim_cannot_mint_turn_concern_attestation(
     tmp_path, graph, monkeypatch,
 ):
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     app = _app(None, legacy_key="legacy-secret")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS", "live")
-    monkeypatch.setenv("COLONY_TURN_CONCERNS_CHANNELS", "voice")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS", "live")
+    monkeypatch.setenv("PACOMIND_TURN_CONCERNS_CHANNELS", "voice")
     recorded = []
     monkeypatch.setattr(
         event_journal,
@@ -1097,12 +1097,12 @@ async def test_legacy_body_claim_cannot_mint_turn_concern_attestation(
 async def test_turn_concern_flag_off_keeps_legacy_journal_shape_exact(
     tmp_path, graph, monkeypatch,
 ):
-    from apsimo.events import journal as event_journal
+    from pacomind.events import journal as event_journal
 
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["turns:write"])])
     app = _app(keyring)
-    monkeypatch.delenv("COLONY_TURN_CONCERNS", raising=False)
+    monkeypatch.delenv("PACOMIND_TURN_CONCERNS", raising=False)
     recorded = []
     monkeypatch.setattr(
         event_journal,

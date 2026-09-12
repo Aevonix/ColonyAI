@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.services.agent_bridge import AgentBridgeService
-from apsimo.task_queue.models import Job, JobType
+from pacomind.services.agent_bridge import AgentBridgeService
+from pacomind.task_queue.models import Job, JobType
 
 
 class _Queue:
@@ -66,7 +66,7 @@ async def test_builtin_bridge_starts_exact_attempt_before_webhook():
 
 @pytest.mark.asyncio
 async def test_builtin_bridge_uses_only_configured_generic_route(monkeypatch):
-    monkeypatch.setenv("COLONY_AGENT_WORKER_ROUTES", "agent_sync")
+    monkeypatch.setenv("PACOMIND_AGENT_WORKER_ROUTES", "agent_sync")
     queue = _Queue()
     await _Bridge(queue)._dispatch_jobs()
     claim = queue.calls[0]
@@ -77,7 +77,7 @@ async def test_builtin_bridge_uses_only_configured_generic_route(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_builtin_bridge_claim_loop_obeys_global_kill_switch(monkeypatch):
-    monkeypatch.setenv("COLONY_AGENT_JOB_CLAIMS_ENABLED", "false")
+    monkeypatch.setenv("PACOMIND_AGENT_JOB_CLAIMS_ENABLED", "false")
     queue = _Queue()
     bridge = _Bridge(queue)
     await bridge._dispatch_jobs()

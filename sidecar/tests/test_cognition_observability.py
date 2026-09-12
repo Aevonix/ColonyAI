@@ -11,7 +11,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.autonomy.loop import AutonomyLoop
+from pacomind.autonomy.loop import AutonomyLoop
 
 
 class _StubCognition:
@@ -55,7 +55,7 @@ async def test_cognition_none_registry_is_noop():
 
 
 def test_consolidation_result_exposes_pairs_merged_not_merged_count():
-    from apsimo.intelligence.graph.consolidator import ConsolidationResult
+    from pacomind.intelligence.graph.consolidator import ConsolidationResult
     names = {f.name for f in dataclasses.fields(ConsolidationResult)}
     assert "pairs_merged" in names
     assert "merged_count" not in names

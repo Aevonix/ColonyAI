@@ -1,14 +1,14 @@
-# Contributing to Apsimo
+# Contributing to PacoMind
 
-Develop against the current Apsimo baseline and its declared Hermes target.
+Develop against the current PacoMind baseline and its declared Hermes target.
 
 ## Development setup
 
-Apsimo is Python-only.
+PacoMind is Python-only.
 
 ```bash
-git clone https://github.com/Aevonix/ApsimoAGI.git
-cd ApsimoAGI/sidecar
+git clone https://github.com/Aevonix/PacoMind.git
+cd PacoMind/sidecar
 pip install -e ".[dev]"
 ```
 
@@ -20,12 +20,12 @@ unless a selected qualification explicitly requires a real model or service.
 
 | Path | Purpose |
 |---|---|
-| `sidecar/apsimo/` | The Python package: FastAPI sidecar, CLI, all subsystems |
-| `sidecar/apsimo/api/` | Pydantic schemas and routers: the single source of truth for the HTTP contract |
-| `sidecar/apsimo/intelligence/` | Graph memory, mind model, cognition components |
-| `sidecar/apsimo/workers/` | Worker daemons (`apsimo-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
+| `sidecar/pacomind/` | The Python package: FastAPI sidecar, CLI, all subsystems |
+| `sidecar/pacomind/api/` | Pydantic schemas and routers: the single source of truth for the HTTP contract |
+| `sidecar/pacomind/intelligence/` | Graph memory, mind model, cognition components |
+| `sidecar/pacomind/workers/` | Worker daemons (`pacomind-worker` etc.) and their systemd/launchd deploy templates under `workers/deploy/` |
 | `sidecar/tests/` | Sidecar test suite, kept out of the installed product package |
-| `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `apsimo-memory` (memory provider), `feeds-manage` |
+| `plugins/` | Host integration plugins: `hermes-plugin` (general adapter), `pacomind-memory` (memory provider), `feeds-manage` |
 | `docs/` | Public docs (harness integration, channel framework, feeds, prompts) |
 
 ## Making changes
@@ -63,7 +63,7 @@ measurement of model quality or a production smoke test.
 Subjects follow a conventional-commit-ish style, matching the git history:
 
 ```
-feat(autonomy): COLONY_AUTONOMY_PRESET - one knob for the agency posture
+feat(autonomy): PACOMIND_AUTONOMY_PRESET - one knob for the agency posture
 fix(trust): durable graduation/demotion notices
 docs(prompts): record adoption status, eval harness, version attribution
 refactor(plugins): share the native adapter client
@@ -93,24 +93,24 @@ document it in `.env.example` instead of hardcoding it.
 
 ## Versioning
 
-Apsimo uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
+PacoMind uses **Semantic Versioning** (`MAJOR.MINOR.PATCH`): MINOR for compatible
 features, PATCH for fixes and documentation, and MAJOR for incompatible public
-contracts. The `apsimo` sidecar and `apsimo-hermes` integration are published together
-on PyPI with the same version. `apsimo-hostworker` has its own package version.
+contracts. The `pacomind` sidecar and `pacomind-hermes` integration are published together
+on PyPI with the same version. `pacomind-hostworker` has its own package version.
 
 Phase 1 establishes the first supported baseline; validation is still in
-progress. Older ColonyAI releases and migration paths are not supported public
+progress. Older PacoMind releases and migration paths are not supported public
 contracts. Remove unused compatibility code when changing an area, while
 accounting for current callers and retained state. Do not add compatibility
 layers solely to preserve historical names.
 
 ## Release flow
 
-1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the two adapter manifests under `plugins/hermes-plugin` and `plugins/apsimo-memory`. The release workflow also builds and publishes `apsimo-hostworker`; if its packaged contents changed, bump `hostworker/pyproject.toml` and the source version fallback in `hostworker/apsimo_hostworker/__init__.py` before tagging. Do not publish changed hostworker bytes under an existing version.
+1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the two adapter manifests under `plugins/hermes-plugin` and `plugins/pacomind-memory`. The release workflow also builds and publishes `pacomind-hostworker`; if its packaged contents changed, bump `hostworker/pyproject.toml` and the source version fallback in `hostworker/pacomind_hostworker/__init__.py` before tagging. Do not publish changed hostworker bytes under an existing version.
 2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z: title`, prose + bullets)
 3. Commit and tag: `git tag vX.Y.Z && git push --tags`
 4. CI (`.github/workflows/release.yml`) publishes to PyPI, pushes the Docker
-   image to GHCR (`ghcr.io/aevonix/apsimo`), and creates the GitHub release
+   image to GHCR (`ghcr.io/aevonix/pacomind`), and creates the GitHub release
    from the changelog entry: all automatically on the tag push
 
 ## Architecture notes

@@ -6,8 +6,8 @@ from types import SimpleNamespace
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.self_model.judgments import RESPONSE_SCHEMA, SelfJudgments
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.self_model.judgments import RESPONSE_SCHEMA, SelfJudgments
+from pacomind.turns import TurnIdempotencyLedger
 from test_self_perspective import perspective, tell
 from test_turn_source_evidence import source_app
 
@@ -55,8 +55,8 @@ def revise(payload, *, stance='I favor explicit checkpoints for long local work.
 
 @pytest.fixture
 def judgments(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     clock = Clock()
     ledger = TurnIdempotencyLedger(tmp_path / 'sources.db')
     return SelfJudgments(ledger, owner_id='contact-a', clock=clock), clock
@@ -64,8 +64,8 @@ def judgments(tmp_path, monkeypatch):
 
 def admit_source(judgments, turn, *, memory_kind='substantive_event'):
     """Controlled completed upstream admission for judgment-only fixtures."""
-    from apsimo.beliefs.source_claims import validated_claims
-    from apsimo.beliefs.source_projection import SourceClaimProjection
+    from pacomind.beliefs.source_claims import validated_claims
+    from pacomind.beliefs.source_projection import SourceClaimProjection
     from test_source_claim_projection import claim
     with judgments.ledger._connect() as conn:
         row = dict(conn.execute('SELECT * FROM turn_sources WHERE turn_id=?', (turn,)).fetchone())
@@ -124,7 +124,7 @@ async def test_two_processors_revise_with_history_restart_and_relevant_owner_con
         assert history[0]['supersedes'] == history[1]['id']
         assert history[0]['contrary'][0]['turn_id'] == 'judgment-b'
         assert history[0]['applies_to'] == 'owner_turn_deliberation' and history[0]['authority_changed'] is False
-        from apsimo.self_model.perspective import SelfPerspective
+        from pacomind.self_model.perspective import SelfPerspective
         reopened = SelfPerspective(TurnIdempotencyLedger(state.ledger.db_path), owner_id='contact-a', clock=clock)
         learner.perspective = reopened
         for person, token, query, expected in [
@@ -140,10 +140,10 @@ async def test_two_processors_revise_with_history_restart_and_relevant_owner_con
             assert ('I favor checkpoints at meaningful stages' in text) is expected
             if expected:
                 assert 'fallible agent judgments' in text and 'Source turn:judgment-b' in text
-                section = next(s for s in response.json()['sections'] if s['id'] == 'colony-self-perspective')
+                section = next(s for s in response.json()['sections'] if s['id'] == 'pacomind-self-perspective')
                 assert {ref['source_id'] for ref in section['citations']} == {'judgment-a', 'judgment-b'}
         assert not await reopened.judgments.process_one(second)  # no repeated source vote
-        from apsimo.api.routers import host
+        from pacomind.api.routers import host
         unattested = await host.context_assemble(host.ContextAssembleRequest(
             identity={'host_id': 'fixture'}, context={'contact_id': 'contact-a', 'session_id': 'unattested'},
             incoming_message={'role': 'user', 'content': 'What is your view on local work checkpoints?'}), request=None)
@@ -202,7 +202,7 @@ async def test_forgetting_during_inference_cannot_commit(judgments):
 @pytest.mark.asyncio
 async def test_later_topic_head_prevents_stale_model_commit(judgments, monkeypatch):
     state, clock = judgments
-    monkeypatch.setenv('COLONY_SELF_JUDGMENT_INTERVAL_SECONDS', '0')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENT_INTERVAL_SECONDS', '0')
     source(state)
     await state.process_one(Processor())
     source(state, '01-slow', 'Local work checkpoints have one measured benefit.')
@@ -267,8 +267,8 @@ async def test_abstention_scope_and_invalid_output_do_not_create_opinions(judgme
 async def test_existing_worker_indexes_while_reasoning_is_in_flight_and_cancels_it(judgments, monkeypatch):
     state, _ = judgments
     source(state)
-    from apsimo.beliefs import source_projection
-    from apsimo.turns import media, source_vectors
+    from pacomind.beliefs import source_projection
+    from pacomind.turns import media, source_vectors
     entered, indexed_again, cancelled = asyncio.Event(), asyncio.Event(), asyncio.Event()
     async def slow(_payload):
         entered.set()
@@ -302,9 +302,9 @@ async def test_existing_worker_indexes_while_reasoning_is_in_flight_and_cancels_
 @pytest.mark.asyncio
 async def test_slow_claim_keeps_media_and_vector_work_moving_and_cancels(judgments, monkeypatch):
     state, _ = judgments
-    from apsimo.beliefs import source_projection
-    from apsimo.self_model import appraisals
-    from apsimo.turns import media, source_vectors
+    from pacomind.beliefs import source_projection
+    from pacomind.self_model import appraisals
+    from pacomind.turns import media, source_vectors
     entered, indexed_again, described, cancelled = (asyncio.Event() for _ in range(4))
     calls = 0
 

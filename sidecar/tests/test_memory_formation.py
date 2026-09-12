@@ -3,10 +3,10 @@ import json
 
 import pytest
 
-from apsimo.beliefs.source_claims import validated_claims
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.self_model.judgments import SelfJudgments
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.beliefs.source_claims import validated_claims
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.self_model.judgments import SelfJudgments
+from pacomind.turns import TurnIdempotencyLedger
 from test_self_judgments import Clock, Processor, revise, run_row, source
 from test_source_claim_projection import Model, claim, prepared
 
@@ -94,8 +94,8 @@ def test_ordinary_claim_still_requires_its_value_to_be_quoted():
 
 @pytest.mark.asyncio
 async def test_new_judgment_can_omit_only_its_null_predecessor(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     clock = Clock()
     state = SelfJudgments(TurnIdempotencyLedger(tmp_path / 'sources.db'), owner_id='contact-a', clock=clock)
     source(state)
@@ -119,8 +119,8 @@ async def test_new_judgment_can_omit_only_its_null_predecessor(tmp_path, monkeyp
 
 @pytest.mark.asyncio
 async def test_missing_predecessor_does_not_hide_other_invalid_judgment_fields(tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     state = SelfJudgments(TurnIdempotencyLedger(tmp_path / 'sources.db'), owner_id='contact-a', clock=Clock())
     source(state)
 

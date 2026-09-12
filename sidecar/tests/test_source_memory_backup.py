@@ -7,9 +7,9 @@ import sys
 
 import pytest
 
-from apsimo import backup
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.media import SourceMedia
+from pacomind import backup
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.media import SourceMedia
 from test_source_media import image_bytes, message
 from test_hermes_turn_outbox import _load_client
 
@@ -138,7 +138,7 @@ os._exit(0)
 
 
 def _memory_archive(state, output):
-    (state / 'colony-id').write_text('recovery-fixture-colony')
+    (state / 'pacomind-id').write_text('recovery-fixture-pacomind')
     return backup.create_full_backup(state, output, include_graph=False, include_vectors=False)
 
 
@@ -180,11 +180,11 @@ def test_memory_salvage_keeps_newer_erasures_and_offline_host_cursor(evidence, t
 @pytest.mark.parametrize('lost_original', ['missing', 'corrupt'])
 def test_memory_salvage_recovers_owned_bytes_and_current_corrections_scope_only(evidence, tmp_path, lost_original):
     state, ledger, media, asset = evidence
-    from apsimo.turns.idempotency import canonical_turn_digest
+    from pacomind.turns.idempotency import canonical_turn_digest
     source = [{'role': 'user', 'content': 'The toolbox is in the study.'}]
     ledger.record_source('text-source', contact_id='fixture-contact', session_id='original',
                          messages=source, derive_claims=False)
-    runtime_files = ('task_queue.db', 'approval_authority.db', 'contacts.db', 'colony-action-journal.db')
+    runtime_files = ('task_queue.db', 'approval_authority.db', 'contacts.db', 'pacomind-action-journal.db')
     for filename in runtime_files:
         with sqlite3.connect(state / filename) as db:
             db.execute('CREATE TABLE records(id TEXT)')
@@ -232,13 +232,13 @@ def test_memory_salvage_recovers_owned_bytes_and_current_corrections_scope_only(
     assert recovered_ledger.erase_sources(contact_id='fixture-contact', turn_ids=['image-source'])['media_cleanup'] == 'complete'
 
 
-@pytest.mark.parametrize('missing', ['colony-id', 'turn-idempotency.db'])
+@pytest.mark.parametrize('missing', ['pacomind-id', 'turn-idempotency.db'])
 def test_memory_salvage_requires_surviving_identity_and_history(evidence, tmp_path, missing):
     state, _, _, _ = evidence
     archive = _memory_archive(state, tmp_path / 'archives')
     (state / missing).unlink()
     destination = tmp_path / 'absent'
-    with pytest.raises(ValueError, match='surviving colony identity and source ledger'):
+    with pytest.raises(ValueError, match='surviving pacomind identity and source ledger'):
         backup.restore_source_memory(archive, destination, current_state=state)
     assert not destination.exists()
 
@@ -262,7 +262,7 @@ def test_memory_salvage_rejects_different_history_at_the_same_erasure_head(evide
     archive = _memory_archive(state, tmp_path / 'archives')
     other = tmp_path / 'different-current'
     alternate = TurnIdempotencyLedger(other / 'turn-idempotency.db')
-    (other / 'colony-id').write_text('recovery-fixture-colony')
+    (other / 'pacomind-id').write_text('recovery-fixture-pacomind')
     alternate.record_source('different-source', contact_id='fixture-contact', session_id='other',
         messages=[{'role': 'user', 'content': 'Different history.'}], derive_claims=False)
     alternate.erase_sources(contact_id='fixture-contact', turn_ids=['different-source'])
@@ -273,7 +273,7 @@ def test_memory_salvage_rejects_different_history_at_the_same_erasure_head(evide
 
 def test_memory_salvage_uses_existing_encrypted_archive_support(evidence, tmp_path):
     state, _, _, asset = evidence
-    (state / 'colony-id').write_text('recovery-fixture-colony')
+    (state / 'pacomind-id').write_text('recovery-fixture-pacomind')
     archive = backup.create_full_backup(state, tmp_path / 'archives',
         passphrase=b'fixture-passphrase', include_graph=False, include_vectors=False)
     destination = tmp_path / 'memory'
@@ -290,11 +290,11 @@ def test_memory_salvage_rejects_identity_mismatch_and_existing_destination(evide
     state, _, _, _ = evidence
     archive = _memory_archive(state, tmp_path / 'archives')
     destination = tmp_path / 'absent'
-    (state / 'colony-id').write_text('unrelated-colony')
-    with pytest.raises(ValueError, match='different colony identities'):
+    (state / 'pacomind-id').write_text('unrelated-pacomind')
+    with pytest.raises(ValueError, match='different pacomind identities'):
         backup.restore_source_memory(archive, destination, current_state=state)
     assert not destination.exists()
-    (state / 'colony-id').write_text('recovery-fixture-colony')
+    (state / 'pacomind-id').write_text('recovery-fixture-pacomind')
     with pytest.raises(ValueError, match='fresh destination'):
         backup.restore_source_memory(archive, state, current_state=state)
 
@@ -317,7 +317,7 @@ def test_memory_salvage_checks_owned_originals_before_publication(evidence, tmp_
 
 def test_restore_cli_reports_scope_and_requires_explicit_memory_destination(evidence, tmp_path, monkeypatch, capsys):
     from types import SimpleNamespace
-    from apsimo import cli
+    from pacomind import cli
     state, _, _, _ = evidence
     archive = _memory_archive(state, tmp_path / 'archives')
     monkeypatch.setattr(cli, '_load_dotenv', lambda: None)
@@ -327,18 +327,18 @@ def test_restore_cli_reports_scope_and_requires_explicit_memory_destination(evid
         cli._cmd_restore(args)
     assert stopped.value.code == 2
     args.output = str(tmp_path / 'memory')
-    monkeypatch.setattr(sys, 'argv', ['colony', 'restore', '--memory-only', '--input', str(archive),
+    monkeypatch.setattr(sys, 'argv', ['pacomind', 'restore', '--memory-only', '--input', str(archive),
                                      '--current-state', str(state), '--output', args.output])
     cli.main()
     output = capsys.readouterr().out
     assert 'Current source memory recovered' in output
     assert 'separately current runtime bindings' in output
-    assert "Run 'colony start'" not in output
+    assert "Run 'pacomind start'" not in output
 
-    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path / 'full-state'))
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(tmp_path / 'full-state'))
     args.full = True; args.memory_only = False; args.current_state = None; args.output = None
     cli._cmd_restore(args)
     output = capsys.readouterr().out
     assert 'Archive reconstructed' in output
     assert 'Reconcile current authority, erasures and completed effects' in output
-    assert "Run 'colony start'" not in output
+    assert "Run 'pacomind start'" not in output

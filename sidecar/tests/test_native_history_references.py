@@ -1,9 +1,9 @@
 import pytest
 
-from apsimo.api.routers.host import SourceFreshnessRequest
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.history_references import resolve
-from apsimo.turns.idempotency import source_message_hash
+from pacomind.api.routers.host import SourceFreshnessRequest
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.history_references import resolve
+from pacomind.turns.idempotency import source_message_hash
 
 
 def test_native_message_resolution_preserves_scope_and_erased_identity(tmp_path):

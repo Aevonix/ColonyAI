@@ -65,7 +65,7 @@ def video_runtime(runtime):
     current = {'role': 'user', 'content': 'Inspect the selected clip at one second.'}
     rt.middleware.observe(rt.scope, [current], user_message=current['content'])
     stamp = json.dumps({'contact_id': 'owner', 'watermark': 0, 'sources': [rt.ref]})
-    current['api_content'] = current['content'] + '\n\n<memory-context>\n[colony-recall-v1 ' + stamp + ']\n' + rt.asset + '\n[/colony-recall-v1]\n</memory-context>'
+    current['api_content'] = current['content'] + '\n\n<memory-context>\n[pacomind-recall-v1 ' + stamp + ']\n' + rt.asset + '\n[/pacomind-recall-v1]\n</memory-context>'
     rt.wire = {'role': 'user', 'content': current['api_content']}
     rt.middleware({'messages': [rt.wire]}, rt.scope)
     rt.helper = importlib.import_module(rt.module.__package__ + '.source_read')
@@ -83,7 +83,7 @@ def request(rt, shape):
                        {'type': 'input_image', 'image_url': image['image_url']['url']}]}]}
     if shape == 'anthropic':
         return {'messages': [rt.wire, {'role': 'assistant', 'content': [{'type': 'tool_use',
-            'id': 'actual-frame', 'name': 'colony_memory_read_source', 'input': rt.args}]},
+            'id': 'actual-frame', 'name': 'pacomind_memory_read_source', 'input': rt.args}]},
             {'role': 'user', 'content': [{'type': 'tool_result', 'tool_use_id': 'actual-frame',
                 'content': [text, {'type': 'image', 'source': {'type': 'base64', 'media_type': 'image/png',
                     'data': rt.encoded}}]}]}]}
@@ -152,7 +152,7 @@ def test_video_open_uses_absolute_deadline_and_late_response_never_registers(vid
 def test_video_source_protocol_never_retries_generic_predecessor_route(video_runtime, source_kind):
     rt = video_runtime
     module = importlib.import_module(rt.module.__package__ + '.client')
-    client = module.ColonyClient('http://fixture'); calls = []
+    client = module.PacoMindClient('http://fixture'); calls = []
     def reject(path, **kwargs):
         calls.append(path)
         return httpx.Response(409, request=httpx.Request('PUT', 'http://fixture' + path))
@@ -174,7 +174,7 @@ def test_video_source_protocol_never_retries_generic_predecessor_route(video_run
 def test_video_without_stable_turn_id_is_not_sent_to_legacy_sync(video_runtime, checkpoint):
     rt = video_runtime
     module = importlib.import_module(rt.module.__package__ + '.client')
-    client = module.ColonyClient('http://fixture'); calls = []
+    client = module.PacoMindClient('http://fixture'); calls = []
     def legacy_acceptance(path, **kwargs):
         calls.append(path)
         return httpx.Response(200, json={'accepted': True}, request=httpx.Request('POST', 'http://fixture'+path))

@@ -1,6 +1,6 @@
 """H3.3 — owner tom2 context: GET /tom2/report (owner API, full content)
-plus the colony-tom2 context section, injected ONLY when the assembling
-contact IS the owner, behind COLONY_TOM2_CONTEXT (default 0).
+plus the pacomind-tom2 context section, injected ONLY when the assembling
+contact IS the owner, behind PACOMIND_TOM2_CONTEXT (default 0).
 
 Hard test-lock: the section is absent for every non-owner contact_id even
 with the flag on — the flag turns the owner section on, it can never widen
@@ -11,14 +11,14 @@ from __future__ import annotations
 
 import pytest
 
-import apsimo.api.routers.host as host
-from apsimo.api.schemas.host import (
+import pacomind.api.routers.host as host
+from pacomind.api.schemas.host import (
     ContextAssembleRequest, HostIdentity, HostMessage, HostTurnContext,
 )
-from apsimo.tom.asymmetry import tom2_context_enabled
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.tom.tom2 import Tom2Store
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.tom.asymmetry import tom2_context_enabled
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.tom.tom2 import Tom2Store
+from pacomind.turns import TurnIdempotencyLedger
 
 OWNER = "cid-owner-test"
 
@@ -33,7 +33,7 @@ def _req(cid):
 
 @pytest.fixture()
 def wired(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_OWNER_CONTACT_ID", OWNER)
+    monkeypatch.setenv("PACOMIND_OWNER_CONTACT_ID", OWNER)
     ledger = TurnIdempotencyLedger(tmp_path / "turns.db")
     ledger.record_source("fixture-source", contact_id="cid-alice", session_id="s1",
         messages=[{"role": "user", "content": "the release slipped to next month"}],
@@ -55,7 +55,7 @@ def wired(monkeypatch, tmp_path):
 
 
 def _tom2_sections(resp):
-    return [s for s in resp.sections if s.id == "colony-tom2"]
+    return [s for s in resp.sections if s.id == "pacomind-tom2"]
 
 
 # ---------------------------------------------------------------------------
@@ -63,9 +63,9 @@ def _tom2_sections(resp):
 # ---------------------------------------------------------------------------
 
 def test_flag_defaults_off(monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_CONTEXT", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_CONTEXT", raising=False)
     assert tom2_context_enabled() is False
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
     assert tom2_context_enabled() is True
 
 
@@ -110,7 +110,7 @@ async def test_report_unwired(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_section_for_owner_when_flag_on(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
     resp = await host.context_assemble(_req(OWNER))
     secs = _tom2_sections(resp)
     assert len(secs) == 1
@@ -121,7 +121,7 @@ async def test_section_for_owner_when_flag_on(wired, monkeypatch):
 @pytest.mark.asyncio
 async def test_section_absent_when_flag_off_even_for_owner(wired,
                                                            monkeypatch):
-    monkeypatch.delenv("COLONY_TOM2_CONTEXT", raising=False)
+    monkeypatch.delenv("PACOMIND_TOM2_CONTEXT", raising=False)
     resp = await host.context_assemble(_req(OWNER))
     assert _tom2_sections(resp) == []
 
@@ -129,9 +129,9 @@ async def test_section_absent_when_flag_off_even_for_owner(wired,
 @pytest.mark.asyncio
 async def test_section_absent_for_every_non_owner_even_with_flag_on(
         wired, monkeypatch):
-    """THE lock: no non-owner contact ever sees colony-tom2, whatever the
+    """THE lock: no non-owner contact ever sees pacomind-tom2, whatever the
     flag says — including ids that resemble or contain the owner's."""
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
     for cid in ("cid-alice", "cid-bob", "cid-anyone", OWNER + "-suffix",
                 "CID-OWNER-TEST", "cid-owner", ""):
         resp = await host.context_assemble(_req(cid or "cid-empty-stub"))
@@ -143,9 +143,9 @@ async def test_section_absent_for_every_non_owner_even_with_flag_on(
 @pytest.mark.asyncio
 async def test_section_absent_when_owner_identity_unset(wired, monkeypatch):
     """No owner configured => no section anywhere (fails closed)."""
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
-    monkeypatch.delenv("COLONY_OWNER_CONTACT_ID", raising=False)
-    monkeypatch.delenv("COLONY_HOST_CONTACT_ID", raising=False)
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
+    monkeypatch.delenv("PACOMIND_OWNER_CONTACT_ID", raising=False)
+    monkeypatch.delenv("PACOMIND_HOST_CONTACT_ID", raising=False)
     resp = await host.context_assemble(_req(OWNER))
     assert _tom2_sections(resp) == []
 
@@ -155,6 +155,6 @@ async def test_section_body_never_carries_other_visibility(wired,
                                                            monkeypatch):
     """Render helper only reads owner-scoped rows (the store refuses any
     other visibility at write time; belt-and-suspenders check here)."""
-    monkeypatch.setenv("COLONY_TOM2_CONTEXT", "1")
+    monkeypatch.setenv("PACOMIND_TOM2_CONTEXT", "1")
     body = host._render_tom2_context()
     assert "unaware of" in body

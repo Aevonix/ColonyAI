@@ -22,16 +22,16 @@ platform=sys.argv[4]
 import httpx
 import uvicorn
 from fastapi import FastAPI, Response
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions, host
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.turns import get_turn_idempotency_ledger
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions, host
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.turns import get_turn_idempotency_ledger
 
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-state=Path(os.environ['COLONY_STATE_DIR']); state.mkdir()
+state=Path(os.environ['PACOMIND_STATE_DIR']); state.mkdir()
 contacts=SQLiteContactStore(ContactsConfig(sqlite_path=str(state/'contacts.db')))
 async def create_owner():
     await contacts.connect()
@@ -39,7 +39,7 @@ async def create_owner():
     await contacts.add_handle(contact.contact_id,gateway='sms',address='+15550007160',verified=True)
     return contact.contact_id
 owner=asyncio.run(create_owner()); host._contacts_store=contacts
-os.environ['COLONY_OWNER_CONTACT_ID']=owner
+os.environ['PACOMIND_OWNER_CONTACT_ID']=owner
 store=InitiativeStore(state); host._initiative_store=store; host._task_queue=None
 work=store.create(type='RESEARCH_DEEP_DIVE', description='Neutral concurrent note comparison',
     source_type='installed_capabilities', created_by='native_local_work',
@@ -57,7 +57,7 @@ ledger.record_source('neutral-source', contact_id=owner, session_id='earlier-ses
 app=FastAPI(); wire=[]; unavailable=threading.Event()
 @app.middleware('http')
 async def authority(request, next_call):
-    request.state.colony_authority=RequestAuthority(principal_id='neutral-native', credential_id='fixture',
+    request.state.pacomind_authority=RequestAuthority(principal_id='neutral-native', credential_id='fixture',
         scopes=frozenset({'turns:write','turns:resolve-sender','context:read'}), viewer_person_id=owner,
         turn_ingress_platforms=frozenset({'sms'}),
         person_ids=frozenset({owner}), audiences=frozenset({'viewer'}), authenticated=True)
@@ -81,16 +81,16 @@ def local_only(self,address):
     return original_connect(self,address)
 socket.socket.connect=local_only
 (home/'config.yaml').write_text(json.dumps({
-    'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':owner,'url':base,
+    'plugins':{'enabled':['pacomind'],'pacomind':{'owner_contact_id':owner,'url':base,
         'attested_system_platforms':['cli'],'turn_writer_platforms':[]}},
-    'memory':{'provider':'apsimo-memory','config':{'contact_id':owner,'url':base}}}))
+    'memory':{'provider':'pacomind-memory','config':{'contact_id':owner,'url':base}}}))
 
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['apsimo'].enabled
+assert get_plugin_manager()._plugins['pacomind'].enabled
 from plugins.memory import load_memory_provider
 from agent.memory_manager import MemoryManager
-provider=load_memory_provider('apsimo-memory')
+provider=load_memory_provider('pacomind-memory')
 manager=MemoryManager(); manager.add_provider(provider)
 manager.initialize_all('neutral-owner-session', hermes_home=str(home), platform=platform)
 from gateway.session_context import set_session_vars, clear_session_vars
@@ -120,7 +120,7 @@ import run_agent
 OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
 TOOLS_TARGET = 'run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 requests=[]; user_message='Read the neutral local note while keeping track of the other work.'
-marker='[colony-work-request-v1]'; closing='[/colony-work-request-v1]'
+marker='[pacomind-work-request-v1]'; closing='[/pacomind-work-request-v1]'
 def work_block(request):
     blocks=[]
     for row in request['messages']:
@@ -209,12 +209,12 @@ def test_native_turn_refreshes_shared_work_between_model_calls(artifacts, tmp_pa
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install qualified Hermes to exercise actual native model requests')
     env={key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'profile'), COLONY_STATE_DIR=str(tmp_path/'colony'),
+    env.update(HERMES_HOME=str(tmp_path/'profile'), PACOMIND_STATE_DIR=str(tmp_path/'pacomind'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'), HERMES_DISABLE_TELEMETRY='1',
-        HERMES_DISABLE_LAZY_INSTALLS='1', COLONY_GENERAL_PLUGIN_ACTIVE='1',
-        COLONY_MEMORY_WORKER_TOOLS='0', COLONY_MEMORY_TURN_WRITER='disabled',
-        COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system', COLONY_GUARD_CHAT_MODE='off',
-        COLONY_OWNER_CONTACT_ID='owner', COLONY_SKIP_DOTENV='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
+        HERMES_DISABLE_LAZY_INSTALLS='1', PACOMIND_GENERAL_PLUGIN_ACTIVE='1',
+        PACOMIND_MEMORY_WORKER_TOOLS='0', PACOMIND_MEMORY_TURN_WRITER='disabled',
+        PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system', PACOMIND_GUARD_CHAT_MODE='off',
+        PACOMIND_OWNER_CONTACT_ID='owner', PACOMIND_SKIP_DOTENV='1', LITELLM_LOCAL_MODEL_COST_MAP='True')
     result=run_python('-I','-c',PROBE,artifacts[3],ROOT/'sidecar',
-        os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''),platform,cwd=tmp_path,env=env)
+        os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH',''),platform,cwd=tmp_path,env=env)
     assert json.loads(result.stdout.splitlines()[-1])['concurrent_completion_visible']

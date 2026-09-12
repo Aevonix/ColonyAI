@@ -5,15 +5,15 @@ import sqlite3
 
 import pytest
 
-from apsimo.contacts.comms import CommsLog
-from apsimo.contacts.config import ContactsConfig
-from apsimo.contacts.store import SQLiteContactStore
-from apsimo.identity.participants import (
+from pacomind.contacts.comms import CommsLog
+from pacomind.contacts.config import ContactsConfig
+from pacomind.contacts.store import SQLiteContactStore
+from pacomind.identity.participants import (
     SYSTEM_CONTACT_ID,
     ParticipantResolver,
     is_machine_turn,
 )
-from apsimo.intelligence.relationships.profiler import (
+from pacomind.intelligence.relationships.profiler import (
     RelationshipBrief,
     RelationshipProfiler,
 )
@@ -64,7 +64,7 @@ class TestResolverLadder:
         assert r2.contact_id == r.contact_id and not r2.created
 
     async def test_shadow_disabled(self, store, monkeypatch):
-        monkeypatch.setenv("COLONY_IDENTITY_SHADOW_CONTACTS", "false")
+        monkeypatch.setenv("PACOMIND_IDENTITY_SHADOW_CONTACTS", "false")
         r = await ParticipantResolver(store).resolve(
             platform="whatsapp", user_id="777@lid")
         assert r.contact_id is None and r.method == "none"
@@ -261,9 +261,9 @@ class TestProfiler:
 
 class TestDoctorAttribution:
     def test_placeholder_fraction_warns(self, tmp_path, monkeypatch):
-        from apsimo import doctor
-        monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-        conn = sqlite3.connect(tmp_path / "colony-comms.db")
+        from pacomind import doctor
+        monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+        conn = sqlite3.connect(tmp_path / "pacomind-comms.db")
         conn.execute(
             "CREATE TABLE communications (id TEXT, contact_id TEXT, "
             "channel TEXT, direction TEXT, summary TEXT, session_id TEXT, "
@@ -279,9 +279,9 @@ class TestDoctorAttribution:
         assert r.status == doctor.WARN
 
     def test_healthy_attribution_passes(self, tmp_path, monkeypatch):
-        from apsimo import doctor
-        monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-        conn = sqlite3.connect(tmp_path / "colony-comms.db")
+        from pacomind import doctor
+        monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+        conn = sqlite3.connect(tmp_path / "pacomind-comms.db")
         conn.execute(
             "CREATE TABLE communications (id TEXT, contact_id TEXT, "
             "channel TEXT, direction TEXT, summary TEXT, session_id TEXT, "
@@ -297,8 +297,8 @@ class TestDoctorAttribution:
         assert r.status == doctor.PASS
 
     def test_no_ledger_skips(self, tmp_path, monkeypatch):
-        from apsimo import doctor
-        monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+        from pacomind import doctor
+        monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
         r = doctor.check_relationship_attribution()
         assert r.status == doctor.SKIP
 
@@ -325,8 +325,8 @@ class TestCanonicalIdResolution:
 
 class TestResearchReviewGate:
     async def test_injection_in_artifact_is_flagged(self):
-        from apsimo.research.pipeline import ResearchPipeline
-        from apsimo.research.artifact import Artifact, ArtifactFormat
+        from pacomind.research.pipeline import ResearchPipeline
+        from pacomind.research.artifact import Artifact, ArtifactFormat
         p = ResearchPipeline()
 
         class _Run:
@@ -339,8 +339,8 @@ class TestResearchReviewGate:
         assert res.injection_clean is False and res.passed is False
 
     async def test_clean_artifact_passes(self):
-        from apsimo.research.pipeline import ResearchPipeline
-        from apsimo.research.artifact import Artifact, ArtifactFormat
+        from pacomind.research.pipeline import ResearchPipeline
+        from pacomind.research.artifact import Artifact, ArtifactFormat
         p = ResearchPipeline()
 
         class _Run:

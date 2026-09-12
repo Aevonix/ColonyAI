@@ -7,8 +7,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.router.router import LLMRouter
-from apsimo.router.tiers import ModelTier, TierConfig, build_tiers_from_host
+from pacomind.router.router import LLMRouter
+from pacomind.router.tiers import ModelTier, TierConfig, build_tiers_from_host
 
 
 HOST_CFG = {
@@ -151,7 +151,7 @@ def test_configure_response_accepts_object_specs():
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
 
-    from apsimo.api.routers.host import router as host_router
+    from pacomind.api.routers.host import router as host_router
 
     app = FastAPI()
     app.include_router(host_router)

@@ -1,4 +1,4 @@
-"""Failing-first governance contract for the Hermes general Colony plugin.
+"""Failing-first governance contract for the Hermes general PacoMind plugin.
 
 The general plugin is model-visible.  It therefore owns a stricter boundary
 than a convenience HTTP wrapper: reads are scoped by host transport context,
@@ -25,7 +25,7 @@ PLUGIN_DIR = Path(__file__).resolve().parents[2] / "plugins" / "hermes-plugin"
 GUARD_PATH = "/v1/host/response-guard/check"
 
 
-def _load_plugin(name: str = "colony_hermes_general_governance_test"):
+def _load_plugin(name: str = "pacomind_hermes_general_governance_test"):
     sys.modules.pop(name, None)
     spec = importlib.util.spec_from_file_location(
         name,
@@ -196,19 +196,19 @@ class _OwnerMessageMediator:
         value = intent.to_dict()
         self.requests.append(value)
         return {
-            "schema": "ColonyOwnerMessageAdmissionV1",
+            "schema": "PacoMindOwnerMessageAdmissionV1",
             "version": 1,
             "status": "accepted",
             "effect_performed": False,
             "delivery_id": value["delivery_id"],
-            "intent_id": "colony-intent:" + "a" * 64,
+            "intent_id": "pacomind-intent:" + "a" * 64,
             "provider_delivered": False,
         }
 
 
 class _Context:
     def __init__(self, config: dict):
-        self.config = {"plugins": {"colony": config}}
+        self.config = {"plugins": {"pacomind": config}}
         self.tools: dict[str, dict] = {}
         self.hooks: dict[str, object] = {}
         self.middleware: dict[str, object] = {}
@@ -249,26 +249,26 @@ def runtime(monkeypatch, tmp_path):
             super().__init__(*args, **kwargs)
             holders["client"] = self
 
-    module.ColonyClient = Client
+    module.PacoMindClient = Client
     module.ActionMediator = _Mediator
     module.OwnerMessageMediator = _OwnerMessageMediator
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "off")
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "off")
     config = {
-        "url": "http://colony.test",
+        "url": "http://pacomind.test",
         "api_key": "sidecar-secret",
         "owner_contact_id": "cid-owner",
         "attested_system_platforms": ["cli"],
         "action_mediator_url": "http://mediator.test/v1/action-intents",
         "action_mediator_api_key": "mediator-secret",
-        "action_mediator_principal": "hermes-colony-plugin",
+        "action_mediator_principal": "hermes-pacomind-plugin",
         "enabled_action_tools": list(module._ACTION_INTENT_TOOL_NAMES),
         "owner_message_mediator_url": "http://127.0.0.1:18802/internal/owner-deliver",
         "owner_message_mediator_api_key": "owner-message-secret-" + "x" * 32,
         "owner_message_mediator_principal": "hermes-owner-message",
-        "enabled_message_tools": ["colony_send_message"],
+        "enabled_message_tools": ["pacomind_send_message"],
         "turn_outbox_path": str(tmp_path / "turn-outbox.sqlite3"),
     }
     context = _Context(config)
@@ -336,17 +336,17 @@ def _wait_until(predicate, timeout: float = 3.0):
 
 
 def test_catalog_and_attestation_are_exact_and_self_consistent():
-    module = _load_plugin("colony_hermes_catalog_governance_test")
+    module = _load_plugin("pacomind_hermes_catalog_governance_test")
     names = [item["name"] for item in module._TOOL_SCHEMAS]
     assert names == sorted(set(names))
     research = next(
         item for item in module._TOOL_SCHEMAS
-        if item["name"] == "colony_research"
+        if item["name"] == "pacomind_research"
     )
     assert research["parameters"]["properties"]["topic"]["maxLength"] == 1400
     message = next(
         item for item in module._TOOL_SCHEMAS
-        if item["name"] == "colony_send_message"
+        if item["name"] == "pacomind_send_message"
     )
     assert message["parameters"]["required"] == ["recipient", "message"]
     assert message["parameters"]["properties"]["channel"] == {
@@ -355,14 +355,14 @@ def test_catalog_and_attestation_are_exact_and_self_consistent():
     }
     assert list(module.GOVERNED_EVENT_TYPES) == []
     value = module.governance_attestation()
-    assert value["schema"] == "ColonyHermesGeneralGovernanceAttestationV2"
+    assert value["schema"] == "PacoMindHermesGeneralGovernanceAttestationV2"
     assert value["version"] == 2
     assert value["source_ready"] is True
     assert value["runtime_ready"] is False
     assert value["live_ready"] is False
     assert value.get("ready") is not True
     assert value["runtime_attestation_schema"] == (
-        "ColonyHermesGeneralRuntimeAttestationV1"
+        "PacoMindHermesGeneralRuntimeAttestationV1"
     )
     assert value["direct_effect_tool_names"] == []
     assert sorted(
@@ -372,7 +372,7 @@ def test_catalog_and_attestation_are_exact_and_self_consistent():
         + value["owner_message_intent_tool_names"]
     ) == names
     assert set(value["read_tool_names"]).isdisjoint(value["action_intent_tool_names"])
-    assert value["owner_message_intent_tool_names"] == ["colony_send_message"]
+    assert value["owner_message_intent_tool_names"] == ["pacomind_send_message"]
     assert value["model_visible_schema_sha256"] == hashlib.sha256(json.dumps(
         list(module._TOOL_SCHEMAS), sort_keys=True, separators=(",", ":"),
         ensure_ascii=True, allow_nan=False,
@@ -410,23 +410,23 @@ def test_catalog_and_attestation_are_exact_and_self_consistent():
 def test_runtime_attestation_requires_mediator_subset_and_private_outbox(
     monkeypatch, tmp_path,
 ):
-    module = _load_plugin("colony_hermes_runtime_attestation_test")
+    module = _load_plugin("pacomind_hermes_runtime_attestation_test")
     monkeypatch.setenv("MEDIATOR_KEY", "resolved-secret")
     base = {
         "action_mediator_url": "http://127.0.0.1:8785/v1/action-intents",
         "action_mediator_api_key": "${MEDIATOR_KEY}",
-        "action_mediator_principal": "hermes-colony-plugin",
+        "action_mediator_principal": "hermes-pacomind-plugin",
         "enabled_action_tools": [
-            "colony_autonomy_disable", "colony_create_commitment",
+            "pacomind_autonomy_disable", "pacomind_create_commitment",
         ],
         "turn_outbox_path": str(tmp_path / "runtime.sqlite3"),
     }
 
     ready = module.runtime_governance_attestation(base)
     assert ready == {
-        "schema": "ColonyHermesGeneralRuntimeAttestationV1",
+        "schema": "PacoMindHermesGeneralRuntimeAttestationV1",
         "version": 1,
-        "source_schema": "ColonyHermesGeneralGovernanceAttestationV2",
+        "source_schema": "PacoMindHermesGeneralGovernanceAttestationV2",
         "source_ready": True,
         "private_text_runtime_ready": True,
         "turn_outbox_ready": True,
@@ -459,10 +459,10 @@ def test_runtime_attestation_requires_mediator_subset_and_private_outbox(
         ).encode()).hexdigest(),
         "enabled_read_tools_source": "default_full_catalog",
         "enabled_action_tools": [
-            "colony_autonomy_disable", "colony_create_commitment",
+            "pacomind_autonomy_disable", "pacomind_create_commitment",
         ],
         "enabled_action_tools_sha256": hashlib.sha256(
-            b'["colony_autonomy_disable","colony_create_commitment"]'
+            b'["pacomind_autonomy_disable","pacomind_create_commitment"]'
         ).hexdigest(),
         "enabled_message_tools": [],
         "enabled_message_tools_sha256": hashlib.sha256(b"[]").hexdigest(),
@@ -528,7 +528,7 @@ def test_runtime_attestation_requires_mediator_subset_and_private_outbox(
 
 
 def test_source_attestation_cannot_be_mapped_to_runtime_or_live_readiness():
-    module = _load_plugin("colony_hermes_source_runtime_split_test")
+    module = _load_plugin("pacomind_hermes_source_runtime_split_test")
     source = module.governance_attestation()
     # A source-only child has no deployment config, credential, principal, or
     # initialized outbox. Consumers must require the separate runtime schema.
@@ -562,13 +562,13 @@ def test_concurrent_reordered_senders_keep_exact_handler_context(runtime):
 
     def run_owner():
         return _json(_tool(
-            context, "colony_task_complete", {"task_id": "task-owner"},
+            context, "pacomind_task_complete", {"task_id": "task-owner"},
             session="s-owner", task="t-owner", turn="turn-owner", call="call-owner",
         ))
 
     def run_guest():
         return _json(_tool(
-            context, "colony_task_complete", {"task_id": "task-guest"},
+            context, "pacomind_task_complete", {"task_id": "task-guest"},
             session="s-guest", task="t-guest", turn="turn-guest", call="call-guest",
         ))
 
@@ -601,7 +601,7 @@ def test_private_world_reads_require_exact_owner_and_never_fallback(runtime):
     _pre(context, session="s-guest", task="t-guest", turn="turn-guest",
          platform="sms", sender="+15550002")
     denied = _json(_tool(
-        context, "colony_query_entities", {"query": "owner secret"},
+        context, "pacomind_query_entities", {"query": "owner secret"},
         session="s-guest", task="t-guest", turn="turn-guest", call="read-guest",
     ))
     assert denied["status"] == "denied"
@@ -610,7 +610,7 @@ def test_private_world_reads_require_exact_owner_and_never_fallback(runtime):
     _pre(context, session="s-missing", task="t-missing", turn="turn-missing",
          platform="sms", sender="+19999999")
     missing = _json(_tool(
-        context, "colony_query_entities", {"query": "owner secret"},
+        context, "pacomind_query_entities", {"query": "owner secret"},
         session="s-missing", task="t-missing", turn="turn-missing", call="read-missing",
     ))
     assert missing["status"] == "denied"
@@ -620,7 +620,7 @@ def test_private_world_reads_require_exact_owner_and_never_fallback(runtime):
     _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
          platform="sms", sender="+15550001")
     allowed = _json(_tool(
-        context, "colony_query_entities", {"query": "my organization"},
+        context, "pacomind_query_entities", {"query": "my organization"},
         session="s-owner", task="t-owner", turn="turn-owner", call="read-owner",
     ))
     assert allowed["entities"][0]["id"] == "entity-owner"
@@ -633,7 +633,7 @@ def test_entity_query_carries_the_host_identity_the_sidecar_requires(runtime):
     _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
          platform="sms", sender="+15550001")
     result = _json(_tool(
-        context, "colony_query_entities", {"query": "owner org", "entity_type": "organization"},
+        context, "pacomind_query_entities", {"query": "owner org", "entity_type": "organization"},
         session="s-owner", task="t-owner", turn="turn-owner", call="entities-owner",
     ))
     assert result["entities"][0]["id"] == "entity-owner"
@@ -652,12 +652,12 @@ def test_queue_stats_is_a_count_only_projection(runtime):
     _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
          platform="sms", sender="+15550001")
     raw = _tool(
-        context, "colony_queue_stats", {}, session="s-owner",
+        context, "pacomind_queue_stats", {}, session="s-owner",
         task="t-owner", turn="turn-owner", call="queue-owner",
     )
     result = _json(raw)
     assert result == {
-        "schema": "ColonyQueueStatsProjectionV1",
+        "schema": "PacoMindQueueStatsProjectionV1",
         "version": 1,
         "tasks_by_status": {"status_completed": 3, "status_failed": 1},
         "tasks_by_type": {"type_agent_action": 4},
@@ -683,11 +683,11 @@ def test_autonomy_status_is_bounded_owner_system_read_only(runtime):
     _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
          platform="sms", sender="+15550001")
     result = _json(_tool(
-        context, "colony_autonomy_status", {}, session="s-owner",
+        context, "pacomind_autonomy_status", {}, session="s-owner",
         task="t-owner", turn="turn-owner", call="status-owner",
     ))
     assert result == {
-        "schema": "ColonyAutonomyStatusProjectionV1",
+        "schema": "PacoMindAutonomyStatusProjectionV1",
         "version": 1,
         "running": True,
         "mode": "proactive",
@@ -710,7 +710,7 @@ def test_autonomy_status_is_bounded_owner_system_read_only(runtime):
     _pre(context, session="s-guest", task="t-guest", turn="turn-guest",
          platform="sms", sender="+15550002")
     denied = _json(_tool(
-        context, "colony_autonomy_status", {}, session="s-guest",
+        context, "pacomind_autonomy_status", {}, session="s-guest",
         task="t-guest", turn="turn-guest", call="status-guest",
     ))
     assert denied["status"] == "denied"
@@ -724,7 +724,7 @@ def test_autonomy_status_malformed_response_fails_closed(runtime):
          platform="sms", sender="+15550001")
     client.autonomy_status = {"running": "yes", "ticks": -1}
     result = _json(_tool(
-        context, "colony_autonomy_status", {}, session="s-owner",
+        context, "pacomind_autonomy_status", {}, session="s-owner",
         task="t-owner", turn="turn-owner", call="status-malformed",
     ))
     assert result == {
@@ -745,7 +745,7 @@ def test_autonomy_status_malformed_response_fails_closed(runtime):
         "errors": 0,
     }
     result = _json(_tool(
-        context, "colony_autonomy_status", {}, session="s-owner",
+        context, "pacomind_autonomy_status", {}, session="s-owner",
         task="t-owner", turn="turn-owner", call="status-injected",
     ))
     assert result == {
@@ -781,7 +781,7 @@ def test_autonomy_status_rejects_semantically_invalid_prompt_shaped_values(
          platform="sms", sender="+15550001")
 
     result = _json(_tool(
-        context, "colony_autonomy_status", {}, session="s-owner",
+        context, "pacomind_autonomy_status", {}, session="s-owner",
         task="t-owner", turn="turn-owner", call=f"status-{mode}-{timezone}",
     ))
 
@@ -801,7 +801,7 @@ def test_model_cannot_select_contact_viewer_or_credentials(runtime, override):
     _pre(context, session="s-guest", task="t-guest", turn="turn-guest",
          platform="sms", sender="+15550002")
     result = _json(_tool(
-        context, "colony_record_insight",
+        context, "pacomind_record_insight",
         {"insight_type": "fact", "content": "x", **override},
         session="s-guest", task="t-guest", turn="turn-guest", call="override-1",
     ))
@@ -819,24 +819,24 @@ def test_owner_message_tool_is_text_owner_only_retry_stable_and_pii_safe(runtime
     )
     first = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Hello from the assistant."},
         **call,
     ))
     replay = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Hello from the assistant."},
         **call,
     ))
     assert first == replay
     assert first == {
-        "schema": "ColonyOwnerMessageAdmissionV1",
+        "schema": "PacoMindOwnerMessageAdmissionV1",
         "version": 1,
         "status": "accepted",
         "effect_performed": False,
         "delivery_id": owner_mediator.requests[0]["delivery_id"],
-        "intent_id": "colony-intent:" + "a" * 64,
+        "intent_id": "pacomind-intent:" + "a" * 64,
         "provider_delivered": False,
     }
     assert len(owner_mediator.requests) == 2
@@ -849,7 +849,7 @@ def test_owner_message_tool_is_text_owner_only_retry_stable_and_pii_safe(runtime
 
     conflict = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Changed bytes."},
         **call,
     ))
@@ -860,7 +860,7 @@ def test_owner_message_tool_is_text_owner_only_retry_stable_and_pii_safe(runtime
          platform="sms", sender="+15550002")
     denied_guest = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Not authorized."},
         session="s-guest", task="t-guest", turn="turn-guest", call="message-guest",
     ))
@@ -870,7 +870,7 @@ def test_owner_message_tool_is_text_owner_only_retry_stable_and_pii_safe(runtime
          platform="phone_call", sender="+15550001")
     denied_voice = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Not a text turn."},
         session="s-voice", task="t-voice", turn="turn-voice", call="message-voice",
     ))
@@ -887,7 +887,7 @@ def test_owner_message_tool_is_text_owner_only_retry_stable_and_pii_safe(runtime
     assert system_scope.contact_id == "cid-owner"
     autonomous_system = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {
             "recipient": "Approved guest",
             "message": "A route-authorized autonomous follow-up.",
@@ -911,7 +911,7 @@ def test_owner_message_tool_is_text_owner_only_retry_stable_and_pii_safe(runtime
          platform="sms", sender="+19999999")
     denied_unknown = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Unknown is not owner."},
         session="s-unknown", task="t-unknown", turn="turn-unknown", call="message-unknown",
     ))
@@ -1032,7 +1032,7 @@ def test_attested_system_identity_is_distinct_and_model_cannot_forge_its_lane(ru
     )
     forged = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {
             "recipient": "Approved guest",
             "message": "Attempted forged autonomy.",
@@ -1071,8 +1071,8 @@ def test_contact_message_channel_hint_is_bounded_and_retry_stable(runtime, chann
         "message": "Exact route follow-up over " + channel + ".",
         "channel": channel,
     }
-    first = _json(_tool(context, "colony_send_message", arguments, **call))
-    replay = _json(_tool(context, "colony_send_message", arguments, **call))
+    first = _json(_tool(context, "pacomind_send_message", arguments, **call))
+    replay = _json(_tool(context, "pacomind_send_message", arguments, **call))
     assert first == replay
     assert owner_mediator.requests[-1] == owner_mediator.requests[-2]
     assert owner_mediator.requests[-1]["channel"] == channel
@@ -1081,7 +1081,7 @@ def test_contact_message_channel_hint_is_bounded_and_retry_stable(runtime, chann
 
     denied = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {**arguments, "channel": "email"},
         session=call["session"],
         task=call["task"],
@@ -1104,7 +1104,7 @@ def test_contact_message_omitted_channel_keeps_exact_legacy_wire_contract(runtim
     )
     result = _json(_tool(
         context,
-        "colony_send_message",
+        "pacomind_send_message",
         {"recipient": "Approved guest", "message": "Legacy WhatsApp default."},
         session="s-legacy-message",
         task="t-legacy-message",
@@ -1121,7 +1121,7 @@ def test_contact_message_omitted_channel_keeps_exact_legacy_wire_contract(runtim
 
 
 def test_owner_message_mediator_requires_exact_endpoint_and_projection():
-    module = _load_plugin("colony_hermes_owner_message_mediator_test")
+    module = _load_plugin("pacomind_hermes_owner_message_mediator_test")
     configured = module.OwnerMessageMediator(
         url="http://127.0.0.1:18802/internal/owner-deliver",
         api_key="x" * 40,
@@ -1148,7 +1148,7 @@ def test_owner_message_mediator_requires_exact_endpoint_and_projection():
         "version": 1,
         "delivery_id": intent.delivery_id,
         "state": "accepted",
-        "intent_id": "colony-intent:" + "b" * 64,
+        "intent_id": "pacomind-intent:" + "b" * 64,
         "provider_delivered": False,
     }
     assert module._validated_owner_message_admission(value, intent)["status"] == "accepted"
@@ -1168,9 +1168,9 @@ def test_owner_message_mediator_requires_exact_endpoint_and_projection():
         {**value, "version": True},
         {**value, "state": "awaiting_approval"},
         {**value, "intent_id": "recipient@example.invalid"},
-        {**value, "intent_id": "colony-intent:" + "A" * 64},
+        {**value, "intent_id": "pacomind-intent:" + "A" * 64},
         {**value, "extra": "unsafe"},
-        {**held, "intent_id": "colony-intent:" + "a" * 64},
+        {**held, "intent_id": "pacomind-intent:" + "a" * 64},
     ):
         with pytest.raises(RuntimeError, match="owner message mediator"):
             module._validated_owner_message_admission(mutation, intent)
@@ -1182,11 +1182,11 @@ def test_action_intent_replay_conflict_and_mediator_outage(runtime):
          platform="sms", sender="+15550001")
     call = dict(session="s-owner", task="t-owner", turn="turn-owner", call="effect-1")
     first = _json(_tool(
-        context, "colony_task_snooze",
+        context, "pacomind_task_snooze",
         {"task_id": "task-1", "hours": 2, "reason": "later"}, **call,
     ))
     replay = _json(_tool(
-        context, "colony_task_snooze",
+        context, "pacomind_task_snooze",
         {"task_id": "task-1", "hours": 2, "reason": "later"}, **call,
     ))
     assert first == replay
@@ -1209,7 +1209,7 @@ def test_action_intent_replay_conflict_and_mediator_outage(runtime):
     assert len(intent["args_sha256"]) == len(intent["context_sha256"]) == 64
 
     conflict = _json(_tool(
-        context, "colony_task_snooze",
+        context, "pacomind_task_snooze",
         {"task_id": "task-1", "hours": 3, "reason": "later"}, **call,
     ))
     assert conflict["status"] == "conflict"
@@ -1219,15 +1219,15 @@ def test_action_intent_replay_conflict_and_mediator_outage(runtime):
     dispatcher = module._ToolDispatcher(
         client=_client, mediator=unavailable,
         owner_contact_id="cid-owner", attested_system_platforms=("cli",),
-        enabled_action_tools=("colony_task_complete",),
+        enabled_action_tools=("pacomind_task_complete",),
     )
-    context.tools["colony_task_complete"]["handler"] = (
+    context.tools["pacomind_task_complete"]["handler"] = (
         lambda args=None, **kwargs: dispatcher.dispatch(
-            "colony_task_complete", args or {}, **kwargs
+            "pacomind_task_complete", args or {}, **kwargs
         )
     )
     result = _json(_tool(
-        context, "colony_task_complete", {"task_id": "task-2"},
+        context, "pacomind_task_complete", {"task_id": "task-2"},
         session="s-owner", task="t-owner", turn="turn-owner", call="effect-2",
     ))
     assert result == {
@@ -1238,7 +1238,7 @@ def test_action_intent_replay_conflict_and_mediator_outage(runtime):
 
 
 def test_mediator_requires_safe_origin_credential_and_principal(monkeypatch):
-    module = _load_plugin("colony_hermes_mediator_readiness_test")
+    module = _load_plugin("pacomind_hermes_mediator_readiness_test")
     monkeypatch.setenv("MEDIATOR_KEY", "resolved-secret")
     assert not module.ActionMediator(
         url="http://127.0.0.1:8785/v1/action-intents",
@@ -1278,9 +1278,9 @@ def test_mediator_requires_safe_origin_credential_and_principal(monkeypatch):
     lambda value: value.update({"approval_id": ""}),
 ])
 def test_mediator_admission_is_exact_bounded_projection(mutation):
-    module = _load_plugin("colony_hermes_mediator_projection_test")
+    module = _load_plugin("pacomind_hermes_mediator_projection_test")
     intent = module.HermesToolActionIntentV1.build(
-        tool_name="colony_create_commitment",
+        tool_name="pacomind_create_commitment",
         args={"description": "remember"},
         context={"session_id": "s", "tool_call_id": "c", "turn_id": "t"},
     )
@@ -1302,23 +1302,23 @@ def test_mediator_admission_is_exact_bounded_projection(mutation):
 def test_runtime_registers_only_explicit_mediator_backed_action_subset(
     monkeypatch, tmp_path,
 ):
-    module = _load_plugin("colony_hermes_enabled_subset_test")
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module = _load_plugin("pacomind_hermes_enabled_subset_test")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     config = {
-        "url": "http://colony.test",
+        "url": "http://pacomind.test",
         "action_mediator_url": "http://127.0.0.1:8785/v1/action-intents",
         "action_mediator_api_key": "mediator-secret",
-        "action_mediator_principal": "hermes-colony-plugin",
-        "enabled_action_tools": ["colony_create_commitment"],
+        "action_mediator_principal": "hermes-pacomind-plugin",
+        "enabled_action_tools": ["pacomind_create_commitment"],
         "turn_outbox_path": str(tmp_path / "subset.sqlite3"),
     }
     context = _Context(config)
     module.register(context)
-    assert "colony_create_commitment" in context.tools
-    assert "colony_autonomy_enable" not in context.tools
+    assert "pacomind_create_commitment" in context.tools
+    assert "pacomind_autonomy_enable" not in context.tools
     assert set(module._READ_TOOL_NAMES).issubset(context.tools)
 
     no_credential = dict(config, action_mediator_api_key="")
@@ -1326,7 +1326,7 @@ def test_runtime_registers_only_explicit_mediator_backed_action_subset(
     module.register(context)
     assert not set(module._ACTION_INTENT_TOOL_NAMES).intersection(context.tools)
 
-    unknown = dict(config, enabled_action_tools=["colony_not_real"])
+    unknown = dict(config, enabled_action_tools=["pacomind_not_real"])
     with pytest.raises(RuntimeError, match="unknown tools"):
         module.register(_Context(unknown))
 
@@ -1334,24 +1334,24 @@ def test_runtime_registers_only_explicit_mediator_backed_action_subset(
 def test_read_subset_preserves_default_catalog_and_other_capabilities(
     monkeypatch, tmp_path,
 ):
-    module = _load_plugin("colony_hermes_enabled_read_subset_test")
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module = _load_plugin("pacomind_hermes_enabled_read_subset_test")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     base = {
-        "url": "http://colony.test",
+        "url": "http://pacomind.test",
         "owner_contact_id": "cid-owner",
         "action_mediator_url": "http://127.0.0.1:8785/v1/action-intents",
         "action_mediator_api_key": "mediator-secret",
-        "action_mediator_principal": "hermes-colony-plugin",
-        "enabled_action_tools": ["colony_create_commitment"],
+        "action_mediator_principal": "hermes-pacomind-plugin",
+        "enabled_action_tools": ["pacomind_create_commitment"],
         "owner_message_mediator_url": (
             "http://127.0.0.1:18802/internal/owner-deliver"
         ),
         "owner_message_mediator_api_key": "m" * 40,
         "owner_message_mediator_principal": "hermes-owner-message",
-        "enabled_message_tools": ["colony_send_message"],
+        "enabled_message_tools": ["pacomind_send_message"],
     }
 
     default_config = dict(
@@ -1361,14 +1361,14 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     module.register(default_context)
     # Native background execution is a separate explicit opt-in. Its authored
     # schema belongs to the catalog, but an ordinary profile must not expose it.
-    default_coordination = set(module._COORDINATION_TOOL_NAMES) - {"colony_task"}
-    assert "colony_task" not in default_context.tools
+    default_coordination = set(module._COORDINATION_TOOL_NAMES) - {"pacomind_task"}
+    assert "pacomind_task" not in default_context.tools
     expected_default = [
         schema for schema in module._TOOL_SCHEMAS
         if schema["name"] in module._READ_TOOL_NAMES
         or schema["name"] in default_coordination
-        or schema["name"] == "colony_create_commitment"
-        or schema["name"] == "colony_send_message"
+        or schema["name"] == "pacomind_create_commitment"
+        or schema["name"] == "pacomind_send_message"
     ]
     registered_default = [
         value["schema"] for value in default_context.tools.values()
@@ -1394,7 +1394,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
     }
     message_only_context = _Context(message_only_config)
     module.register(message_only_context)
-    assert list(message_only_context.tools) == sorted([*default_coordination, 'colony_send_message'])
+    assert list(message_only_context.tools) == sorted([*default_coordination, 'pacomind_send_message'])
     message_only_attestation = module.runtime_governance_attestation(
         message_only_config
     )
@@ -1403,36 +1403,36 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
         "explicit_subset"
     )
     assert message_only_attestation["enabled_message_tools"] == [
-        "colony_send_message"
+        "pacomind_send_message"
     ]
 
     subset_config = {
         **base,
         "enabled_read_tools": [
-            "colony_queue_stats", "colony_list_goals",
+            "pacomind_queue_stats", "pacomind_list_goals",
         ],
         "turn_outbox_path": str(tmp_path / "read-subset.sqlite3"),
     }
     subset_context = _Context(subset_config)
     module.register(subset_context)
     assert set(subset_context.tools) == {
-        "colony_accept_local_draft", "colony_read_work_source",
-        "colony_commitment_work",
-        "colony_contacts",
-        "colony_followup",
-        "colony_judgments",
-        "colony_memory_annotate",
-        "colony_memory_forget",
-        "colony_memory_read_source",
-        "colony_memory_retain_observation",
-        "colony_create_commitment",
-        "colony_list_goals",
-        "colony_queue_stats",
-        "colony_send_message",
-        "colony_work_initiative",
+        "pacomind_accept_local_draft", "pacomind_read_work_source",
+        "pacomind_commitment_work",
+        "pacomind_contacts",
+        "pacomind_followup",
+        "pacomind_judgments",
+        "pacomind_memory_annotate",
+        "pacomind_memory_forget",
+        "pacomind_memory_read_source",
+        "pacomind_memory_retain_observation",
+        "pacomind_create_commitment",
+        "pacomind_list_goals",
+        "pacomind_queue_stats",
+        "pacomind_send_message",
+        "pacomind_work_initiative",
     }
     # Read filtering does not rewrite action or message schemas.
-    for name in ("colony_create_commitment", "colony_send_message"):
+    for name in ("pacomind_create_commitment", "pacomind_send_message"):
         expected = next(
             schema for schema in module._TOOL_SCHEMAS
             if schema["name"] == name
@@ -1443,26 +1443,26 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
 @pytest.mark.parametrize(("configured", "message"), [
     (None, "must be a list"),
     ({}, "must be a list"),
-    ({"colony_queue_stats"}, "must be a list"),
+    ({"pacomind_queue_stats"}, "must be a list"),
     ([1], "entries must be strings"),
     ([""], "must not be blank"),
-    ("colony_queue_stats,", "must not be blank"),
+    ("pacomind_queue_stats,", "must not be blank"),
     (
-        ["colony_queue_stats", " colony_queue_stats "],
+        ["pacomind_queue_stats", " pacomind_queue_stats "],
         "duplicate tools",
     ),
-    (["colony_not_real"], "unknown tools"),
+    (["pacomind_not_real"], "unknown tools"),
 ])
 def test_read_subset_rejects_malformed_duplicate_and_unknown_config(
     monkeypatch, configured, message,
 ):
     module = _load_plugin(
-        "colony_hermes_invalid_read_subset_"
+        "pacomind_hermes_invalid_read_subset_"
         + hashlib.sha256(repr(configured).encode()).hexdigest()[:12]
     )
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     context = _Context({"enabled_read_tools": configured})
     with pytest.raises(RuntimeError, match=message):
         module.register(context)
@@ -1472,7 +1472,7 @@ def test_read_subset_rejects_malformed_duplicate_and_unknown_config(
 
 
 def test_dispatcher_denies_read_outside_effective_subset():
-    module = _load_plugin("colony_hermes_read_dispatch_defense_test")
+    module = _load_plugin("pacomind_hermes_read_dispatch_defense_test")
     client = _Client()
     scopes = module._TransportScopeRegistry()
     scopes.put(module._TransportScope(
@@ -1490,11 +1490,11 @@ def test_dispatcher_denies_read_outside_effective_subset():
         mediator=_Mediator(),
         owner_contact_id="cid-owner",
         attested_system_platforms=("cli",),
-        enabled_read_tools=("colony_queue_stats",),
+        enabled_read_tools=("pacomind_queue_stats",),
         scopes=scopes,
     )
     result = _json(dispatcher.dispatch(
-        "colony_memory_search",
+        "pacomind_memory_search",
         {"query": "private"},
         session_id="session-owner",
         task_id="task-owner",
@@ -1508,13 +1508,13 @@ def test_dispatcher_denies_read_outside_effective_subset():
 
 
 def test_message_only_runtime_readiness_and_registration(monkeypatch, tmp_path):
-    module = _load_plugin("colony_hermes_message_only_runtime_test")
-    module.ColonyClient = _Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module = _load_plugin("pacomind_hermes_message_only_runtime_test")
+    module.PacoMindClient = _Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     config = {
-        "url": "http://colony.test",
+        "url": "http://pacomind.test",
         "owner_contact_id": "cid-owner",
         "enabled_action_tools": [],
         "owner_message_mediator_url": (
@@ -1522,7 +1522,7 @@ def test_message_only_runtime_readiness_and_registration(monkeypatch, tmp_path):
         ),
         "owner_message_mediator_api_key": "m" * 40,
         "owner_message_mediator_principal": "hermes-owner-message",
-        "enabled_message_tools": ["colony_send_message"],
+        "enabled_message_tools": ["pacomind_send_message"],
         "turn_outbox_path": str(tmp_path / "message-only.sqlite3"),
     }
     attestation = module.runtime_governance_attestation(config)
@@ -1530,12 +1530,12 @@ def test_message_only_runtime_readiness_and_registration(monkeypatch, tmp_path):
     assert attestation["effect_mediator_runtime_ready"] is False
     assert attestation["owner_message_mediator_runtime_ready"] is True
     assert attestation["enabled_action_tools"] == []
-    assert attestation["enabled_message_tools"] == ["colony_send_message"]
+    assert attestation["enabled_message_tools"] == ["pacomind_send_message"]
     assert attestation["reason"] is None
 
     context = _Context(config)
     module.register(context)
-    assert "colony_send_message" in context.tools
+    assert "pacomind_send_message" in context.tools
     assert not set(module._ACTION_INTENT_TOOL_NAMES).intersection(context.tools)
 
     bad_path = dict(
@@ -1561,8 +1561,8 @@ def test_no_direct_mutation_cron_or_process_global_event_paths_remain():
         "/respond",
         "cron.jobs",
         "jobs.json",
-        "_configure_colony_llm",
-        "ColonyEventSubscriber(",
+        "_configure_pacomind_llm",
+        "PacoMindEventSubscriber(",
         "proactive events",
     ):
         assert forbidden not in sources
@@ -1575,7 +1575,7 @@ def test_installer_only_uses_packaged_setup():
     assert "--poller" not in installer
     assert "--autonomy" not in installer
     assert "hermes cron create" not in installer
-    assert "-m apsimo init" in installer
+    assert "-m pacomind init" in installer
     assert "cp " not in installer
 
 
@@ -1583,15 +1583,13 @@ def test_installed_plugin_carries_authoritative_catalog(tmp_path, monkeypatch):
     hermes_home = tmp_path / "hermes"
     hermes_home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(hermes_home))
-    from apsimo.setup import _hermes_plugin_files
-    for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], hermes_home):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
-    installed = hermes_home / "plugins" / "apsimo"
+    from adapter_fixture import copy_adapter_sources
+    copy_adapter_sources(hermes_home)
+    installed = hermes_home / "plugins" / "pacomind"
     for relative in (
-        "apsimo_hostworker/__init__.py",
-        "apsimo_hostworker/catalog.py",
-        "apsimo_hostworker/contract.py",
+        "pacomind_hostworker/__init__.py",
+        "pacomind_hostworker/catalog.py",
+        "pacomind_hostworker/contract.py",
     ):
         assert (installed / relative).is_file()
     script = """
@@ -1601,7 +1599,7 @@ import sys
 
 plugin = pathlib.Path(sys.argv[1])
 spec = importlib.util.spec_from_file_location(
-    "isolated_colony_plugin",
+    "isolated_pacomind_plugin",
     plugin / "__init__.py",
     submodule_search_locations=[str(plugin)],
 )
@@ -1612,7 +1610,7 @@ for name in ("local_work_runner", "request_memory", "request_work", "review", "r
     importlib.import_module(f"{spec.name}.{name}")
 commitment = next(
     item for item in module._TOOL_SCHEMAS
-    if item["name"] == "colony_create_commitment"
+    if item["name"] == "pacomind_create_commitment"
 )
 print(commitment["parameters"]["properties"]["priority"]["default"])
 """
@@ -1630,7 +1628,7 @@ print(commitment["parameters"]["properties"]["priority"]["default"])
 
 def test_slash_surface_has_no_dynamic_import_or_mutation_helper_bypass():
     source = (PLUGIN_DIR / "slash.py").read_text(encoding="utf-8")
-    assert "from colony import" not in source
+    assert "from pacomind import" not in source
     assert "_create_or_update_autonomy_job" not in source
     assert "_remove_autonomy_job" not in source
     assert "_get_autonomy_status" not in source
@@ -1638,7 +1636,7 @@ def test_slash_surface_has_no_dynamic_import_or_mutation_helper_bypass():
 
 def test_legacy_ops_and_examples_cannot_bypass_action_mediation(tmp_path):
     for relative in (
-        "ops/colony-activity-monitor.py",
+        "ops/pacomind-activity-monitor.py",
         "ops/hermes-gateway-restart-runner.sh",
     ):
         script = PLUGIN_DIR / relative
@@ -1660,7 +1658,7 @@ def test_legacy_ops_and_examples_cannot_bypass_action_mediation(tmp_path):
     assert "httpx" not in example
     assert "routes: {}" in webhook
 
-    doctor_cron = (PLUGIN_DIR / "ops/colony-doctor-cron.sh").read_text(encoding="utf-8")
+    doctor_cron = (PLUGIN_DIR / "ops/pacomind-doctor-cron.sh").read_text(encoding="utf-8")
     assert "hermes send" not in doctor_cron
     patch_runner = PLUGIN_DIR / "ops/hermes-patch-runner.py"
     source = patch_runner.read_text(encoding="utf-8")
@@ -1719,7 +1717,7 @@ def test_turn_writer_uses_exact_resolved_participant_and_skips_unknown(runtime):
 def test_turn_writer_platform_allowlist_is_attested_and_skips_before_enqueue(
     monkeypatch, tmp_path,
 ):
-    module = _load_plugin("colony_hermes_turn_writer_platform_allowlist_test")
+    module = _load_plugin("pacomind_hermes_turn_writer_platform_allowlist_test")
     holders: dict[str, _Client] = {}
 
     class Client(_Client):
@@ -1733,13 +1731,13 @@ def test_turn_writer_platform_allowlist_is_attested_and_skips_before_enqueue(
             super().__init__(*args, **kwargs)
             holders["client"] = self
 
-    module.ColonyClient = Client
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    module.PacoMindClient = Client
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     database = tmp_path / "turn-platforms.sqlite3"
     config = {
-        "url": "http://colony.test",
+        "url": "http://pacomind.test",
         "turn_writer_platforms": ["whatsapp", "rcs"],
         "turn_outbox_path": str(database),
     }
@@ -1818,12 +1816,12 @@ def test_turn_writer_platform_allowlist_rejects_malformed_config_before_hooks(
     monkeypatch, configured, message,
 ):
     module = _load_plugin(
-        "colony_hermes_invalid_turn_writer_platforms_"
+        "pacomind_hermes_invalid_turn_writer_platforms_"
         + hashlib.sha256(repr(configured).encode()).hexdigest()[:12]
     )
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
     context = _Context({"turn_writer_platforms": configured})
     with pytest.raises(RuntimeError, match=message):
         module.register(context)
@@ -1851,7 +1849,7 @@ def test_transform_llm_output_is_exact_text_enforcement_and_voice_excluded(
     runtime, monkeypatch,
 ):
     module, context, client, _mediator = runtime
-    monkeypatch.setenv("COLONY_GUARD_CHAT_MODE", "enforce")
+    monkeypatch.setenv("PACOMIND_GUARD_CHAT_MODE", "enforce")
     _pre(context, session="s-owner", task="t-owner", turn="turn-owner",
          platform="sms", sender="+15550001")
     candidate = "safe text"
@@ -1882,13 +1880,13 @@ def test_transform_llm_output_is_exact_text_enforcement_and_voice_excluded(
 
 
 def test_memory_coexistence_latches_fail_closed(monkeypatch):
-    module = _load_plugin("colony_hermes_memory_coexistence_test")
-    module.ColonyClient = _Client
+    module = _load_plugin("pacomind_hermes_memory_coexistence_test")
+    module.PacoMindClient = _Client
     module.ActionMediator = _Mediator
-    context = _Context({"url": "http://colony.test"})
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "1")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "enabled")
+    context = _Context({"url": "http://pacomind.test"})
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "enabled")
     with pytest.raises(RuntimeError, match="memory coexistence"):
         module.register(context)
     assert context.tools == {}
@@ -1896,32 +1894,30 @@ def test_memory_coexistence_latches_fail_closed(monkeypatch):
 
 
 def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path):
-    from apsimo.setup import _hermes_plugin_files
+    from adapter_fixture import copy_adapter_sources
 
     home = tmp_path / "selected"
-    for content, target in _hermes_plugin_files(PLUGIN_DIR.parents[1], home):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(content)
+    copy_adapter_sources(home)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    # The copied layout need not have an installed apsimo_memory wheel, and
+    # The copied layout need not have an installed pacomind_memory wheel, and
     # cannot accidentally read one instead of its own sibling implementation.
-    monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "apsimo")
-    for name in ("COLONY_GENERAL_PLUGIN_ACTIVE", "COLONY_MEMORY_WORKER_TOOLS", "COLONY_MEMORY_TURN_WRITER"):
+    monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "pacomind")
+    for name in ("PACOMIND_GENERAL_PLUGIN_ACTIVE", "PACOMIND_MEMORY_WORKER_TOOLS", "PACOMIND_MEMORY_TURN_WRITER"):
         monkeypatch.delenv(name, raising=False)
-    profile = {"memory": {"provider": "colony-memory"}, "plugins": {"enabled": ["colony"]}}
+    profile = {"memory": {"provider": "pacomind-memory"}, "plugins": {"enabled": ["pacomind"]}}
     path = home / "config.yaml"
     path.write_text(json.dumps(profile))
-    module = _load_plugin("colony_copied_profile_test")
+    module = _load_plugin("pacomind_copied_profile_test")
     module._require_coexistence_latches()
     # Deselection remains authoritative even with the complete inherited
     # legacy environment and an explicitly enabled list alongside disabled.
-    monkeypatch.setenv("COLONY_GENERAL_PLUGIN_ACTIVE", "1")
-    monkeypatch.setenv("COLONY_MEMORY_WORKER_TOOLS", "0")
-    monkeypatch.setenv("COLONY_MEMORY_TURN_WRITER", "disabled")
-    for selection in ({"enabled": []}, {"enabled": ["colony"], "disabled": ["colony"]}):
+    monkeypatch.setenv("PACOMIND_GENERAL_PLUGIN_ACTIVE", "1")
+    monkeypatch.setenv("PACOMIND_MEMORY_WORKER_TOOLS", "0")
+    monkeypatch.setenv("PACOMIND_MEMORY_TURN_WRITER", "disabled")
+    for selection in ({"enabled": []}, {"enabled": ["pacomind"], "disabled": ["pacomind"]}):
         profile["plugins"] = selection
         path.write_text(json.dumps(profile))
-        context = _Context({"url": "http://colony.test"})
+        context = _Context({"url": "http://pacomind.test"})
         with pytest.raises(RuntimeError, match="explicitly deselected"):
             module.register(context)
         assert context.tools == {}

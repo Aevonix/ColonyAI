@@ -1,4 +1,4 @@
-"""/signals/ingest attribution (COLONY_SIGNALS_ATTRIBUTION=legacy/strict).
+"""/signals/ingest attribution (PACOMIND_SIGNALS_ATTRIBUTION=legacy/strict).
 
 Signals previously trusted the client-supplied contact_id blindly — the one
 ingest surface with no server-side attribution. Now a supplied sender resolves
@@ -14,8 +14,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import host as host_mod
-from apsimo.api.schemas.host import (
+from pacomind.api.routers import host as host_mod
+from pacomind.api.schemas.host import (
     HostIdentity, HostMessage, HostSender, HostTurnContext,
     SignalIngestRequest)
 
@@ -70,7 +70,7 @@ def wired(monkeypatch):
 @pytest.mark.asyncio
 async def test_legacy_default_keeps_unknown_contact(wired, monkeypatch):
     """Regression lock: default mode never rewrites the client contact_id."""
-    monkeypatch.delenv("COLONY_SIGNALS_ATTRIBUTION", raising=False)
+    monkeypatch.delenv("PACOMIND_SIGNALS_ATTRIBUTION", raising=False)
     monkeypatch.setattr(host_mod, "_contacts_store", _FakeContactsStore())
     resp = await host_mod.signals_ingest(_request(contact_id="ghost-99"))
     assert resp.accepted
@@ -79,7 +79,7 @@ async def test_legacy_default_keeps_unknown_contact(wired, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_legacy_warns_once_per_unknown_contact(wired, monkeypatch, caplog):
-    monkeypatch.delenv("COLONY_SIGNALS_ATTRIBUTION", raising=False)
+    monkeypatch.delenv("PACOMIND_SIGNALS_ATTRIBUTION", raising=False)
     monkeypatch.setattr(host_mod, "_contacts_store", _FakeContactsStore())
     import logging
     with caplog.at_level(logging.WARNING, logger=host_mod.logger.name):
@@ -91,7 +91,7 @@ async def test_legacy_warns_once_per_unknown_contact(wired, monkeypatch, caplog)
 
 @pytest.mark.asyncio
 async def test_sender_resolution_overwrites_contact(wired, monkeypatch):
-    monkeypatch.delenv("COLONY_SIGNALS_ATTRIBUTION", raising=False)
+    monkeypatch.delenv("PACOMIND_SIGNALS_ATTRIBUTION", raising=False)
     store = _FakeContactsStore(known={"cid-real"},
                                handles={("sms", "+15550001"): "cid-real"})
     monkeypatch.setattr(host_mod, "_contacts_store", store)
@@ -103,7 +103,7 @@ async def test_sender_resolution_overwrites_contact(wired, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_strict_unknown_contact_goes_to_system(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_SIGNALS_ATTRIBUTION", "strict")
+    monkeypatch.setenv("PACOMIND_SIGNALS_ATTRIBUTION", "strict")
     monkeypatch.setattr(host_mod, "_contacts_store", _FakeContactsStore())
     await host_mod.signals_ingest(_request(contact_id="ghost-99"))
     assert wired.sender_ids == ["system"]       # never poisons a person
@@ -111,9 +111,9 @@ async def test_strict_unknown_contact_goes_to_system(wired, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_strict_unresolvable_sender_goes_to_system(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_SIGNALS_ATTRIBUTION", "strict")
+    monkeypatch.setenv("PACOMIND_SIGNALS_ATTRIBUTION", "strict")
     # Shadow contacts off: an unknown handle stays unresolvable.
-    monkeypatch.setenv("COLONY_IDENTITY_SHADOW_CONTACTS", "false")
+    monkeypatch.setenv("PACOMIND_IDENTITY_SHADOW_CONTACTS", "false")
     monkeypatch.setattr(host_mod, "_contacts_store", _FakeContactsStore())
     body = _request(contact_id="ghost-99",
                     sender=HostSender(platform="sms", user_id="+15559999"))
@@ -123,7 +123,7 @@ async def test_strict_unresolvable_sender_goes_to_system(wired, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_strict_known_contact_is_kept(wired, monkeypatch):
-    monkeypatch.setenv("COLONY_SIGNALS_ATTRIBUTION", "strict")
+    monkeypatch.setenv("PACOMIND_SIGNALS_ATTRIBUTION", "strict")
     monkeypatch.setattr(host_mod, "_contacts_store",
                         _FakeContactsStore(known={"cid-real"}))
     await host_mod.signals_ingest(_request(contact_id="cid-real"))
@@ -133,7 +133,7 @@ async def test_strict_known_contact_is_kept(wired, monkeypatch):
 @pytest.mark.asyncio
 async def test_no_contacts_store_is_a_noop(wired, monkeypatch):
     """Attribution fails open when the store is absent (test/degraded envs)."""
-    monkeypatch.setenv("COLONY_SIGNALS_ATTRIBUTION", "strict")
+    monkeypatch.setenv("PACOMIND_SIGNALS_ATTRIBUTION", "strict")
     monkeypatch.setattr(host_mod, "_contacts_store", None)
     await host_mod.signals_ingest(_request(contact_id="whoever"))
     assert wired.sender_ids == ["whoever"]

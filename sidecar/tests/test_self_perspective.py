@@ -8,19 +8,19 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.autonomy.loop import AutonomyLoop
-from apsimo.intelligence.components.preference_learner import PreferenceLearner
-from apsimo.self_model.perspective import SelfPerspective
-from apsimo.self_model.store import CompetenceStore, SelfModel
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.routers import host
+from pacomind.autonomy.loop import AutonomyLoop
+from pacomind.intelligence.components.preference_learner import PreferenceLearner
+from pacomind.self_model.perspective import SelfPerspective
+from pacomind.self_model.store import CompetenceStore, SelfModel
+from pacomind.turns import TurnIdempotencyLedger
 from test_turn_source_evidence import source_app
 
 
 @pytest.fixture
 def perspective(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_OWNER_CONTACT_ID', 'contact-a')
-    monkeypatch.setenv('COLONY_SELF_JUDGMENTS_ENABLED', '1')
+    monkeypatch.setenv('PACOMIND_OWNER_CONTACT_ID', 'contact-a')
+    monkeypatch.setenv('PACOMIND_SELF_JUDGMENTS_ENABLED', '1')
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     perspective = SelfPerspective(ledger, owner_id='contact-a')
     learner = PreferenceLearner(db_path=str(tmp_path / 'old-preferences.db'), perspective=perspective)
@@ -28,7 +28,7 @@ def perspective(source_app, tmp_path, monkeypatch):
     sm.perspective = perspective
     monkeypatch.setattr(host, '_preference_learner', learner)
     monkeypatch.setattr(host, '_self_model', sm)
-    from apsimo.api.middleware import ApiKeyMiddleware
+    from pacomind.api.middleware import ApiKeyMiddleware
     from test_scoped_api_authority import _principal, _write_keyring
     principals = [_principal(principal=who, secret=who+'-key', viewer=person,
         scopes=['context:read', 'memory:write', 'turns:write'])
@@ -59,7 +59,7 @@ async def context(client, session, *, headers=None):
     })
     assert response.status_code == 200, response.text
     return '\n'.join(section['body'] for section in response.json()['sections']
-                     if section['id'] in {'colony-owner-preferences', 'colony-self-perspective'})
+                     if section['id'] in {'pacomind-owner-preferences', 'pacomind-self-perspective'})
 
 
 @pytest.mark.asyncio
@@ -166,9 +166,9 @@ async def phase(sm, items):
 @pytest.mark.asyncio
 @pytest.mark.parametrize('runtime_outcome', ['completed_wrong_count', 'timeout'])
 async def test_actual_runtime_outcomes_do_not_change_priority_or_claim_quality(perspective, source_app, tmp_path, runtime_outcome):
-    from apsimo.initiatives.store import InitiativeStore
-    from apsimo.reasoning.loop import ReasoningResult
-    from apsimo.services.initiative_executor import InitiativeExecutorService
+    from pacomind.initiatives.store import InitiativeStore
+    from pacomind.reasoning.loop import ReasoningResult
+    from pacomind.services.initiative_executor import InitiativeExecutorService
     state, learner, sm = perspective
     store = InitiativeStore(tmp_path / 'initiatives')
     executor = InitiativeExecutorService(store, None, None, self_model=sm)
@@ -183,7 +183,7 @@ async def test_actual_runtime_outcomes_do_not_change_priority_or_claim_quality(p
     before = [(item.id, item.priority) for item in await phase(sm, original)]
     for i in range(3):
         item = store.create(type='research', description=f'Count all {42+i} neutral inventory entries', dedup_key=f'work-{i}')
-        item = store.assign(item.id, 'colony-executor')
+        item = store.assign(item.id, 'pacomind-executor')
         await executor._execute_one(item)
     events = sm.store.events('research')
     assert len(events) == 3 and all(e['source_ref'] and e['event_key'] for e in events)
@@ -238,7 +238,7 @@ def test_legacy_opinions_and_evidence_corrections_remain_inspectable_but_inactiv
     assert len(status['opinion_history']) == 2
     assert all(row['status'] == 'legacy_non_governing' and row['governing'] is False for row in status['opinion_history'])
     assert status['opinion_history'][0]['basis'][0]['model_id'] == 'old-model'
-    sm.store.apply_reconciliation({'schema':'colony.competence-reconciliation/v1','created_by':'test-reviewer',
+    sm.store.apply_reconciliation({'schema':'pacomind.competence-reconciliation/v1','created_by':'test-reviewer',
         'reason':'Recorded output failed its count check','provenance':{'criterion':'exact inventory count'},
         'event_corrections':[{'event_id':event['id'],'target_fingerprint':event['fingerprint'],'disposition':'invalidate'}]})
     assert sm.store.events('research') == [] and len(sm.store.reconciliation_ledger()) == 1

@@ -1,8 +1,8 @@
-# Colony Hermes general-plugin governance specification
+# PacoMind Hermes general-plugin governance specification
 
 ## Scope
 
-This plugin is a generic Colony sidecar adapter for Hermes 0.18.2-compatible
+This plugin is a generic PacoMind sidecar adapter for Hermes 0.18.2-compatible
 hosts. It does not own persona, deployment identity, voice, meetings, or direct
 execution. The host deployment supplies those layers externally.
 
@@ -13,7 +13,7 @@ The runtime contract is:
 2. Real channels resolve the sender with `create=false`. No missing/failed
    lookup becomes an owner or shared default contact.
 3. Private legacy read tools require an owner/system authority lane. Guest
-   context comes from the canonical Colony memory provider.
+   context comes from the canonical PacoMind memory provider.
 4. Every enabled model-visible effect tool emits an immutable intent. Generic
    actions use `HermesToolActionIntentV1`; owner-directed contact messages use
    a separately credentialed deployment producer that cannot call a provider
@@ -30,7 +30,7 @@ The runtime contract is:
 
 `_TOOL_SCHEMAS` is an explicit sorted catalog. Names are partitioned between
 `read_tool_names` and `action_intent_tool_names`; there are no direct-effect
-handlers. `colony_autonomy_status` is a bounded owner/system-only GET projection
+handlers. `pacomind_autonomy_status` is a bounded owner/system-only GET projection
 that omits the endpoint's private configuration. `governance_attestation()`
 hashes the exact schema and empty event catalog for source preflight, but never
 claims runtime or live readiness.
@@ -73,7 +73,7 @@ origin, resolved credential, and safe principal. Unknown configured tool names
 fail registration. Deployments must enable only actions backed by exact
 idempotent execution and verification; unsupported actions remain invisible.
 
-`colony_send_message` is registered only when its exact message mediator and
+`pacomind_send_message` is registered only when its exact message mediator and
 explicit enabled subset are ready. It requires either a resolved owner on a
 text transport or an explicitly attested local system turn; guests,
 unresolved senders, and speech surfaces are denied before admission. Retry
@@ -95,7 +95,7 @@ idempotency key. It is lock-protected and contains no process-global “last
 sender,” “last contact,” or shared event cache. Rebinding the same host turn to
 a different participant poisons that scope.
 
-`GOVERNED_EVENT_TYPES` is empty until Colony can provide an exact
+`GOVERNED_EVENT_TYPES` is empty until PacoMind can provide an exact
 viewer-attested event projection. Event context must not be injected from a
 process-wide subscriber.
 
@@ -145,9 +145,9 @@ exposing any middleware, tool, hook, or command unless all three values are
 exact:
 
 ```text
-COLONY_GENERAL_PLUGIN_ACTIVE=1
-COLONY_MEMORY_WORKER_TOOLS=0
-COLONY_MEMORY_TURN_WRITER=disabled
+PACOMIND_GENERAL_PLUGIN_ACTIVE=1
+PACOMIND_MEMORY_WORKER_TOOLS=0
+PACOMIND_MEMORY_TURN_WRITER=disabled
 ```
 
 These values make the general plugin the only Hermes turn writer and prevent
@@ -165,7 +165,7 @@ Any transport/protocol failure withholds the text. Shadow mode is asynchronous
 and observational.
 
 Hermes persistence occurs before/around host finalization differently across
-versions, and Colony alone cannot prove correction of already-streamed tokens.
+versions, and PacoMind alone cannot prove correction of already-streamed tokens.
 Enable enforce only on the stateless non-streaming `hermes -z -t` deployment
 path until the deployment preflight proves session persistence and streaming
 are disabled. This limitation is not included in the tool/context governance
@@ -184,6 +184,6 @@ and a clean deployment has no Hermes core patches.
 
 Install without `--force` to back up the existing plugin directory. Existing
 legacy poller scripts are copied to timestamped `.pre-governance.*` files before
-their paths are made inert. Reverting the Colony repository and restoring those
+their paths are made inert. Reverting the PacoMind repository and restoring those
 backups is mechanically possible, but re-enabling direct legacy workers should
 be treated as a deliberate governance rollback.

@@ -2,7 +2,7 @@ __pycache__/
 *.pyc
 *.db-shm
 *.db-wal
-.colony-llm-config.json
+.pacomind-llm-config.json
 openapi.json
 node_modules/
 dist/

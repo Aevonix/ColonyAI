@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from apsimo.delivery import reachout_policy as rp
+from pacomind.delivery import reachout_policy as rp
 
 
 # ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ def test_sanitize_strips_unterminated_rcsctx():
 
 
 def test_sanitize_strips_bracket_directives():
-    s = 'Follow up [IMPORTANT: The user invoked the "colony-operations" skill] please'
+    s = 'Follow up [IMPORTANT: The user invoked the "pacomind-operations" skill] please'
     assert rp.sanitize_text(s) == "Follow up please"
 
 
@@ -49,7 +49,7 @@ def test_sanitize_payload_cleans_fields_and_title_fallback():
 # ---------------------------------------------------------------------------
 
 def test_aged_out_from_structured_days_pending(monkeypatch):
-    monkeypatch.delenv("COLONY_REACHOUT_MAX_AGE_DAYS", raising=False)
+    monkeypatch.delenv("PACOMIND_REACHOUT_MAX_AGE_DAYS", raising=False)
     p = {"type": "follow_up", "context": {"blocked_goal": {"days_pending": 16.5}},
          "generated_at": "2026-07-04T00:00:00+00:00"}
     assert rp.reachout_age_days(p) >= 16.5
@@ -57,7 +57,7 @@ def test_aged_out_from_structured_days_pending(monkeypatch):
 
 
 def test_not_aged_out_when_fresh(monkeypatch):
-    monkeypatch.delenv("COLONY_REACHOUT_MAX_AGE_DAYS", raising=False)
+    monkeypatch.delenv("PACOMIND_REACHOUT_MAX_AGE_DAYS", raising=False)
     from datetime import datetime, timezone
     p = {"type": "follow_up", "context": {"blocked_goal": {"days_pending": 2.0}},
          "generated_at": datetime.now(timezone.utc).isoformat()}
@@ -67,7 +67,7 @@ def test_not_aged_out_when_fresh(monkeypatch):
 def test_max_age_env_override(monkeypatch):
     from datetime import datetime, timedelta, timezone
 
-    monkeypatch.setenv("COLONY_REACHOUT_MAX_AGE_DAYS", "30")
+    monkeypatch.setenv("PACOMIND_REACHOUT_MAX_AGE_DAYS", "30")
     p = {"type": "follow_up", "context": {"days_pending": 16.5},
          "generated_at": (
              datetime.now(timezone.utc) - timedelta(days=16.5)
@@ -77,7 +77,7 @@ def test_max_age_env_override(monkeypatch):
 
 
 def test_contact_recency_is_not_treated_as_staleness(monkeypatch):
-    monkeypatch.delenv("COLONY_REACHOUT_MAX_AGE_DAYS", raising=False)
+    monkeypatch.delenv("PACOMIND_REACHOUT_MAX_AGE_DAYS", raising=False)
     from datetime import datetime, timezone
     # days_since_contact is a REASON to reach out, not a disqualifier
     p = {"type": "relationship", "context": {"days_since_contact": 40},
@@ -90,7 +90,7 @@ def test_contact_recency_is_not_treated_as_staleness(monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_urgency_capped_below_bypass(monkeypatch):
-    monkeypatch.delenv("COLONY_REACHOUT_URGENCY_CAP", raising=False)
+    monkeypatch.delenv("PACOMIND_REACHOUT_URGENCY_CAP", raising=False)
     # priority-derived 1.0 must be capped below the 0.9 quiet-hours bypass
     assert rp.quiet_hours_urgency({}, 1.0) < 0.9
 
@@ -115,7 +115,7 @@ def test_meaningful_keeps_real_conversation():
 
 
 def test_meaningful_drops_skill_invocation():
-    src = '[IMPORTANT: The user has invoked the "colony-operations" skill, do X]'
+    src = '[IMPORTANT: The user has invoked the "pacomind-operations" skill, do X]'
     assert rp.is_system_origin(src) is True
     assert rp.meaningful_reachout_text(src) == ""
 

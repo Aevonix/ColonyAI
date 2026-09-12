@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from apsimo.tom.visibility import (
+from pacomind.tom.visibility import (
     FactCandidateV1,
     FactVisibilityV1,
     ViewerContextV1,

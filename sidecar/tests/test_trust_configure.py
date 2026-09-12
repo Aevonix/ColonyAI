@@ -10,7 +10,7 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from apsimo.api.routers import host as host_mod
+from pacomind.api.routers import host as host_mod
 
 
 @asynccontextmanager
@@ -46,7 +46,7 @@ async def test_chain_verify_returns_signed_attestation():
         height = 1
 
     class _FakeChain:
-        colony_id = "colony-xyz"
+        pacomind_id = "pacomind-xyz"
         _key_manager = _FakeKeyManager()
 
         async def get_state(self):
@@ -63,7 +63,7 @@ async def test_chain_verify_returns_signed_attestation():
         assert resp.status_code == 200
         body = resp.json()
         assert body["valid"] is True
-        assert body["colony_id"] == "colony-xyz"
+        assert body["pacomind_id"] == "pacomind-xyz"
         assert body["signed_attestation"] == "ab" * 32
         assert body["signer_public_key"] == "cd" * 32
         assert body["attested_at"] is not None
@@ -77,7 +77,7 @@ async def test_chain_verify_without_key_manager_omits_attestation():
         height = 1
 
     class _FakeChain:
-        colony_id = "colony-xyz"
+        pacomind_id = "pacomind-xyz"
         _key_manager = None
 
         async def get_state(self):
@@ -109,9 +109,9 @@ async def test_chain_verify_no_chain_returns_invalid():
 async def test_configure_host_preserves_router_and_executor_references(tmp_path, monkeypatch):
     """A host update reaches retained consumers without replacing tool state."""
     pytest.importorskip("litellm")
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    from apsimo.router.router import LLMRouter
-    from apsimo.reasoning import ReasoningLoop, ToolExecutor
+    monkeypatch.setenv("PACOMIND_STATE_DIR", str(tmp_path))
+    from pacomind.router.router import LLMRouter
+    from pacomind.reasoning import ReasoningLoop, ToolExecutor
     previous = LLMRouter(tiers={})
     previous.configure({'provider': 'vllm', 'baseUrl': 'http://127.0.0.1:8080/v1',
                         'models': {'small': 'old-neutral'}})
@@ -136,7 +136,7 @@ async def test_configure_host_preserves_router_and_executor_references(tmp_path,
         invalid = await client.post('/v1/host/configure', json={'identity': {'host_id': 'h'}, 'llm': cfg})
         assert invalid.status_code == 422
         assert retained_extractor.routing_status()['config_revision'] == old_revision
-    persisted = tmp_path / '.colony-llm-config.json'
+    persisted = tmp_path / '.pacomind-llm-config.json'
     assert json.loads(persisted.read_text())['models']['small'] == 'new-neutral'
     assert persisted.stat().st_mode & 0o077 == 0
 

@@ -1,6 +1,6 @@
 # Governed action execution
 
-Colony exposes one narrow mutation boundary for an external, owner-approved
+PacoMind exposes one narrow mutation boundary for an external, owner-approved
 action worker:
 
 - `PUT /v1/host/actions/{uuid}` requires `actions:execute`.
@@ -15,14 +15,14 @@ role, body identity fields, and an unbound owner role are all rejected.
 
 ## Execution contract
 
-The PUT body is the exact bounded `ColonyGovernedActionExecutionV1`
+The PUT body is the exact bounded `PacoMindGovernedActionExecutionV1`
 document. It binds the URL action UUID, action and intent digests, validated
 tool arguments, an owner-approval receipt digest, and an execution digest.
-Approval data is evidence only: Colony derives the participant exclusively
+Approval data is evidence only: PacoMind derives the participant exclusively
 from the authenticated keyring authority. The HTTP edge rejects declared or
 streamed bodies above 32 KiB before parsing or touching the ledger.
 
-The allowlist contains ten generic Colony operations:
+The allowlist contains ten generic PacoMind operations:
 
 - enable or disable the autonomy loop;
 - create or resolve an owner commitment;
@@ -33,9 +33,9 @@ The allowlist contains ten generic Colony operations:
 
 Conversation context, sender IDs, phone numbers, prompts, and arbitrary tool
 names are not accepted or forwarded. Responses use the fixed,
-secret-free `ColonyGovernedActionExecutionResultV1` projection.
+secret-free `PacoMindGovernedActionExecutionResultV1` projection.
 
-`colony_research` is a fast handoff, not an inline claim of completed
+`pacomind_research` is a fast handoff, not an inline claim of completed
 research. Its topic is bounded to 1,400 characters so the complete objective
 survives Project planning and the canonical WorkOrder envelope without silent
 truncation. A successful governed execution returns `outcome=queued` with
@@ -45,7 +45,7 @@ to `memory:read`, `web:read`, and `reasoning`. The legacy ResearchPipeline
 remains available to its existing routes but is never invoked by this action.
 
 The ProjectEngine and its canonical WorkOrder adapter must both be attached,
-and `COLONY_PROJECTS_MODE` must be `live`, before preparation succeeds. A
+and `PACOMIND_PROJECTS_MODE` must be `live`, before preparation succeeds. A
 missing adapter or non-live mode produces a replay-stable `failed` preparation
 record without starting an effect. If mode or adapter availability changes
 after enqueue, the same Project is held resumably; it is not shadow-skipped or
@@ -59,7 +59,7 @@ canonicalization retain their established ASCII-escaped representation.
 ## Durability and recovery
 
 `governed-actions/ledger.db` is a separate SQLite ledger in an owner-only
-mode-0700 directory under the Colony state directory. The database is an
+mode-0700 directory under the PacoMind state directory. The database is an
 owner-only mode-0600, single-link regular file opened without following
 symlinks. It uses a full-synchronous rollback journal rather than persistent
 WAL/SHM sidecars. An action advances through:
@@ -84,10 +84,10 @@ after the loop is no longer running, otherwise `stop_requested`; enable uses
 
 The route is inert without the exact scoped principal. For a source rollback,
 remove that principal first, wait for in-flight PUTs to finish, then restore
-the prior Colony revision. Preserve `governed-actions/ledger.db` with the rest
+the prior PacoMind revision. Preserve `governed-actions/ledger.db` with the rest
 of the state directory: deleting it discards replay/ambiguity evidence and is
 not a safe rollback. Re-enabling the route against the preserved ledger keeps
-completed and uncertain actions from being dispatched twice. Colony's full
+completed and uncertain actions from being dispatched twice. PacoMind's full
 backup command snapshots this nested ledger with SQLite `VACUUM INTO` and
 fails the backup rather than falling back to a potentially inconsistent raw
 copy. Restore retains the private modes and refuses linked replacement paths.
@@ -95,10 +95,10 @@ It is create-only for this ledger: an existing ledger is never overwritten or
 rewound by a normal restore. An incident recovery must first quarantine the
 old ledger under a separate, explicit operator procedure.
 
-Before rolling Colony back to a revision that predates governed Project
+Before rolling PacoMind back to a revision that predates governed Project
 authority enforcement, disable ProjectEngine pursuit or explicitly hold every
 nonterminal `source=governed_action` Project. Older code does not recognize
 that source's immutable read-only capability boundary. Keep
-`colony-projects.db` alongside the governed-action ledger so an exact replay
+`pacomind-projects.db` alongside the governed-action ledger so an exact replay
 continues to discover the original durable Project rather than creating a
 second handoff.

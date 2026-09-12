@@ -18,14 +18,14 @@ sys.path.insert(0,sys.argv[1]); sys.path.insert(1,sys.argv[2])
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import httpx
-from apsimo.api.middleware import ApiKeyMiddleware
-from apsimo.api.routers import host
-from apsimo.turns import get_turn_idempotency_ledger
-from apsimo_hermes.client import source_message_hash
-from apsimo_hermes.input_provenance import SourceUpdate, transport_input, current
-import apsimo_hermes.client as cm
-import apsimo_hermes.request_memory as rm
-import apsimo_hermes.request_work as rw
+from pacomind.api.middleware import ApiKeyMiddleware
+from pacomind.api.routers import host
+from pacomind.turns import get_turn_idempotency_ledger
+from pacomind_hermes.client import source_message_hash
+from pacomind_hermes.input_provenance import SourceUpdate, transport_input, current
+import pacomind_hermes.client as cm
+import pacomind_hermes.request_memory as rm
+import pacomind_hermes.request_work as rw
 # Canonical ASGI work is real, but a cold shared CI host is not a LAN-latency
 # benchmark. Dedicated deadline fixtures retain the ordinary real clocks.
 clock=NS(monotonic=lambda:1000.0,time=time.time,sleep=time.sleep)
@@ -40,12 +40,12 @@ keyring=home/'keys.json';keyring.write_text(json.dumps({'version':1,'principals'
 (home/'config.yaml').write_text(json.dumps({
  'model':{'provider':'custom','default':'fixture','base_url':'http://model.fixture/v1'},
  'auxiliary':{'title_generation':{'enabled':False}},
- 'memory':{'provider':'apsimo-memory','config':{'contact_id':'owner','url':'http://fixture','api_key':key}},
- 'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':'owner','url':'http://fixture',
+ 'memory':{'provider':'pacomind-memory','config':{'contact_id':'owner','url':'http://fixture','api_key':key}},
+ 'plugins':{'enabled':['pacomind'],'pacomind':{'owner_contact_id':'owner','url':'http://fixture',
   'api_key':key,'attested_system_platforms':['cli'],'turn_outbox_path':str(home/'outbox.db')}}}))
 app=FastAPI();app.add_middleware(ApiKeyMiddleware,keyring_path=str(keyring))
 app.include_router(host.router);app.include_router(host.v2_router);api=TestClient(app)
-ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
+ledger=get_turn_idempotency_ledger(os.environ['PACOMIND_STATE_DIR'])
 original='Open the retained storage checklist.'
 instruction='The checklist label must be ORANGE-472.'
 ledger.record_source('root-source',contact_id='owner',session_id='voice-input',
@@ -86,7 +86,7 @@ def respond(request):
   if scenario=='erased':ledger.erase_sources(contact_id='owner',turn_ids=['change-source'])
   if scenario=='revoked':granted=False
   message={'role':'assistant','content':None,'tool_calls':[{'id':'read-root','type':'function',
-   'function':{'name':'tool_call','arguments':json.dumps({'name':'apsimo_memory_read_source',
+   'function':{'name':'tool_call','arguments':json.dumps({'name':'pacomind_memory_read_source',
     'arguments':root_ref})}}]};finish='tool_calls'
  else:
   if scenario in {'erased','revoked','receipt_failure'} or (scenario=='erased_after_visibility' and step==3):
@@ -110,13 +110,13 @@ def respond(request):
   if scenario=='erased_after_visibility' and step==2:
    ledger.erase_sources(contact_id='owner',turn_ids=['change-source'])
    message={'role':'assistant','content':None,'tool_calls':[{'id':'read-again','type':'function',
-    'function':{'name':'tool_call','arguments':json.dumps({'name':'apsimo_memory_read_source',
+    'function':{'name':'tool_call','arguments':json.dumps({'name':'pacomind_memory_read_source',
      'arguments':root_ref})}}]};finish='tool_calls'
   if scenario=='joined_child' and step==2:
    message={'role':'assistant','content':None,'tool_calls':[{'id':'delegate','type':'function',
     'function':{'name':'delegate_task','arguments':json.dumps({'tasks':[{
      'goal':'Report the current checklist label using the inherited change source handle.',
-     'context':'Open the inherited evidence if necessary.','toolsets':['apsimo']}]})}}]};finish='tool_calls'
+     'context':'Open the inherited evidence if necessary.','toolsets':['pacomind']}]})}}]};finish='tool_calls'
  if body.get('stream'):
   delta={**message}
   if delta.get('tool_calls'):delta['tool_calls']=[{**v,'index':i} for i,v in enumerate(delta['tool_calls'])]
@@ -142,7 +142,7 @@ get_plugin_manager().discover_and_load()
 from run_agent import AIAgent
 parent=AIAgent(api_key='fixture',base_url='http://model.fixture/v1',provider='custom',model='fixture',
  quiet_mode=True,skip_context_files=True,skip_memory=False,platform='cli',
- max_iterations=1 if scenario=='summary' else 5,enabled_toolsets=['apsimo','delegation'])
+ max_iterations=1 if scenario=='summary' else 5,enabled_toolsets=['pacomind','delegation'])
 parent.save_trajectories=False
 try:
  with transport_input(contact_id='owner',platform='cli',input_refs=root_input,source_refs=[root_ref]) as supplied:
@@ -167,12 +167,12 @@ def test_native_source_update_sdk_and_failure_boundaries(artifacts, tmp_path, sc
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified Hermes release for native qualification')
     env = {key: os.environ[key] for key in ('PATH', 'HOME', 'TMPDIR', 'LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'profile'), COLONY_STATE_DIR=str(tmp_path/'colony'),
-        COLONY_OWNER_CONTACT_ID='owner', HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
+    env.update(HERMES_HOME=str(tmp_path/'profile'), PACOMIND_STATE_DIR=str(tmp_path/'pacomind'),
+        PACOMIND_OWNER_CONTACT_ID='owner', HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),
         HERMES_DISABLE_TELEMETRY='1', HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_GENERAL_PLUGIN_ACTIVE='1', COLONY_MEMORY_WORKER_TOOLS='0',
-        COLONY_MEMORY_TURN_WRITER='disabled', COLONY_GUARD_CHAT_MODE='off',
-        COLONY_RECALL_RERANK='off', COLONY_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1',
+        PACOMIND_GENERAL_PLUGIN_ACTIVE='1', PACOMIND_MEMORY_WORKER_TOOLS='0',
+        PACOMIND_MEMORY_TURN_WRITER='disabled', PACOMIND_GUARD_CHAT_MODE='off',
+        PACOMIND_RECALL_RERANK='off', PACOMIND_SKIP_DOTENV='1', PYTHON_DOTENV_DISABLED='1',
         OPENAI_API_KEY='fixture', OPENAI_BASE_URL='http://model.fixture/v1', LITELLM_LOCAL_MODEL_COST_MAP='True')
     run_python('-I', '-c', PROBE, artifacts[3], ROOT/'sidecar', scenario, cwd=tmp_path, env=env)
 
@@ -181,7 +181,7 @@ REGISTRATION = r'''
 import copy,sys
 from types import SimpleNamespace as NS
 sys.path.insert(0,sys.argv[1])
-from apsimo_hermes.input_provenance import SourceUpdate,transport_input
+from pacomind_hermes.input_provenance import SourceUpdate,transport_input
 base=[{'source_id':'root','input_message_hash':'a'*64}]
 parents=[{'source_id':'update-source','input_message_hash':'b'*64}]
 sources=[{'source_id':'update-source','source_version':'c'*64}]
@@ -246,7 +246,7 @@ import sys,threading
 from concurrent.futures import ThreadPoolExecutor
 from types import SimpleNamespace as NS
 sys.path.insert(0,sys.argv[1])
-from apsimo_hermes.input_provenance import SourceUpdate,transport_input
+from pacomind_hermes.input_provenance import SourceUpdate,transport_input
 root=[{'source_id':'root','input_message_hash':'a'*64}]
 parents=[{'source_id':'update','input_message_hash':'b'*64}]
 scope=NS(contact_id='owner',session_id='session',task_id='task',turn_id='turn',
@@ -292,15 +292,15 @@ def test_concurrent_requests_wait_for_durable_update_receipt(artifacts, tmp_path
 WITHHELD_READ_STEERING = r'''
 import copy,json,sys
 sys.path.insert(0,sys.argv[1])
-from apsimo_hermes.input_provenance import SourceUpdate
-from apsimo_hermes.request_memory import _restore_source_updates
+from pacomind_hermes.input_provenance import SourceUpdate
+from pacomind_hermes.request_memory import _restore_source_updates
 from agent.prompt_builder import format_steer_marker
 first=SourceUpdate('one','owner','Use the first checklist.',[
  {'source_id':'first-input','input_message_hash':'a'*64}]).carrier()
 second=SourceUpdate('two','owner','Then use the second checklist.',[
  {'source_id':'second-input','input_message_hash':'b'*64}]).carrier()
 entries=[{'carrier':first},{'carrier':second}]
-source=json.dumps({'colony_source_read_v1':True,'text':'Private old source content.'})
+source=json.dumps({'pacomind_source_read_v1':True,'text':'Private old source content.'})
 withheld='[Opened source withheld; read again after source freshness is restored.]'
 def restored(value, *, original=None):
  original=original or {'messages':[{'role':'tool','tool_call_id':'read-one','content':value}]}
@@ -313,7 +313,7 @@ actual=restored(value)
 assert actual==withheld+format_steer_marker(second+'\n\n'+first)
 assert 'Private old source content.' not in actual and 'Unregistered trailing prose.' not in actual
 # A quoted carrier or an earlier admitted update cannot manufacture delivery.
-assert restored(json.dumps({'colony_source_read_v1':True,'text':format_steer_marker(first)}))==withheld
+assert restored(json.dumps({'pacomind_source_read_v1':True,'text':format_steer_marker(first)}))==withheld
 assert restored(source)==withheld
 assert restored(source+format_steer_marker('Unregistered update'))==withheld
 assert restored(source+'\n'+first)==withheld

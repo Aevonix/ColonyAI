@@ -4,10 +4,10 @@ import tempfile
 from pathlib import Path
 import pytest
 
-from apsimo.agents.store import AgentStore
-from apsimo.initiatives.store import InitiativeStore
-from apsimo.initiatives.assignment import AssignmentEngine
-from apsimo.initiatives.models import StoredInitiative
+from pacomind.agents.store import AgentStore
+from pacomind.initiatives.store import InitiativeStore
+from pacomind.initiatives.assignment import AssignmentEngine
+from pacomind.initiatives.models import StoredInitiative
 
 
 class TestAssignmentEngine:
@@ -50,7 +50,7 @@ class TestAssignmentEngine:
         store.create({
             "agent_id": agent_id,
             "node_id": f"node-{agent_id}",
-            "colony_id": "colony-1",
+            "pacomind_id": "pacomind-1",
             "name": f"agent-{agent_id}",
             "connection_mode": "local",
             "capabilities": capabilities,
@@ -307,24 +307,24 @@ class TestInitiativeCapabilities:
 
     def test_follow_up_needs_no_capabilities(self) -> None:
         """Test that follow_up allows any agent."""
-        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from pacomind.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert INITIATIVE_CAPABILITIES.get("follow_up") == []
 
     def test_relationship_needs_messaging(self) -> None:
         """Test that relationship needs messaging capability."""
-        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from pacomind.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert "messaging" in INITIATIVE_CAPABILITIES.get("relationship", [])
 
     def test_scheduling_needs_calendar(self) -> None:
         """Test that scheduling needs calendar capability."""
-        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from pacomind.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert "calendar" in INITIATIVE_CAPABILITIES.get("scheduling", [])
 
     def test_coding_needs_coding(self) -> None:
         """Test that coding needs coding capability."""
-        from apsimo.initiatives.assignment import INITIATIVE_CAPABILITIES
+        from pacomind.initiatives.assignment import INITIATIVE_CAPABILITIES
         
         assert "coding" in INITIATIVE_CAPABILITIES.get("coding", [])

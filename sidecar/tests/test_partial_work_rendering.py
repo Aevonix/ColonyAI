@@ -7,9 +7,9 @@ from types import SimpleNamespace
 
 import pytest
 
-from apsimo.api.routers import executions, host
-from apsimo.turns import hermes_kanban, hermes_work, local_work, reported_workers
-from apsimo.turns.executions import format_view, request_work_context
+from pacomind.api.routers import executions, host
+from pacomind.turns import hermes_kanban, hermes_work, local_work, reported_workers
+from pacomind.turns.executions import format_view, request_work_context
 
 
 def base_view():
@@ -72,7 +72,7 @@ async def test_actual_locked_later_boards_preserve_the_first_board_at_the_api_bo
     monkeypatch.setattr(hermes_kanban,'selected_home',lambda:tmp_path)
     monkeypatch.delenv('HERMES_KANBAN_HOME',raising=False)
     monkeypatch.delenv('HERMES_KANBAN_DB',raising=False)
-    monkeypatch.setenv('COLONY_HERMES_WORK_BOARDS',json.dumps(['default', 'slow1','slow2','slow3','slow4','slow5']))
+    monkeypatch.setenv('PACOMIND_HERMES_WORK_BOARDS',json.dumps(['default', 'slow1','slow2','slow3','slow4','slow5']))
     board(tmp_path/'kanban.db','first-board-task')
     locks=[]
     try:

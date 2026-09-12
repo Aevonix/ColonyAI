@@ -6,7 +6,7 @@ import json
 from pathlib import Path
 from urllib.parse import quote
 
-ACTIVE = ContextVar('colony_selected_local_work', default=None)
+ACTIVE = ContextVar('pacomind_selected_local_work', default=None)
 
 
 def request(client, path, body=None):
@@ -121,7 +121,7 @@ class Undertaking:
     def before_tool(self, context):
         try:
             if (not self.bound or self.error or context.get('task_id') != self.task_id
-                    or context.get('tool_name') not in {'colony_read_work_source', 'tool_search', 'tool_describe'}):
+                    or context.get('tool_name') not in {'pacomind_read_work_source', 'tool_search', 'tool_describe'}):
                 raise ValueError('selected_local_work_tool_required')
             self.current()
         except Exception:
@@ -138,7 +138,7 @@ class Undertaking:
         if not self.holder:
             raise ValueError('undertaking_not_acquired')
         coordinator, _, context = self.holder
-        if coordinator.before_tool({**context, 'tool_name': 'colony_read_work_source'}) is not None:
+        if coordinator.before_tool({**context, 'tool_name': 'pacomind_read_work_source'}) is not None:
             raise ValueError('undertaking_superseded')
 
     def read_source(self, args, context):

@@ -78,7 +78,7 @@ and erasure races are covered separately by `test_embedding_generations.py` and
 
 ## Reproduce
 
-Run from the repository root in a Python environment with Colony's dependencies
+Run from the repository root in a Python environment with PacoMind's dependencies
 installed, including LanceDB, PyArrow and Pillow. No additional memory framework
 or database service is installed by the harness. Use disposable directories.
 Never run two harness processes against the same state directory.
@@ -87,17 +87,17 @@ Set these environment variables to explicit benchmark model endpoints and names:
 
 | Required | Meaning |
 | --- | --- |
-| `COLONY_BENCH_CHAT_BASE_URL`, `COLONY_BENCH_CHAT_MODEL` | Local OpenAI chat endpoint ending in `/v1`, extraction model |
-| `COLONY_BENCH_EMBED_BASE_URL`, `COLONY_BENCH_EMBED_MODEL`, `COLONY_BENCH_EMBED_DIMS` | Embedding endpoint, model, full dimensions |
-| `COLONY_BENCH_RERANKER_BASE_URL`, `COLONY_BENCH_RERANKER_MODEL` | Rerank endpoint base **without** `/v1`, model |
+| `PACOMIND_BENCH_CHAT_BASE_URL`, `PACOMIND_BENCH_CHAT_MODEL` | Local OpenAI chat endpoint ending in `/v1`, extraction model |
+| `PACOMIND_BENCH_EMBED_BASE_URL`, `PACOMIND_BENCH_EMBED_MODEL`, `PACOMIND_BENCH_EMBED_DIMS` | Embedding endpoint, model, full dimensions |
+| `PACOMIND_BENCH_RERANKER_BASE_URL`, `PACOMIND_BENCH_RERANKER_MODEL` | Rerank endpoint base **without** `/v1`, model |
 
-Optional keys are `COLONY_BENCH_CHAT_API_KEY`, `COLONY_BENCH_EMBED_API_KEY` and
-`COLONY_BENCH_RERANKER_API_KEY`. Optional `COLONY_BENCH_LOCAL_HOSTS` declares
+Optional keys are `PACOMIND_BENCH_CHAT_API_KEY`, `PACOMIND_BENCH_EMBED_API_KEY` and
+`PACOMIND_BENCH_RERANKER_API_KEY`. Optional `PACOMIND_BENCH_LOCAL_HOSTS` declares
 comma-separated LAN hostnames for extraction; loopback and private IP ranges
 already follow the runtime router's local policy. There is no cloud fallback.
-`COLONY_BENCH_RERANKER_PROMPT_STYLE=qwen3` selects the Qwen3 template.
-`COLONY_BENCH_CHAT_WEIGHT_REVISION` records a known revision, otherwise unknown.
-`COLONY_BENCH_EMBED_QUERY_INSTRUCTION` overrides the query prefix; its default is
+`PACOMIND_BENCH_RERANKER_PROMPT_STYLE=qwen3` selects the Qwen3 template.
+`PACOMIND_BENCH_CHAT_WEIGHT_REVISION` records a known revision, otherwise unknown.
+`PACOMIND_BENCH_EMBED_QUERY_INSTRUCTION` overrides the query prefix; its default is
 `Instruct: Given a search query, retrieve relevant memories that answer it\nQuery: `
 with an actual newline. Do not use shell tracing when setting API keys.
 
@@ -210,8 +210,8 @@ python benchmarks/source_recall/run.py --source-only --split holdout   --fixture
 ```
 
 Only the explicit benchmark embedding and reranker environment variables are
-required here. `COLONY_BENCH_RERANKER_REVISION` and
-`COLONY_BENCH_RECALL_INDEX_GENERATION` optionally declare known revisions;
+required here. `PACOMIND_BENCH_RERANKER_REVISION` and
+`PACOMIND_BENCH_RECALL_INDEX_GENERATION` optionally declare known revisions;
 otherwise they remain `unverified`. The calibration metadata uses the serving
 correction-first candidate format and records embedding dimensions. The explicit
 trial cutoff and matching stamp are not a new qualification of that cutoff.

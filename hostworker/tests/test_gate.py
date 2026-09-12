@@ -4,8 +4,8 @@ import copy
 
 import pytest
 
-from apsimo_hostworker.catalog import TOOL_CATALOG
-from apsimo_hostworker.gate import (
+from pacomind_hostworker.catalog import TOOL_CATALOG
+from pacomind_hostworker.gate import (
     BOUNDED_GRANT_SHAPE,
     GATE_COMMON_FIELDS,
     GRANT_BINDING_METHOD,
@@ -84,7 +84,7 @@ def test_valid_standing_grant_proof_keeps_action_gate_bounded(golden_vectors):
     case = case_by_name(golden_vectors, "grant_valid")
     evidence = case["receipts"][0]["evidence"]
     evidence["bounded_grant_expires_at_epoch"] = GRANT_UNLIMITED_SENTINEL
-    from apsimo_hostworker.contract import sha256_json_utf8
+    from pacomind_hostworker.contract import sha256_json_utf8
 
     case["receipts"][0]["evidence_sha256"] = sha256_json_utf8(evidence)
 
@@ -203,7 +203,7 @@ def test_non_grantable_fails_closed_regardless_of_configuration(
         validate_owner_gate(
             case["action"],
             case["receipts"],
-            tool_name="colony_autonomy_enable",
+            tool_name="pacomind_autonomy_enable",
             now=case["now"],
             registry=default_registry(),
         )
@@ -211,13 +211,13 @@ def test_non_grantable_fails_closed_regardless_of_configuration(
     reduced = {
         name: spec
         for name, spec in TOOL_CATALOG.items()
-        if name != "colony_autonomy_enable"
+        if name != "pacomind_autonomy_enable"
     }
     with pytest.raises(OwnerGateError):
         validate_owner_gate(
             case["action"],
             case["receipts"],
-            tool_name="colony_autonomy_enable",
+            tool_name="pacomind_autonomy_enable",
             now=case["now"],
             catalog=reduced,
         )
@@ -410,7 +410,7 @@ def test_custom_shape_expiries_are_reenforced(golden_vectors):
         second_expires_at_epoch=now + 100.0,
     )
 
-    from apsimo_hostworker.contract import sha256_json_utf8
+    from pacomind_hostworker.contract import sha256_json_utf8
 
     def receipt_for(evidence_document):
         return {
@@ -425,7 +425,7 @@ def test_custom_shape_expiries_are_reenforced(golden_vectors):
     live = validate_owner_gate(
         base["action"],
         [receipt_for(evidence)],
-        tool_name="colony_record_insight",
+        tool_name="pacomind_record_insight",
         now=now,
         registry=registry,
     )
@@ -437,7 +437,7 @@ def test_custom_shape_expiries_are_reenforced(golden_vectors):
         expired = validate_owner_gate(
             base["action"],
             [receipt_for(lapsed)],
-            tool_name="colony_record_insight",
+            tool_name="pacomind_record_insight",
             now=now,
             registry=registry,
         )

@@ -5,7 +5,7 @@ import uuid
 
 import pytest
 
-from apsimo_hostworker.admission import (
+from pacomind_hostworker.admission import (
     ADMISSION_MAX_LIFETIME_SECONDS,
     ADMISSION_SCHEMA,
     DispatchAdmission,
@@ -13,10 +13,10 @@ from apsimo_hostworker.admission import (
     FileDispatchAdmission,
     sqlite_database_identity,
 )
-from apsimo_hostworker.contract import canonical_json_utf8
+from pacomind_hostworker.contract import canonical_json_utf8
 
 ORIGIN = "http://127.0.0.1:8123"
-TOOLS = ("colony_create_commitment", "colony_research")
+TOOLS = ("pacomind_create_commitment", "pacomind_research")
 NOW = 1_700_000_000.0
 
 
@@ -34,7 +34,7 @@ def admission_document(*, binding_identity=None, **overrides):
         "version": 1,
         "authorized": True,
         "authorization_id": uuid.uuid4().hex,
-        "colony_origin": ORIGIN,
+        "pacomind_origin": ORIGIN,
         "enabled_tools": sorted(TOOLS),
         "binding_identity": binding_identity,
         "created_at": NOW - 10.0,
@@ -59,7 +59,7 @@ def write_admission(path, document, mode=0o600, canonical=True):
 def make_admission(tmp_path, *, identity_probe=None, clock=None):
     return FileDispatchAdmission(
         str(tmp_path / "admission.json"),
-        colony_origin=ORIGIN,
+        pacomind_origin=ORIGIN,
         enabled_tools=TOOLS,
         clock=clock or Clock(),
         identity_probe=identity_probe,
@@ -87,9 +87,9 @@ def test_missing_file_refuses(tmp_path):
         {"schema": "SomethingElse"},
         {"version": 2},
         {"authorization_id": "nothex"},
-        {"colony_origin": "http://127.0.0.1:9999"},
+        {"pacomind_origin": "http://127.0.0.1:9999"},
         {"enabled_tools": sorted(TOOLS)[:1]},
-        {"enabled_tools": sorted(TOOLS) + ["colony_task_snooze"]},
+        {"enabled_tools": sorted(TOOLS) + ["pacomind_task_snooze"]},
         {"expires_at": NOW - 1.0},
         {"created_at": NOW + 120.0},
         {"created_at": NOW - ADMISSION_MAX_LIFETIME_SECONDS * 2,
@@ -240,28 +240,28 @@ def test_construction_refuses_bad_configuration(tmp_path):
     with pytest.raises(DispatchAdmissionError):
         FileDispatchAdmission(
             "relative/path.json",
-            colony_origin=ORIGIN,
+            pacomind_origin=ORIGIN,
             enabled_tools=TOOLS,
             clock=Clock(),
         )
     with pytest.raises(DispatchAdmissionError):
         FileDispatchAdmission(
             str(tmp_path / "admission.json"),
-            colony_origin="http://example.com",
+            pacomind_origin="http://example.com",
             enabled_tools=TOOLS,
             clock=Clock(),
         )
     with pytest.raises(DispatchAdmissionError):
         FileDispatchAdmission(
             str(tmp_path / "admission.json"),
-            colony_origin=ORIGIN,
+            pacomind_origin=ORIGIN,
             enabled_tools=("not_a_governed_tool",),
             clock=Clock(),
         )
     with pytest.raises(DispatchAdmissionError):
         FileDispatchAdmission(
             str(tmp_path / "admission.json"),
-            colony_origin=ORIGIN,
+            pacomind_origin=ORIGIN,
             enabled_tools=(),
             clock=Clock(),
         )

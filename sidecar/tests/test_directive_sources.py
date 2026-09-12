@@ -2,9 +2,9 @@
 from contextlib import closing
 import json
 import pytest
-from apsimo.directives import DirectiveManager, DirectiveStore, Action
-from apsimo.directives.extractor import extract_directives
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.directives import DirectiveManager, DirectiveStore, Action
+from pacomind.directives.extractor import extract_directives
+from pacomind.turns import TurnIdempotencyLedger
 
 @pytest.fixture
 def setup(tmp_path):
@@ -131,14 +131,14 @@ async def test_real_owner_turn_ingestion_and_manual_api(monkeypatch, tmp_path):
     """Exercise the actual producer, source write, capture and future context."""
     from fastapi import FastAPI
     from httpx import ASGITransport, AsyncClient
-    from apsimo.api.routers import host
-    from apsimo.api.middleware import ApiKeyMiddleware
-    from apsimo import identity
-    from apsimo.events import broadcaster
-    from apsimo.turns import get_turn_idempotency_ledger
-    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
-    monkeypatch.setenv('COLONY_DIRECTIVE_LLM_ASSIST', 'true')  # Retired setting has no model consumer.
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    from pacomind.api.routers import host
+    from pacomind.api.middleware import ApiKeyMiddleware
+    from pacomind import identity
+    from pacomind.events import broadcaster
+    from pacomind.turns import get_turn_idempotency_ledger
+    monkeypatch.setenv('PACOMIND_STATE_DIR', str(tmp_path))
+    monkeypatch.setenv('PACOMIND_DIRECTIVE_LLM_ASSIST', 'true')  # Retired setting has no model consumer.
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     for name in ('_graph', '_contacts_store', '_presence_store', '_context_provenance',
                  '_telemetry', '_p8_runtime', '_reranker', '_context_recall_selector',
                  '_preference_learner', '_world_populator', '_conversation_extractor',

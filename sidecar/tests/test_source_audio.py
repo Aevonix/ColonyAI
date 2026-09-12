@@ -10,11 +10,11 @@ import wave
 import httpx
 import pytest
 
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.audio import decode_audio, source_text
-from apsimo.turns.idempotency import SourceErased, source_message_hash
-from apsimo.turns.media import SourceMedia
-from apsimo.beliefs.source_projection import SourceClaimProjection
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.audio import decode_audio, source_text
+from pacomind.turns.idempotency import SourceErased, source_message_hash
+from pacomind.turns.media import SourceMedia
+from pacomind.beliefs.source_projection import SourceClaimProjection
 from test_turn_source_evidence import source_app, recalled, envelope
 from test_hermes_turn_outbox import _load_client
 
@@ -43,8 +43,8 @@ def retained(ledger, turn='audio'):
 
 @pytest.mark.asyncio
 async def test_audio_http_recall_and_full_source_preserve_derived_clock_lineage(source_app, tmp_path, monkeypatch):
-    from apsimo.turns.source_read import read
-    from apsimo.turns.source_vectors import chunks, hydrate
+    from pacomind.turns.source_read import read
+    from pacomind.turns.source_vectors import chunks, hydrate
     from contextlib import closing
     data = wav_bytes(); original = message(data); asset = hashlib.sha256(data).hexdigest()
     body = {'identity': {'host_id': 'fixture'}, 'context': {'contact_id': 'contact-a', 'session_id': 'call', 'turn_id': 'audio'},
@@ -72,7 +72,7 @@ async def test_audio_http_recall_and_full_source_preserve_derived_clock_lineage(
         assert response.content == data and response.headers['content-type'] == 'audio/wav'
         assert response.headers['cache-control'] == 'no-store'
         assert (await client.get(asset_url, params={'contact_id': 'other', 'session_id': 'call'})).status_code == 404
-        monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+        monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
         packet = await recalled(client, session='later', query='violet lamp')
         assert 'Unverified machine transcript' in packet and 'derived_unverified' in packet and asset in packet
         assert 'input_audio' not in packet and original['content'][0]['input_audio']['data'] not in packet
@@ -120,7 +120,7 @@ def test_unsupported_audio_and_invalid_transcripts_are_not_silently_claimed_reta
 
 
 def test_audio_original_backup_and_shared_owner_erasure(tmp_path):
-    from apsimo import backup
+    from pacomind import backup
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     for person in ('a', 'b'):
         ledger.record_source(person, contact_id=person, session_id='call', messages=[message()], derive_claims=False)
@@ -138,10 +138,10 @@ def test_audio_original_backup_and_shared_owner_erasure(tmp_path):
 
 
 def test_audio_memory_salvage_recovers_only_current_owned_original(tmp_path):
-    from apsimo import backup
+    from pacomind import backup
     state = tmp_path/'state'; ledger = TurnIdempotencyLedger(state/'turn-idempotency.db')
     ledger.record_source('audio', contact_id='person', session_id='call', messages=[message()], derive_claims=False)
-    (state/'colony-id').write_text('fixture-audio-colony')
+    (state/'pacomind-id').write_text('fixture-audio-pacomind')
     archive = backup.create_full_backup(state, tmp_path/'archives', include_graph=False, include_vectors=False)
     asset = hashlib.sha256(wav_bytes()).hexdigest()
     SourceMedia(ledger).store._original_path(asset, 'audio/wav').unlink()
@@ -157,8 +157,8 @@ def test_audio_memory_salvage_recovers_only_current_owned_original(tmp_path):
 @pytest.mark.asyncio
 async def test_audio_protocol_rejects_predecessor_before_raw_byte_storage_and_keeps_literal_ids(source_app):
     from fastapi import HTTPException, Response
-    from apsimo.api.routers.host import turns_sync_v2
-    from apsimo.api.schemas.host import TurnSyncRequest
+    from pacomind.api.routers.host import turns_sync_v2
+    from pacomind.api.schemas.host import TurnSyncRequest
     body = TurnSyncRequest.model_validate({'identity': {'host_id': 'fixture'},
         'context': {'contact_id': 'person', 'session_id': 'call', 'turn_id': 'clip'}, 'user_message': message()})
     with pytest.raises(HTTPException) as error:

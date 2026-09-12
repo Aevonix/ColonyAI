@@ -6,10 +6,10 @@ from httpx import ASGITransport, AsyncClient
 import jsonschema
 import pytest
 
-from apsimo.beliefs.source_claims import claim_response_schema, validated_claims
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.beliefs.source_claims import claim_response_schema, validated_claims
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.turns import TurnIdempotencyLedger
 from test_source_claim_projection import Model, ingest
 from test_source_episode_memory import episode
 from test_turn_source_evidence import source_app
@@ -139,7 +139,7 @@ async def test_unknown_episode_time_is_labelled_in_relevant_date_query(tmp_path)
 
 @pytest.mark.asyncio
 async def test_ordinary_api_preserves_calendar_day_overlap_across_source_and_query_timezones(source_app, tmp_path, monkeypatch):
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
     projection = SourceClaimProjection(ledger)
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://fixture') as client:
@@ -151,7 +151,7 @@ async def test_ordinary_api_preserves_calendar_day_overlap_across_source_and_que
                 'context': {'contact_id': 'contact-a', 'session_id': 'later', 'timezone': 'America/New_York'},
                 'incoming_message': {'role': 'user', 'content': QUERY.replace('2026-08-24', date)}})
             assert response.status_code == 200, response.text
-            memories = [s for s in response.json()['sections'] if s['id'] == 'colony-memory']
+            memories = [s for s in response.json()['sections'] if s['id'] == 'pacomind-memory']
             assert bool(memories) is expected
             if memories:
                 assert '2026-08-24T00:00:00+00:00' in memories[0]['body']
@@ -251,7 +251,7 @@ async def test_whole_report_withdrawal_does_not_revive_its_details(tmp_path):
 
 @pytest.mark.asyncio
 async def test_successive_partial_corrections_require_history_and_keep_read_dependencies(tmp_path):
-    from apsimo.turns.source_read import read
+    from pacomind.turns.source_read import read
 
     ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
     projection = SourceClaimProjection(ledger)
@@ -301,7 +301,7 @@ async def test_successive_partial_corrections_require_history_and_keep_read_depe
 
 @pytest.mark.asyncio
 async def test_erased_terminal_correction_leaves_explicit_history_gap(tmp_path):
-    from apsimo.turns.source_read import read
+    from pacomind.turns.source_read import read
 
     ledger = TurnIdempotencyLedger(tmp_path / 'episode.db')
     projection = SourceClaimProjection(ledger)
@@ -364,7 +364,7 @@ async def test_episode_topic_lookup_cannot_resurrect_an_unavailable_current_revi
     await record(ledger, projection, 'count-correction', CORRECTION,
         episode(CORRECTION) | {'operation': 'correct', 'match_prior': True})
     if removal == 'reattribute-current':
-        from apsimo.turns.source_attribution import correct
+        from pacomind.turns.source_attribution import correct
         correct(ledger, operation_id='move-revision', performed_by='operator',
             old_contact_id='contact-a', contact_id='contact-b', source_ids=['count-correction'],
             evidence_refs=['operator:correction'])

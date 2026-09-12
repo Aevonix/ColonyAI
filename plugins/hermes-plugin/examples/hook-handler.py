@@ -1,4 +1,4 @@
-"""Inert marker for the retired Colony-to-Hermes initiative hook example."""
+"""Inert marker for the retired PacoMind-to-Hermes initiative hook example."""
 
 from __future__ import annotations
 

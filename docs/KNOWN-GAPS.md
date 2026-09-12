@@ -1,11 +1,11 @@
 # Known gaps and retired scaffolding
 
 This is a source inventory, not a production health report. Phase 1 establishes
-the first supported Apsimo baseline and is still being validated. Current
+the first supported PacoMind baseline and is still being validated. Current
 behavior and limits live in the README and capability guides. Enabling a
 profile still requires checking its actual effects.
 
-Older ColonyAI releases, aliases and migration paths carry no public support
+Older PacoMind releases, aliases and migration paths carry no public support
 promise. Retained modules are listed here so cleanup can account for their
 actual callers and data, not to require compatibility with every old release.
 
@@ -65,12 +65,6 @@ general self-improvement simply by recording a successful review.
   Neo4j memory graph is a different subsystem; its records are not a substitute
   for canonical source memory. Changing databases does not fix memory admission
   quality or recover missing provenance.
-- `apsimo persona setup` still exists but is outside the supported guided setup.
-  Current installations use `apsimo init`. Its host step only logs configured
-  identity/overlay/plugin paths, and setup reports those settings as unapplied.
-  Remove obsolete manifest machinery when its current consumers are resolved;
-  preserving every older persona layout is not a public requirement. Private
-  identity data still needs an explicit disposition before a store is removed.
 - **ResponseGuard applied-output receipts**: guarded candidates now carry an
   exact candidate digest, and the proactive send path honors enforce verdicts,
   but the audit store records evaluations rather than durable proof of the
@@ -81,7 +75,7 @@ general self-improvement simply by recording a successful review.
 
 ## Deliberate no-builds (division of responsibility with the host agent)
 
-Apsimo is the cognitive substrate; the host agent framework (e.g. Hermes)
+PacoMind is the cognitive substrate; the host agent framework (e.g. Hermes)
 owns sessions, tool execution, message transport, and cron. These stay
 unbuilt HERE by design:
 
@@ -92,7 +86,7 @@ unbuilt HERE by design:
   working per-turn path is the inline introspection
   (`cognition/introspection.py`).
 - **Email/desktop/browser job handlers**: outbound messaging goes through
-  the host gateway (delivery bridge); Apsimo never sends email itself. The
+  the host gateway (delivery bridge); PacoMind never sends email itself. The
   desktop/browser packages were scaffolding for host-side capabilities and
   the dead EmailHandler was removed in v0.30.0. `JobType.DESKTOP`/`BROWSER`
   remain enum values with no handler.
@@ -104,9 +98,9 @@ unbuilt HERE by design:
   deliberate exception to the division above:
   `services/initiative_executor.py` exists specifically for same-machine
   deployments that have NO host agent, closing the autonomy loop in-process
-  (ReasoningLoop + Apsimo tools against pending initiatives). Deployments
+  (ReasoningLoop + PacoMind tools against pending initiatives). Deployments
   that DO run a host agent with its own execution plane should leave
-  `COLONY_EXECUTOR_ENABLED=false` (the default): enabling both means two
+  `PACOMIND_EXECUTOR_ENABLED=false` (the default): enabling both means two
   executors competing to claim the same initiatives.
 
 ## Removed during the 1.0 consolidation
@@ -130,7 +124,7 @@ public contract. Its actual callers determine the remaining removal work.
 ## Known mechanisms (documented so the log noise is interpretable)
 
 - **"Unclosed client session" (aiohttp) after tick-budget cancellations**:
-  when a tick exceeds `COLONY_TICK_BUDGET_SECS` the whole-tick `wait_for`
+  when a tick exceeds `PACOMIND_TICK_BUDGET_SECS` the whole-tick `wait_for`
   cancels whatever await is in flight; a cancellation landing inside an
   aiohttp request can interrupt the session unwind and the GC later logs the
   unclosed session. Mitigated (v0.29.0): the world-LLM extraction timeout is
@@ -149,6 +143,6 @@ public contract. Its actual callers determine the remaining removal work.
 - Workspace concerns raised from **commitments** settle durably on resolve
   (the source closes). Concerns raised from **anomalies / benchmark
   regressions** have no settler: resolving them suppresses the dedup key for
-  `COLONY_WORKSPACE_RESOLVED_TTL_HOURS` (default 24h), after which a source
+  `PACOMIND_WORKSPACE_RESOLVED_TTL_HOURS` (default 24h), after which a source
   that is STILL firing legitimately returns. That re-raise is intentional:
   a day-old still-live anomaly deserves attention again.

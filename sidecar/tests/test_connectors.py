@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import pytest
 
-from apsimo.directives import Verdict
-from apsimo.connectors import ConnectorManager, Observation, EntityHint
-from apsimo.connectors.base import Connector
-from apsimo.connectors.imap_email import IMAPEmailConnector
-from apsimo.connectors.caldav_calendar import CalendarConnector, _parse_ics
-from apsimo.connectors.fs_documents import FSDocumentsConnector
-from apsimo.connectors.webhook_pull import WebhookPullConnector, _dig
+from pacomind.directives import Verdict
+from pacomind.connectors import ConnectorManager, Observation, EntityHint
+from pacomind.connectors.base import Connector
+from pacomind.connectors.imap_email import IMAPEmailConnector
+from pacomind.connectors.caldav_calendar import CalendarConnector, _parse_ics
+from pacomind.connectors.fs_documents import FSDocumentsConnector
+from pacomind.connectors.webhook_pull import WebhookPullConnector, _dig
 
 
 # -- IMAP email -----------------------------------------------------------
@@ -87,8 +87,8 @@ def test_fs_normalize_document_entity():
 def test_fs_fetch_only_new_files(tmp_path):
     c = FSDocumentsConnector()
     import os
-    monkey = {"COLONY_CONNECTOR_FS_PATH": str(tmp_path),
-              "COLONY_CONNECTOR_FS_EXTENSIONS": "txt"}
+    monkey = {"PACOMIND_CONNECTOR_FS_PATH": str(tmp_path),
+              "PACOMIND_CONNECTOR_FS_EXTENSIONS": "txt"}
     for k, v in monkey.items():
         os.environ[k] = v
     try:
@@ -194,7 +194,7 @@ def _obs():
 
 @pytest.mark.asyncio
 async def test_manager_off_is_noop(monkeypatch):
-    monkeypatch.setenv("COLONY_CONNECTORS_MODE", "off")
+    monkeypatch.setenv("PACOMIND_CONNECTORS_MODE", "off")
     store, pop = _MockObsStore(), _MockPopulator()
     mgr = ConnectorManager(observation_store=store, populator=pop)
     mgr.register(_StubConnector(_obs()))
@@ -204,7 +204,7 @@ async def test_manager_off_is_noop(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manager_shadow_logs_but_writes_nothing(monkeypatch):
-    monkeypatch.setenv("COLONY_CONNECTORS_MODE", "shadow")
+    monkeypatch.setenv("PACOMIND_CONNECTORS_MODE", "shadow")
     store, pop = _MockObsStore(), _MockPopulator()
     mgr = ConnectorManager(observation_store=store, populator=pop)
     mgr.register(_StubConnector(_obs()))
@@ -215,7 +215,7 @@ async def test_manager_shadow_logs_but_writes_nothing(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manager_live_records_and_populates(monkeypatch):
-    monkeypatch.setenv("COLONY_CONNECTORS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_CONNECTORS_MODE", "live")
     store, pop = _MockObsStore(), _MockPopulator()
     mgr = ConnectorManager(observation_store=store, populator=pop)
     mgr.register(_StubConnector(_obs()))
@@ -227,7 +227,7 @@ async def test_manager_live_records_and_populates(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_manager_boundary_suppresses_ingest(monkeypatch):
-    monkeypatch.setenv("COLONY_CONNECTORS_MODE", "live")
+    monkeypatch.setenv("PACOMIND_CONNECTORS_MODE", "live")
     store, pop = _MockObsStore(), _MockPopulator()
     mgr = ConnectorManager(observation_store=store, populator=pop,
                            directive_manager=_FakeDirectives(False))
@@ -239,8 +239,8 @@ async def test_manager_boundary_suppresses_ingest(monkeypatch):
 
 def test_register_default_connectors_only_enabled(monkeypatch):
     for k in ("IMAP", "CALENDAR", "FS", "WEBHOOK"):
-        monkeypatch.delenv(f"COLONY_CONNECTOR_{k}_ENABLED", raising=False)
-    monkeypatch.setenv("COLONY_CONNECTOR_FS_ENABLED", "true")
+        monkeypatch.delenv(f"PACOMIND_CONNECTOR_{k}_ENABLED", raising=False)
+    monkeypatch.setenv("PACOMIND_CONNECTOR_FS_ENABLED", "true")
     mgr = ConnectorManager()
     n = mgr.register_default_connectors()
     assert n == 1

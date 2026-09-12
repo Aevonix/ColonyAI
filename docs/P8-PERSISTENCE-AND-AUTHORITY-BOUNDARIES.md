@@ -118,7 +118,7 @@ fields from model output, fact metadata, or body channel/session claims.
 ## Rollout and rollback
 
 The shared integration now owns one process writer per ledger and remains off
-unless `COLONY_RECIPIENT_SIMULATOR_MODE=shadow` is explicit. It appends a
+unless `PACOMIND_RECIPIENT_SIMULATOR_MODE=shadow` is explicit. It appends a
 sample before every attempted non-real-time evaluation, exposes projections
 only through server-sealed viewers, applies a strictly positive confidence
 floor (default `0.5`, never lowerable by an internal override), and ignores all
@@ -142,7 +142,7 @@ queried. This fail-closed owner projection preserves useful owner context while
 the producers are migrated; it does not make the underlying rows P8 facts.
 Turning P8 off restores the pre-existing query/render contract.
 
-Generic Colony identity, capability/skill descriptions, product self-knowledge,
+Generic PacoMind identity, capability/skill descriptions, product self-knowledge,
 and the configured agent timezone remain intentionally shared context. They do
 not select or summarize a human, owner workspace, relationship, communication,
 goal, or memory record. A producer that starts carrying person-specific content
@@ -178,7 +178,7 @@ remain usable so a directive-store incident does not disable basic calculation
 and research. P8-off keeps the legacy HTTP identity compatibility but does not
 bypass a healthy configured standing-boundary check.
 
-The immediate functional rollback is mode `off` plus a Colony-sidecar restart.
+The immediate functional rollback is mode `off` plus a PacoMind-sidecar restart.
 Preserve additive databases for forensics; do not edit ledger rows or restore
 one P8 database from a different backup generation. Follow
 `docs/runbooks/P8-SHARED-INTEGRATION-CANARY-ROLLBACK.md` for independent source

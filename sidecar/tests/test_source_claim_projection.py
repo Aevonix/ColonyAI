@@ -8,11 +8,11 @@ from unittest.mock import AsyncMock
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.beliefs.source_claims import validated_claims
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.beliefs.source_time import interpret_time_query
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.api.routers import host
+from pacomind.beliefs.source_claims import validated_claims
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.beliefs.source_time import interpret_time_query
+from pacomind.turns import TurnIdempotencyLedger
 from test_turn_source_evidence import source_app
 from test_hermes_turn_outbox import _load_client, _payload
 
@@ -73,7 +73,7 @@ async def test_ordinary_correction_survives_model_change_restart_and_context(sou
         assert await projection.process_one(first)
         await ingest(client, "new", new, occurred="2026-03-02T09:00:00+00:00")
         assert await projection.process_one(second)
-        monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
+        monkeypatch.setenv("PACOMIND_RECALL_RERANK", "off")
         response = await client.post("/v1/host/context/assemble", json={
             "identity": {"host_id": "test-host"}, "context": {"contact_id": "contact-a", "session_id": "later"},
             "incoming_message": {"role": "user", "content": "office location"}})
@@ -128,7 +128,7 @@ async def test_newer_report_does_not_win_and_conflict_is_atomic(source_app, tmp_
     hits = projection.ledger.search_sources("workshop", contact_id="contact-a", session_id="s")
     _, rows = projection.prepare_context([], hits, contact_id="contact-a", session_id="s",
         time_query=interpret_time_query("workshop", now=datetime.now(timezone.utc)))
-    from apsimo.memory.recall import pack_memory_context
+    from pacomind.memory.recall import pack_memory_context
     assert pack_memory_context(rows, max_chars=500) == ([], "")
 
 
@@ -330,9 +330,9 @@ def test_expired_worker_cannot_commit_or_complete_reclaimed_job(tmp_path):
 
 @pytest.mark.asyncio
 async def test_local_extraction_disables_router_escalation(monkeypatch):
-    from apsimo.beliefs.source_claims import local_tier
-    from apsimo.router.router import LLMRouter
-    from apsimo.router.tiers import ModelTier
+    from pacomind.beliefs.source_claims import local_tier
+    from pacomind.router.router import LLMRouter
+    from pacomind.router.tiers import ModelTier
     router = LLMRouter(self_learner=SimpleNamespace())
     router._litellm_call = AsyncMock(side_effect=TimeoutError())
     router._fallback = SimpleNamespace(should_escalate=lambda *args: True,
@@ -348,13 +348,13 @@ async def test_local_extraction_disables_router_escalation(monkeypatch):
 
 
 def test_unicode_values_stay_distinct():
-    from apsimo.beliefs.source_claims import norm_value
+    from pacomind.beliefs.source_claims import norm_value
     assert norm_value("東京") != norm_value("京都")
     assert norm_value("CAFÉ") == norm_value("Cafe\u0301")
 
 
 def test_unsupported_time_range_is_not_silently_current():
-    from apsimo.beliefs.source_time import filter_unstructured
+    from pacomind.beliefs.source_time import filter_unstructured
     for text in ("office last month", "office before 2026-03-12", "office between March 1, 2026 and March 5, 2026"):
         query = interpret_time_query(text, now=datetime.now(timezone.utc))
         assert query.mode == "unresolved_time"

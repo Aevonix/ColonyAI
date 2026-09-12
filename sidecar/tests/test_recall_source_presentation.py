@@ -5,9 +5,9 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.beliefs.source_projection import SourceClaimProjection
-from apsimo.memory.recall import pack_memory_context, render_memory_context
-from apsimo.turns import TurnIdempotencyLedger
+from pacomind.beliefs.source_projection import SourceClaimProjection
+from pacomind.memory.recall import pack_memory_context, render_memory_context
+from pacomind.turns import TurnIdempotencyLedger
 from test_procedure_source_context import ProcedureModel, candidates
 from test_source_claim_projection import claim
 from test_turn_source_evidence import source_app
@@ -67,7 +67,7 @@ async def test_real_projection_and_fresh_context_share_exact_evidence(source_app
     assert all(a['event_at'] is None for a in assertions)
     assert all(card['history_anchor']['claim_id'] in {a['claim_id'] for a in assertions} for card in cards)
     assert body.count(TEXT) == 1 and rows == original
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://test') as client:
         async def context(contact):
             response = await client.post('/v1/host/context/assemble', json={
@@ -76,7 +76,7 @@ async def test_real_projection_and_fresh_context_share_exact_evidence(source_app
                 'incoming_message': {'role': 'user', 'content': 'packing trial'},
                 'include_initiatives': False})
             assert response.status_code == 200
-            return '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'colony-memory')
+            return '\n'.join(s['body'] for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
         assert (await context('person')).count(TEXT) == 1
         assert await context('unrelated-person') == ''
 

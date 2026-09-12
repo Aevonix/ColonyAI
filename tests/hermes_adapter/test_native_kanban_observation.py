@@ -19,13 +19,13 @@ socket.socket.connect = no_network
 from hermes_cli import kanban_db as kb
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
-from apsimo.api.authority import RequestAuthority
-from apsimo.api.routers import executions, host
-from apsimo.turns.hermes_kanban import kanban_view
-from apsimo.turns.executions import format_view
+from pacomind.api.authority import RequestAuthority
+from pacomind.api.routers import executions, host
+from pacomind.turns.hermes_kanban import kanban_view
+from pacomind.turns.executions import format_view
 root = Path(os.environ['HERMES_HOME']); root.mkdir()
 (root/'config.yaml').write_text('plugins: {enabled: []}\n')
-state = Path(os.environ['COLONY_STATE_DIR']); state.mkdir()
+state = Path(os.environ['PACOMIND_STATE_DIR']); state.mkdir()
 kb.create_board('operations')
 kb.create_board('unselected')
 with kb.connect(board='unselected') as db:
@@ -62,20 +62,20 @@ del os.environ['HERMES_KANBAN_BOARD']
 kb.set_current_board('operations')
 
 # Explicit missing boards stay visible and are never created by a read.
-os.environ['COLONY_HERMES_WORK_BOARDS'] = json.dumps(['operations','missing'])
+os.environ['PACOMIND_HERMES_WORK_BOARDS'] = json.dumps(['operations','missing'])
 view = kanban_view()
 assert view['available'] and view['partial'] and view['boards'][1]['reason'] == 'native_board_absent'
 assert not (root/'kanban/boards/missing').exists()
-os.environ['COLONY_HERMES_WORK_BOARDS'] = '["../unselected"]'
+os.environ['PACOMIND_HERMES_WORK_BOARDS'] = '["../unselected"]'
 assert kanban_view()['reason'] == 'invalid_native_board_binding'
-os.environ['COLONY_HERMES_WORK_BOARDS'] = '["operations"]'
+os.environ['PACOMIND_HERMES_WORK_BOARDS'] = '["operations"]'
 
 host._task_queue = None
 app = FastAPI()
 @app.middleware('http')
 async def identity(request, next_call):
     person = request.headers.get('fixture-person', 'owner')
-    request.state.colony_authority = RequestAuthority(principal_id='fixture',credential_id='fixture',
+    request.state.pacomind_authority = RequestAuthority(principal_id='fixture',credential_id='fixture',
         scopes=frozenset({'context:read'}),viewer_person_id=person,person_ids=frozenset({person}),
         audiences=frozenset({'viewer'}),authenticated=True)
     return await next_call(request)
@@ -141,12 +141,12 @@ def test_actual_native_general_task_observed_across_sessions(tmp_path):
     root = Path(__file__).resolve().parents[2]
     env = {key:os.environ[key] for key in ('PATH','HOME','LANG') if key in os.environ}
     env.update(HERMES_HOME=str(tmp_path/'hermes'),HERMES_KANBAN_HOME=str(tmp_path/'hermes'),
-        COLONY_STATE_DIR=str(tmp_path/'state'),COLONY_OWNER_CONTACT_ID='owner',
+        PACOMIND_STATE_DIR=str(tmp_path/'state'),PACOMIND_OWNER_CONTACT_ID='owner',
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),PYTHONDONTWRITEBYTECODE='1',
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
-        COLONY_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
+        PACOMIND_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
-                             os.environ.get('COLONY_TEST_DEPENDENCY_PATH','')],
+                             os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)
     assert result.returncode == 0,result.stdout+result.stderr
     assert '"independent_owner_sessions": true' in result.stdout

@@ -1,11 +1,11 @@
-"""Tests for Colony event bus and event types."""
+"""Tests for PacoMind event bus and event types."""
 
 import asyncio
 
 import pytest
 from datetime import datetime
 
-from apsimo.events.types import (
+from pacomind.events.types import (
     CognitionEvent,
     Event,
     IntegrationEvent,
@@ -14,10 +14,10 @@ from apsimo.events.types import (
     PersonEvent,
     SignalEvent,
 )
-from apsimo.events.bus import EventBus, Subscription, TypedEventBus
-from apsimo.models.memory import Memory, MemoryType
-from apsimo.models.mesh import NodeRole
-from apsimo.models.signal import Signal, SignalType
+from pacomind.events.bus import EventBus, Subscription, TypedEventBus
+from pacomind.models.memory import Memory, MemoryType
+from pacomind.models.mesh import NodeRole
+from pacomind.models.signal import Signal, SignalType
 
 
 # --- Event type tests ---
@@ -27,7 +27,7 @@ class TestEvent:
     def test_minimal_event(self):
         e = Event(id="e1")
         assert e.id == "e1"
-        assert e.source == "colony"
+        assert e.source == "pacomind"
         assert isinstance(e.timestamp, datetime)
 
     def test_custom_source(self):
@@ -299,7 +299,7 @@ class TestEventBusErrorIsolation:
 
         bus.subscribe(bad_handler, [PersonEvent])
 
-        with caplog.at_level("ERROR", logger="colony.events.bus"):
+        with caplog.at_level("ERROR", logger="pacomind.events.bus"):
             bus.emit(PersonEvent(id="pe1", person_id="p1", event_type="created"))
 
         assert "Event handler error" in caplog.text
@@ -468,7 +468,7 @@ class TestPackageImports:
     """Verify all public names are importable from the package."""
 
     def test_import_all_from_package(self):
-        from apsimo.events import (
+        from pacomind.events import (
             CognitionEvent,
             Event,
             EventBus,

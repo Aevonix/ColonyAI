@@ -8,13 +8,13 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.auth_telemetry import AuthTelemetry
-from apsimo.api.authority import (
+from pacomind.api.auth_telemetry import AuthTelemetry
+from pacomind.api.authority import (
     WORK_READ_SURFACE_V1,
     compatible_scopes,
     required_scope,
 )
-from apsimo.api.middleware import ApiKeyMiddleware
+from pacomind.api.middleware import ApiKeyMiddleware
 
 
 _EXPECTED_SURFACE = frozenset({

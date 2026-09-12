@@ -4,10 +4,10 @@ import json
 from httpx import ASGITransport, AsyncClient
 import pytest
 
-from apsimo.api.routers import host
-from apsimo.tom.facts import SharedFactsStore
-from apsimo.turns import TurnIdempotencyLedger
-from apsimo.turns.source_annotations import append as annotate_source
+from pacomind.api.routers import host
+from pacomind.tom.facts import SharedFactsStore
+from pacomind.turns import TurnIdempotencyLedger
+from pacomind.turns.source_annotations import append as annotate_source
 from test_contact_fact_recall import contact_context, context
 from test_recall_unified_context import Graph, belief
 from test_turn_source_evidence import source_app
@@ -18,7 +18,7 @@ from test_turn_source_evidence import source_app
 async def test_owner_context_excludes_unlinked_manual_and_legacy_mirrors_but_preserves_inspection(
         contact_context, monkeypatch, p8_enabled):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     keys = json.loads(runtime.keyring.read_text())
     # The historical manual fact API requires an explicitly enabled unscoped
     # API principal. This fixture owner already has the exact person binding;
@@ -61,7 +61,7 @@ async def test_owner_context_excludes_unlinked_manual_and_legacy_mirrors_but_pre
 async def test_current_linked_estimate_has_native_citations_then_revision_and_erasure_exclude_it(
         contact_context, monkeypatch, p8_enabled):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     if not p8_enabled:
         monkeypatch.setattr(host, '_p8_runtime', None)
     runtime.ledger.record_source('origin', contact_id='contact-a', session_id='earlier',
@@ -74,7 +74,7 @@ async def test_current_linked_estimate_has_native_citations_then_revision_and_er
             'context': {'contact_id': 'contact-a', 'session_id': 'later-voice'},
             'incoming_message': {'role': 'user', 'content': 'hydrofoil gate'}})
         assert response.status_code == 200, response.text
-        section = next(s for s in response.json()['sections'] if s['id'] == 'colony-memory')
+        section = next(s for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
         assert 'shared-fact:'+linked['id'] in section['body']
         assert section['citations'] == runtime.ledger.source_references(
             ['origin'], contact_id='contact-a', session_id='later-voice')
@@ -113,7 +113,7 @@ def test_automatic_window_filters_unlinked_before_limit_and_rechecks_scope(tmp_p
 @pytest.mark.asyncio
 async def test_linked_estimate_keeps_current_correction_and_exact_source_refs(contact_context, monkeypatch):
     runtime = contact_context
-    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    monkeypatch.setenv('PACOMIND_RECALL_RERANK', 'off')
     monkeypatch.setattr(host, '_p8_runtime', None)
     original = 'The hydrofoil gate is violet.'
     runtime.ledger.record_source('annotated-origin', contact_id='contact-a', session_id='prior',
@@ -131,7 +131,7 @@ async def test_linked_estimate_keeps_current_correction_and_exact_source_refs(co
             'context': {'contact_id': 'contact-a', 'session_id': 'later'},
             'incoming_message': {'role': 'user', 'content': 'hydrofoil gate'}})
     assert response.status_code == 200, response.text
-    section = next(s for s in response.json()['sections'] if s['id'] == 'colony-memory')
+    section = next(s for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
     estimate = next(line for line in section['body'].splitlines() if 'shared-fact:'+fact['id'] in line)
     assert 'amber' in estimate and 'attributed_correction' in estimate
     assert {r['source_id'] for r in section['citations']} == {'annotated-origin', correction['source_id']}
@@ -165,7 +165,7 @@ async def test_canonical_estimate_keeps_correction_refs_and_never_revives_erased
         response = await client.post('/v1/host/context/assemble',
             headers={'Authorization': 'Bearer owner-key'}, json=payload)
         assert response.status_code == 200, response.text
-        section = next(s for s in response.json()['sections'] if s['id'] == 'colony-memory')
+        section = next(s for s in response.json()['sections'] if s['id'] == 'pacomind-memory')
         assert 'amber' in section['body'] and 'attributed_correction' in section['body']
         assert 'shared-fact:'+fact['id'] in section['body']
         expected = runtime.ledger.source_references(['enriched-origin', correction['source_id']],
@@ -176,7 +176,7 @@ async def test_canonical_estimate_keeps_correction_refs_and_never_revives_erased
         after = await client.post('/v1/host/context/assemble',
             headers={'Authorization': 'Bearer owner-key'}, json=payload)
         assert after.status_code == 200, after.text
-        assert not any(s['id'] == 'colony-memory' for s in after.json()['sections'])
+        assert not any(s['id'] == 'pacomind-memory' for s in after.json()['sections'])
     assert runtime.facts.get_fact(fact['id'])['fact'] == original
 
 
@@ -198,9 +198,9 @@ async def test_canonical_omits_irrelevant_incomplete_or_changed_source_packet(
     if change == 'unrelated_query':
         query = 'telescope calibration'
     elif change == 'packet_budget':
-        monkeypatch.setenv('COLONY_RECALL_CONTEXT_MAX_CHARS', '500')
+        monkeypatch.setenv('PACOMIND_RECALL_CONTEXT_MAX_CHARS', '500')
     else:
-        from apsimo.memory.selection import RecallSelector
+        from pacomind.memory.selection import RecallSelector
         class CorrectingSelector:
             async def select_context(self, *args, **kwargs):
                 result = await RecallSelector().select_context(*args, **kwargs)
@@ -215,7 +215,7 @@ async def test_canonical_omits_irrelevant_incomplete_or_changed_source_packet(
                 'context': {'contact_id': 'contact-a', 'session_id': 'later'},
                 'incoming_message': {'role': 'user', 'content': query}})
     assert response.status_code == 200, response.text
-    assert not any(s['id'] == 'colony-memory' for s in response.json()['sections'])
+    assert not any(s['id'] == 'pacomind-memory' for s in response.json()['sections'])
     if change == 'new_correction':
         assert len(calls) == 1
     assert runtime.facts.get_fact(fact['id'])['fact'] == original

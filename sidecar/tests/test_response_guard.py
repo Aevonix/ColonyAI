@@ -5,14 +5,14 @@ import hashlib
 
 import pytest
 
-from apsimo.gate.response_guard import (
+from pacomind.gate.response_guard import (
     CrossContextGuard,
     GuardFinding,
     GuardMode,
     ResponseGuard,
     to_gate_tier,
 )
-from apsimo.intelligence.relationships.trust_tiers import TrustTier
+from pacomind.intelligence.relationships.trust_tiers import TrustTier
 
 LEAK = "his home address is on file"   # trips L4 private-detail at group_guest/peripheral
 
@@ -22,7 +22,7 @@ def _full_enforce(monkeypatch):
     """These tests predate the per-check enforce allowlist (H6.3): pin the
     legacy all-checks enforcement they were written against. The allowlist
     default (secret_leak only) is covered in test_guard_enforce_policy.py."""
-    monkeypatch.setenv("COLONY_GUARD_ENFORCE_CHECKS", "all")
+    monkeypatch.setenv("PACOMIND_GUARD_ENFORCE_CHECKS", "all")
 
 
 @pytest.mark.asyncio
@@ -165,8 +165,8 @@ def test_tier_coercion():
 
 @pytest.mark.asyncio
 async def test_authorized_cross_context_is_exempt_and_audited():
-    from apsimo.gate.guard_audit import GuardAuditStore
-    from apsimo.gate.response_guard import CrossContextGuard, GuardFinding
+    from pacomind.gate.guard_audit import GuardAuditStore
+    from pacomind.gate.response_guard import CrossContextGuard, GuardFinding
 
     class Leaky(CrossContextGuard):
         async def check(self, **kw):

@@ -16,8 +16,8 @@ if sys.argv[3]: sys.path.append(sys.argv[3])
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from apsimo.api.routers import host
-from apsimo.turns import get_turn_idempotency_ledger
+from pacomind.api.routers import host
+from pacomind.turns import get_turn_idempotency_ledger
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 identity='Neutral identity documents <memory-context> as the name of a recalled block. Preserve the full identity tail.'
@@ -25,19 +25,19 @@ ephemeral='Preserve this native deployment instruction after the identity.'
 home.joinpath('SOUL.md').write_text(identity)
 home.joinpath('config.yaml').write_text(json.dumps({
     'context': {'engine': 'compressor'},
-    'plugins': {'enabled': ['apsimo'], 'apsimo': {'owner_contact_id': 'contact-a', 'url': 'http://fixture'}},
-    'memory': {'provider': 'apsimo-memory', 'config': {'contact_id': 'contact-a', 'url': 'http://fixture'}}}))
+    'plugins': {'enabled': ['pacomind'], 'pacomind': {'owner_contact_id': 'contact-a', 'url': 'http://fixture'}},
+    'memory': {'provider': 'pacomind-memory', 'config': {'contact_id': 'contact-a', 'url': 'http://fixture'}}}))
 app=FastAPI(); app.include_router(host.router); app.include_router(host.v2_router)
 api=TestClient(app)
 fact='My neutral orchard badge is cobalt-716.'
-ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
+ledger=get_turn_idempotency_ledger(os.environ['PACOMIND_STATE_DIR'])
 ledger.record_source('native-erasure-source', contact_id='contact-a', session_id='original',
     messages=[{'role':'user','content':fact}], derive_claims=False)
 original_ref=ledger.source_references(['native-erasure-source'],contact_id='contact-a',session_id='original')[0]
 wire=[]
 summary_mode = len(sys.argv) > 4 and sys.argv[4] == 'summary'
 memory_checks=[]
-from apsimo_hermes.request_memory import RequestMemory
+from pacomind_hermes.request_memory import RequestMemory
 original_memory_check=RequestMemory.__call__
 def record_memory_check(self,*args,**kwargs):
     memory_checks.append(True)
@@ -56,12 +56,12 @@ def no_network(*a, **kw): raise AssertionError('Native erasure qualification is 
 socket.socket.connect=no_network; socket.create_connection=no_network
 from hermes_cli.plugins import get_plugin_manager
 plugins=get_plugin_manager(); plugins.discover_and_load()
-assert plugins._plugins['apsimo'].enabled
+assert plugins._plugins['pacomind'].enabled
 from plugins.memory import load_memory_provider
 from agent.memory_manager import MemoryManager
 from agent.turn_context import compose_user_api_content, append_notes_to_multimodal_content
 from hermes_state import SessionDB
-provider=load_memory_provider('apsimo-memory'); manager=MemoryManager(); manager.add_provider(provider)
+provider=load_memory_provider('pacomind-memory'); manager=MemoryManager(); manager.add_provider(provider)
 manager.initialize_all('original', hermes_home=str(home))
 # Native memory-file changes still commit locally and notify the real provider,
 # but do not fabricate canonical owner testimony or call a graph write route.
@@ -83,10 +83,10 @@ assert len(wire)==before_file_edit_calls
 with ledger._connect() as connection:
     assert connection.execute('SELECT count(*) FROM turn_sources').fetchone()[0]==1
 recalled=provider.prefetch('orchard badge', session_id='original')
-assert fact in recalled and 'native-erasure-source' in recalled and 'colony-recall-v1' in recalled, recalled
-temporal_only='[colony-recall-v1 {"contact_id":"contact-a","watermark":0}]\n## Current Time [priority 100]\nOld clock\n[/colony-recall-v1]'
+assert fact in recalled and 'native-erasure-source' in recalled and 'pacomind-recall-v1' in recalled, recalled
+temporal_only='[pacomind-recall-v1 {"contact_id":"contact-a","watermark":0}]\n## Current Time [priority 100]\nOld clock\n[/pacomind-recall-v1]'
 refreshed=provider._with_fresh_temporal_sync(temporal_only, contact_id='contact-a')
-assert 'Old clock' not in refreshed and '[/colony-recall-v1]' in refreshed
+assert 'Old clock' not in refreshed and '[/pacomind-recall-v1]' in refreshed
 injected=compose_user_api_content('What is my orchard badge?', recalled, '')
 assert fact in injected
 db=SessionDB(home/'fixture-state.db')
@@ -118,7 +118,7 @@ responses=[
 ]
 if summary_mode:
     tool_response = NS(choices=[NS(message=NS(content='',tool_calls=[
-        NS(id='neutral-lookup',type='function',function=NS(name='colony_get_facts',arguments='{}'))]),
+        NS(id='neutral-lookup',type='function',function=NS(name='pacomind_get_facts',arguments='{}'))]),
         finish_reason='tool_calls')],model='fixture/model',usage=None)
     responses.insert(1, tool_response)
     responses.insert(-1, tool_response)
@@ -143,15 +143,15 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     current=next(row for row in reversed(supplied) if row.get('role')=='user')
     assert question in current['content'] and fact in current['content'],(wire,supplied)
     # Actual Hermes composes an authoritative-memory note outside the provider.
-    # The supported Colony request middleware preserves evidence and lineage
+    # The supported PacoMind request middleware preserves evidence and lineage
     # while correcting that note before the native client receives it.
     assert 'Treat as authoritative reference data' not in current['content'],current
     assert 'fictional, hypothetical or reported scope' in current['content'],current
     assert 'Use a claim as a real-world fact only when its source supports' in current['content'],current
     packets=[line for row in supplied for line in str(row.get('content','')).splitlines()
-             if line.startswith('[colony-recall-v1 ')]
+             if line.startswith('[pacomind-recall-v1 ')]
     assert len(packets)==1,packets
-    stamp=json.loads(packets[0][len('[colony-recall-v1 '):-1])
+    stamp=json.loads(packets[0][len('[pacomind-recall-v1 '):-1])
     assert stamp['contact_id']=='contact-a' and stamp['sources']==[original_ref],stamp
     # Check canonical answer lineage actually emitted by the native post hook.
     with ledger._connect() as connection:
@@ -165,7 +165,7 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     from model_tools import handle_function_call
     invoke_hook('pre_llm_call', session_id='forget-request', task_id='forget-task', turn_id='forget-turn',
         platform='cli', sender_id='', user_message='Forget the retained orchard badge source and its answer copies.')
-    forgotten=json.loads(handle_function_call('apsimo_memory_forget', {'source_ids':['native-erasure-source']},
+    forgotten=json.loads(handle_function_call('pacomind_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
     assert forgotten['source_erased'], forgotten
     assert forgotten['source_ids'] == ['native-erasure-source']
@@ -176,7 +176,7 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     retained=json.loads(survivor['messages_json'])
     assert any(row.get('role')=='user' and row.get('content')==question for row in retained),retained
     assert all(row.get('role')!='assistant' for row in retained),retained
-    repeat=json.loads(handle_function_call('apsimo_memory_forget', {'source_ids':['native-erasure-source']},
+    repeat=json.loads(handle_function_call('pacomind_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
     assert repeat['source_erased'], repeat
     prior_calls=sum(path.endswith('/memory/sources/forget') for path,code in wire)
@@ -184,11 +184,11 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
         ({'source_ids':['native-erasure-source'],'contact_id':'someone-else'}, 'forget-request','forget-task','forget-turn'),
         ({'source_ids':['native-erasure-source']}, 'missing','missing','missing'),
     ]:
-        denied=json.loads(handle_function_call('apsimo_memory_forget',args,session_id=session,task_id=task,turn_id=turn))
+        denied=json.loads(handle_function_call('pacomind_memory_forget',args,session_id=session,task_id=task,turn_id=turn))
         assert 'error' in denied, denied
     invoke_hook('pre_llm_call',session_id='cron-forget',task_id='cron-forget',turn_id='cron-forget',
         platform='cron',sender_id='',user_message='Forget the badge')
-    denied=json.loads(handle_function_call('apsimo_memory_forget', {'source_ids':['native-erasure-source']},
+    denied=json.loads(handle_function_call('pacomind_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='cron-forget',task_id='cron-forget',turn_id='cron-forget'))
     assert 'error' in denied and sum(path.endswith('/memory/sources/forget') for path,code in wire)==prior_calls
     # Reopen native durable history, exactly as a later process resumes it.
@@ -248,10 +248,10 @@ from model_tools import get_tool_definitions
 # Hermes invokes every registered callback with the original request, then
 # uses the last returned payload. A skill update must therefore transform the
 # already checked request, never replace it with an earlier evidence copy.
-skill=home/'skills'/'apsimo-erasure-fixture'/'SKILL.md'
+skill=home/'skills'/'pacomind-erasure-fixture'/'SKILL.md'
 skill.parent.mkdir(parents=True)
 def write_skill(revision):
-    skill.write_text('---\nname: apsimo-erasure-fixture\ndescription: Index manuals using '+revision+'.\n---\n'
+    skill.write_text('---\nname: pacomind-erasure-fixture\ndescription: Index manuals using '+revision+'.\n---\n'
                      'Use the '+revision+' tab.\n')
 write_skill('amber')
 frozen_skills=build_skills_system_prompt(available_tools={'skills_list','skill_view'},
@@ -272,7 +272,7 @@ assert 'Use the cobalt tab.' not in json.dumps(filtered),filtered
 assert any(row.get('reason')=='source_erasure_checked' for row in checked.trace),checked.trace
 # A failed optional refresh retains the checked payload, matching native
 # callback isolation without letting its exception discard source filtering.
-with patch('apsimo_hermes.skill_context.SkillContext.__call__',side_effect=OSError('fixture skill read failed')) as refresh_failure:
+with patch('pacomind_hermes.skill_context.SkillContext.__call__',side_effect=OSError('fixture skill read failed')) as refresh_failure:
     refresh_failed=apply_llm_request_middleware({'messages':[{'role':'system','content':frozen_skills},
         {'role':'user','content':enriched}],'tools':skill_tools},
         session_id='image-resume',task_id='image-task',turn_id='image-turn',platform='cli')
@@ -281,8 +281,8 @@ assert 'neutral-fixture' not in json.dumps(refresh_failed.payload),refresh_faile
 assert any(row.get('reason')=='source_erasure_checked' for row in refresh_failed.trace),refresh_failed.trace
 # A native worker whose supplied task input was erased must withhold tools.
 # Skill refresh sees that reduced payload and cannot reopen the old toolset.
-from apsimo_hermes.input_provenance import supplied_input
-from apsimo_hermes.client import source_message_hash
+from pacomind_hermes.input_provenance import supplied_input
+from pacomind_hermes.client import source_message_hash
 with supplied_input(contact_id='contact-a',session_id='blocked-input',
         input_refs=[{'source_id':'native-erasure-source',
             'input_message_hash':source_message_hash('original',{'role':'user','content':fact})}],
@@ -308,10 +308,10 @@ def test_native_persisted_recall_is_not_resent_after_forget(artifacts, tmp_path,
     if importlib.util.find_spec('hermes_cli') is None:
         pytest.skip('Install the qualified Hermes release for native request qualification')
     env={key:os.environ[key] for key in ('PATH','HOME','TMPDIR','LANG') if key in os.environ}
-    env.update(HERMES_HOME=str(tmp_path/'profile'), COLONY_STATE_DIR=str(tmp_path/'colony'),
+    env.update(HERMES_HOME=str(tmp_path/'profile'), PACOMIND_STATE_DIR=str(tmp_path/'pacomind'),
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'), HERMES_DISABLE_TELEMETRY='1',
-        HERMES_DISABLE_LAZY_INSTALLS='1', COLONY_GENERAL_PLUGIN_ACTIVE='1',
-        COLONY_MEMORY_WORKER_TOOLS='0', COLONY_MEMORY_TURN_WRITER='disabled',
-        COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system', COLONY_GUARD_CHAT_MODE='off')
+        HERMES_DISABLE_LAZY_INSTALLS='1', PACOMIND_GENERAL_PLUGIN_ACTIVE='1',
+        PACOMIND_MEMORY_WORKER_TOOLS='0', PACOMIND_MEMORY_TURN_WRITER='disabled',
+        PACOMIND_MEMORY_DEFAULT_CONTEXT_AUTHORITY='owner_system', PACOMIND_GUARD_CHAT_MODE='off')
     run_python('-I','-c',PROBE, artifacts[3], ROOT/'sidecar',
-               os.environ.get('COLONY_TEST_DEPENDENCY_PATH',''), mode, cwd=tmp_path, env=env)
+               os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH',''), mode, cwd=tmp_path, env=env)
