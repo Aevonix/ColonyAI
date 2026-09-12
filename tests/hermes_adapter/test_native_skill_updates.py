@@ -96,6 +96,8 @@ def completion(**kwargs):
             if row['role']=='system' and row.get('content')!=saved_prompt])
         if phase!='initial':
             assert 'Index manuals using revision '+expected_version+'.' in fresh,(phase,fresh)
+        elif not deferred:
+            assert '[Current skill instructions]' not in fresh,(phase,fresh)
         assert 'Use the '+expected_version+' tab for each manual.' not in fresh,(phase,fresh)
         if phase=='body_only':
             assert {name,local}<=refresh_names(messages),messages
