@@ -15,9 +15,9 @@ path needs no PacoMind checkout or source edits. The environment may be shared
 with Hermes, but the commands below keep an existing Hermes installation intact:
 
 ```bash
-python3 -m venv "$HOME/.local/share/pacomind/venv"
+python3.12 -m venv "$HOME/.local/share/pacomind/venv"
 source "$HOME/.local/share/pacomind/venv/bin/activate"
-python -m pip install "pacomind[hermes]==1.4.4" "pacomind-hermes[native-memory]==1.4.4"
+python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
 pacomind init --hermes-python /path/to/hermes/.venv/bin/python
 ```
 
@@ -280,12 +280,12 @@ Update both PacoMind distributions in the environment that runs PacoMind, select
 the same release for both packages:
 
 ```sh
-python -m pip install --upgrade "pacomind[hermes]==1.4.4" "pacomind-hermes[native-memory]==1.4.4"
+python -m pip install --upgrade "pacomind[hermes]" "pacomind-hermes[native-memory]"
 pacomind init --non-interactive --hermes-home "$HOME/.hermes-orion" --refresh-adapter
 ```
 
-Replace the example versions with the release you are selecting. A Hermes interpreter with
-native installed PacoMind entry points also needs that adapter package updated explicitly in its
+For a pinned deployment, select the same published release for both packages.
+A Hermes interpreter with installed PacoMind entry points also needs that adapter updated in its
 own environment before refresh. That package update affects all homes using the
 interpreter. Refresh verifies those installed bytes and records the binding;
 it does not copy a second active adapter or install packages itself.

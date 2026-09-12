@@ -36,10 +36,11 @@ python -m pip install build
 python -m build
 ```
 
-Install the resulting wheel with the Python interpreter that runs Hermes:
+Install the resulting wheel with the Python interpreter that runs Hermes.
+Use a build directory containing only the wheel for the selected source revision:
 
 ```sh
-python -m pip install dist/pacomind_hermes-1.4.0-py3-none-any.whl
+python -m pip install dist/pacomind_hermes-*.whl
 ```
 
 The wheel exposes `pacomind` through `hermes_agent.plugins` and `pacomind-memory`
