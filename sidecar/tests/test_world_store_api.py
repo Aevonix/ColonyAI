@@ -38,6 +38,9 @@ async def test_world_http_entities_and_relationships_survive_reopen(tmp_path, mo
             restored = await client.get(f"/v1/host/world/entities/{person_id}")
             assert restored.status_code == 200
             assert restored.json()["name"] == "Morgan"
+            health = await client.get("/v1/host/health")
+            assert health.status_code == 200
+            assert "world_model" in health.json()["capabilities"]
             rows = await client.get("/v1/host/world/relationships", params={"source_id": person_id})
             assert rows.status_code == 200
             assert any(row["id"] == relationship_id and row["target_id"] == project_id

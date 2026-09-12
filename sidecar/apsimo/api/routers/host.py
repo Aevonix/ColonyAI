@@ -485,8 +485,6 @@ def supported_capabilities() -> List[str]:
     if _world_store is not None:
         caps.append("context")
         caps.append("world_model_api")
-    if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
-        caps.append("neo4j_backend")
     caps.append("event_journal")
     if _external_event_intake is not None:
         caps.append("external_cognition_events")
@@ -820,8 +818,6 @@ async def health() -> HostHealthResponse:
     if _world_store is not None and hasattr(_world_store, '_backend') and _world_store._backend is not None:
         backend_type = type(_world_store._backend).__name__
         notes["world_model_backend"] = f"{backend_type} connected"
-    if _world_store is not None and hasattr(_world_store, '_config') and _world_store._config.backend == "neo4j":
-        notes["neo4j"] = "Neo4j backend selected"
 
     health_status = "ok"
     if model_mismatch or embed_degraded or memory_backend_down:
