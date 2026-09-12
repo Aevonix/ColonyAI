@@ -188,6 +188,11 @@ Optional per-query `relevance` maps source IDs to `answer_useful`, `context_only
 or `irrelevant`. `required_evidence` lists exact necessary spans. These labels
 are consumed only after selection. `useful_packet_pass` requires the existing
 strict result, required evidence and no irrelevant or unlabeled selected source.
+`source_utility_pass` permits explicitly labeled `context_only` records when a
+question has no known answer. A requested inspection or partial transfer can
+explain missing evidence; neither establishes a completed result. The stricter
+abstention score still requires an empty packet. Both scores are reported, and
+neither grades a generated answer. Freeze these labels before measuring a case.
 Annotation bundles are scored against their corrected original source; exact
 annotation IDs and versions remain in the replay artifact. Eligible extra sources
 are therefore no longer silently called useful. A complete packet can still be

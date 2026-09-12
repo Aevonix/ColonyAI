@@ -70,4 +70,13 @@ def assess(query, rows, records):
         result['useful_packet_pass'] = bool(result['strict_pass']
             and result['required_evidence_present']
             and not result['relevance']['irrelevant'] and not result['relevance']['unlabeled'])
+        # An unanswered question may have relevant request or progress records.
+        # They can explain what remains unknown without establishing an outcome.
+        # Keep the stricter empty-packet metric above unchanged.
+        result['source_utility_pass'] = bool(expected.issubset(ids)
+            and not invalid and not forbidden and provenance
+            and (not query.get('conflict') or conflicts)
+            and result['required_evidence_present']
+            and not result['relevance']['irrelevant'] and not result['relevance']['unlabeled']
+            and (not query.get('abstain') or not result['relevance']['answer_useful']))
     return result

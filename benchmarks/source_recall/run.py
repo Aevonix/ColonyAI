@@ -332,6 +332,7 @@ async def run(config, args):
             if labeled:
                 summaries[arm][split]['usefulness'] = {
                     'labeled_cases':len(labeled), 'useful_packet_pass':sum(a['useful_packet_pass'] for a in labeled),
+                    'source_utility_pass':sum(a['source_utility_pass'] for a in labeled),
                     'irrelevant_selected':sum(a['relevance']['irrelevant_selected'] for a in labeled),
                     'unlabeled_selected':sum(len(a['relevance']['unlabeled']) for a in labeled)}
     media_results=[]

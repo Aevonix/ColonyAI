@@ -175,6 +175,24 @@ def test_source_only_environment_does_not_require_extraction(monkeypatch):
         environment()
 
 
+def test_unanswered_question_can_retain_context_without_claiming_an_outcome():
+    records = [dict(id=sid, scope='private', at='2026-01-01')
+               for sid in ('request', 'scratch', 'missing-label')]
+    query = dict(principal='owner', as_of='2026-01-02', expected=[], abstain=True,
+        relevance={'request':'context_only', 'scratch':'irrelevant'})
+    request = {'source_uri':'turn:request', 'content':'Inspect the checksum before using the archive.'}
+    context = assess(query, [request], records)
+    assert context['source_utility_pass']
+    assert not context['strict_pass'] and not context['useful_packet_pass']
+    assert not context['abstained'] and context['relevance']['answer_useful_selected'] == 0
+    assert assess(query, [], records)['source_utility_pass']
+    for sid in ('scratch', 'missing-label'):
+        assert not assess(query, [dict(request, source_uri='turn:'+sid)], records)['source_utility_pass']
+    assert not assess(dict(query, forbidden=['request']), [request], records)['source_utility_pass']
+    assert not assess(dict(query, required_evidence=['inspection completed']), [request], records)['source_utility_pass']
+    assert not assess(dict(query, relevance={'request':'answer_useful'}), [request], records)['source_utility_pass']
+
+
 async def replay_observation(capture, monkeypatch, *, limit=None):
     """Example offline consumer: reject uncaptured requests after selection.
 
