@@ -71,7 +71,9 @@ def correct(ledger, *, operation_id, performed_by, old_contact_id, contact_id,
                 if row['turn_id'] in selected or row['turn_id'] in descendants:
                     continue
                 if any(ref.get('source_id') in pending for message in json.loads(row['messages_json'])
-                       for ref in message.get('_supplied_sources', [])):
+                       for ref in (message.get('_supplied_sources', []) if message.get('role') == 'assistant'
+                           else message.get('_observation_sources', []) if message.get('role') == 'tool'
+                           and message.get('_native_tool_observation') == 'native-tool-observation-v1' else [])):
                     found.add(row['turn_id'])
             descendants.update(found)
             pending = found

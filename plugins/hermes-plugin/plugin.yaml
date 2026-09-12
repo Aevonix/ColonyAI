@@ -1,5 +1,5 @@
 name: apsimo
-version: 1.4.5
+version: 1.4.6
 description: |
   Native Hermes adapter for participant-scoped tools, durable turn capture,
   shared execution observations and native post-turn review. Preserves scope

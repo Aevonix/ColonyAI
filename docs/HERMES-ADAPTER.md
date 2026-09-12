@@ -408,6 +408,31 @@ Hermes general and memory loaders. Native-loader tests require Hermes and
 are explicitly skipped when it is absent. No live sidecar, model endpoint,
 production profile, or channel is contacted.
 
+## Opening retained task results
+
+`apsimo_memory_read_source` accepts `view="observations"` for an exact recalled
+instruction. It lists four retained original tool references per page. Open
+relevant references with `view="source"` to read what the tools actually returned.
+Selection reasons are model-authored navigation hints and may be wrong.
+
+This directory follows only the current observation writer's first origin
+reference, with current participant scope, source revisions and native result
+digests checked. A shared session or another dependency does not establish that
+link. Original task arguments are not reconstructed. Missing retained results
+cannot be recovered through this view, and a complete directory never establishes
+that every task result was retained or that the task succeeded.
+
+`next_offset` and `read_revision` continue a page. Changed membership or corrections
+require restarting at offset zero. More than 64 candidates returns
+`cohort_limit_exceeded` without result references. Directory entries and their
+attributed corrections are never split to fit: oversized corrections make the
+read unavailable. Result bodies are not automatically added to ordinary recall.
+
+The directory and explicit opening pass the native reader fixtures. Whether the
+extra tool steps improve ordinary task-outcome answers remains pending model
+qualification. Observation ancestry now also carries parent corrections and
+participant invalidation; corrected recall content can consequently differ.
+
 ## Shared execution observations
 
 On the [current qualification build](HERMES-HOOK-COMPATIBILITY.md), set

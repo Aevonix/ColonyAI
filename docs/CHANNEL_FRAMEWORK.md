@@ -185,12 +185,10 @@ idempotently on startup.
 
 ### 1.5 Phone Identity Unification
 
-Currently hardcoded in **three** locations (all must be updated):
-- `contacts/store.py:60` -- `_PHONE_GATEWAYS = ("imessage", "sms", "signal", "whatsapp")`
-- `identity/resolver.py:38` -- `_PHONE_GATEWAYS = ("imessage", "sms", "signal")`
-- `contacts/world_bridge.py:19` -- `_PHONE_GATEWAYS = ("imessage", "sms", "signal")`
-
-Replace all three with a single query against registered channels:
+The contact store and identity resolver use `channels/phone_gateways.py` to
+resolve phone-bearing channels from the channel store. The graph contact bridge
+has been removed; graph Person nodes do not govern canonical contact lifetimes.
+The shared lookup follows this shape:
 
 ```python
 def get_phone_gateways(channel_store: ChannelStore) -> set[str]:
@@ -1093,8 +1091,7 @@ implements the channel registration protocol or provides `channel_id`.
 - Add `colony-channels.db` and `ChannelStore` in `COLONY_STATE_DIR`
 - Add `/v1/channels/` REST endpoints with API key + channel_token auth
 - Run migration `003_open_gateway_enum.sql` to remove SQL CHECK constraint
-- Replace `_PHONE_GATEWAYS` in all three locations (store.py, resolver.py,
-  world_bridge.py) with channel store query + fallback set
+- Use the shared phone-gateway lookup in the contact store and identity resolver
 - Update `ChannelRegistry` to read from channel store, keep
   `DEFAULT_GATEWAY_MAP` as fallback for pre-registration state
 - Add webhook URL validation (1.6)

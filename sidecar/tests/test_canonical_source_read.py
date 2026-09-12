@@ -121,3 +121,129 @@ async def test_memory_read_canonical_mode_enforces_principal_without_graph(sourc
         assert denied.status_code == 403
         missing_cursor = await client.post('/v1/host/memory/read', json={**body, 'offset': 1}, headers={'Authorization': 'Bearer read'})
         assert missing_cursor.status_code == 422
+
+
+def retain_call(ledger, origin, number, content, *, sources=(), reason='Useful inspection evidence.'):
+    import hashlib
+    from apsimo.turns.tool_observations import ToolObservation, identity_id, record
+    native = dict(profile_id='a'*64, session_id='original', task_id='task', turn_id='turn',
+        tool_call_id=f'call-{number}', api_request_id='request', tool_name='terminal',
+        message_id=number, timestamp=1234567890.0 + number,
+        result_sha256=hashlib.sha256(content.encode()).hexdigest())
+    sid = identity_id(native)
+    record(ledger, ToolObservation(native=native, content=content, origin=origin,
+        sources=list(sources), reason=reason), contact_id='person', session_id='original', source_id=sid)
+    return ref(ledger, sid)
+
+
+def observation_origin(tmp_path):
+    ledger = TurnIdempotencyLedger(tmp_path/'source.db')
+    ledger.record_source('source', contact_id='person', session_id='original',
+        messages=[{'role': 'user', 'content': 'Inspect the Corvus export and its checksum.'}], derive_claims=False)
+    return ledger, ref(ledger)
+
+
+def test_observation_directory_uses_index_and_exact_first_origin_not_nomination(tmp_path):
+    from apsimo.turns.tool_observations import ORIGIN_QUERY
+    ledger, origin = observation_origin(tmp_path)
+    empty = opened(ledger, view='observations')
+    assert json.loads(empty['content'])['observations'] == [] and empty['complete']
+    weather = retain_call(ledger, origin, 1, 'Weather station: light rain.', reason='The checksum is repaired.')
+    outcome = retain_call(ledger, origin, 2, 'Checksum mismatch; exit 1; files modified 0.')
+    ledger.record_source('unrelated', contact_id='person', session_id='original',
+        messages=[{'role':'user', 'content':'Inspect the weather file.'}], derive_claims=False)
+    misleading = retain_call(ledger, ref(ledger, 'unrelated'), 3, 'Unrelated command result.', sources=[origin])
+    result = opened(ledger, view='observations')
+    entries = json.loads(result['content'])['observations']
+    assert {entry['source_id'] for entry in entries} == {weather['source_id'], outcome['source_id']}
+    assert misleading not in result['source_refs']
+    assert 'Weather station' not in result['content'] and 'Checksum mismatch' not in result['content']
+    assert next(e for e in entries if e['source_id'] == weather['source_id'])['selection_reason'] == {
+        'author':'model', 'reason':'The checksum is repaired.'}
+    assert 'light rain' in opened(ledger, weather['source_id'])['content']
+    assert 'files modified 0' in opened(ledger, outcome['source_id'])['content']
+    with ledger._connect() as conn:
+        plan = [row['detail'] for row in conn.execute('EXPLAIN QUERY PLAN ' + ORIGIN_QUERY,
+            ('person', 'source', 'later', 65))]
+    assert any('SEARCH turn_sources USING INDEX source_observation_origin' in detail for detail in plan), plan
+    assert not any('TEMP B-TREE' in detail for detail in plan), plan
+
+
+def test_observation_pagination_pins_membership_and_nonpage_corrections_and_bounds_cohort(tmp_path):
+    ledger, origin = observation_origin(tmp_path)
+    observations = [retain_call(ledger, origin, i, f'Inspection result {i}.') for i in range(1, 6)]
+    first = opened(ledger, view='observations')
+    assert first['offset_unit'] == 'observations' and first['total'] == 5 and first['next_offset'] == 4
+    second = opened(ledger, view='observations', offset=4, read_revision=first['read_revision'])
+    assert second['complete'] and len(json.loads(second['content'])['observations']) == 1
+    selected_ids = {entry['source_id'] for entry in json.loads(first['content'])['observations']}
+    other = next(r for r in observations if r['source_id'] not in selected_ids)
+    ledger.append_source_annotation(contact_id='person', session_id='later', annotation_id='other-note',
+        **other, excerpt='Inspection result', correction='The result is provisional.', author_principal='operator')
+    with pytest.raises(ValueError, match='restart_at_zero'):
+        opened(ledger, view='observations', offset=4, read_revision=first['read_revision'])
+    fresh = opened(ledger, view='observations')
+    retain_call(ledger, origin, 6, 'Inspection result 6.')
+    with pytest.raises(ValueError, match='restart_at_zero'):
+        opened(ledger, view='observations', offset=4, read_revision=fresh['read_revision'])
+    for i in range(7, 66):
+        retain_call(ledger, origin, i, f'Inspection result {i}.')
+    bounded = opened(ledger, view='observations')
+    assert json.loads(bounded['content'])['status'] == 'cohort_limit_exceeded'
+    assert bounded['complete'] is False and bounded['total'] is None and bounded['next_offset'] is None
+    assert bounded['source_refs'] == [origin]
+
+
+def test_observation_open_carries_parent_and_result_corrections_and_rejects_attribution_or_erase(tmp_path):
+    from apsimo.turns.source_attribution import correct
+    ledger, origin = observation_origin(tmp_path)
+    observation = retain_call(ledger, origin, 1, 'Checksum mismatch; files modified 0.')
+    notes = []
+    for number, target, excerpt, correction in (
+        (1, origin, 'Corvus export', 'The request meant the staging export, not production.'),
+        (2, observation, 'Checksum mismatch', 'The expected checksum was supplied manually.')):
+        notes.append(ledger.append_source_annotation(contact_id='person', session_id='later',
+            annotation_id=f'note-{number}', **target, excerpt=excerpt, correction=correction, author_principal='operator'))
+    for result in (opened(ledger, view='observations'), opened(ledger, observation['source_id'])):
+        assert 'staging export' in result['content'] and 'supplied manually' in result['content']
+        assert all({key:note[key] for key in ('source_id','source_version')} in result['source_refs'] for note in notes)
+    moved = correct(ledger, operation_id='correct-person', performed_by='operator',
+        old_contact_id='person', contact_id='actual-person', source_ids=['source'], evidence_refs=['owner-confirmation'])
+    assert observation['source_id'] in moved['invalidated_source_ids']
+    assert not ledger.source_references([observation['source_id']], contact_id='person', session_id='later')
+    with pytest.raises(ValueError, match='unavailable'):
+        read(ledger, contact_id='person', session_id='later', **observation)
+    # A separate current origin exercises existing erasure traversal as well.
+    ledger.record_source('erase-origin', contact_id='person', session_id='original',
+        messages=[{'role':'user','content':'Inspect a separate archive.'}], derive_claims=False)
+    erased = retain_call(ledger, ref(ledger, 'erase-origin'), 2, 'Separate archive failed.')
+    ledger.erase_sources(contact_id='person', turn_ids=['erase-origin'])
+    with pytest.raises(ValueError, match='unavailable'):
+        read(ledger, contact_id='person', session_id='later', **erased)
+
+
+def test_observation_directory_rechecks_correction_race_and_original_digest(tmp_path, monkeypatch):
+    import apsimo.turns.source_read as reader
+    ledger, origin = observation_origin(tmp_path)
+    observation = retain_call(ledger, origin, 1, 'Checksum mismatch.')
+    original_expand = reader.expand
+    calls = 0
+    def raced(*args, **kwargs):
+        nonlocal calls
+        result = original_expand(*args, **kwargs)
+        calls += 1
+        if calls == 2:
+            ledger.append_source_annotation(contact_id='person', session_id='later', annotation_id='race',
+                **origin, excerpt='Corvus export', correction='The staging copy was intended.', author_principal='operator')
+        return result
+    with monkeypatch.context() as patch:
+        patch.setattr(reader, 'expand', raced)
+        with pytest.raises(ValueError, match='correction_unavailable_or_changed|changed_during_read'):
+            opened(ledger, view='observations')
+    with ledger._connect() as conn:
+        row = conn.execute('SELECT messages_json FROM turn_sources WHERE turn_id=?', (observation['source_id'],)).fetchone()
+        messages = json.loads(row[0]); messages[0]['content'] = 'Unsupported replacement result.'
+        conn.execute('UPDATE turn_sources SET messages_json=? WHERE turn_id=?',
+            (json.dumps(messages), observation['source_id']))
+    result = opened(ledger, view='observations')
+    assert observation['source_id'] not in result['content'] and result['total'] == 0

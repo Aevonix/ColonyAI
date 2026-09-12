@@ -89,6 +89,10 @@ checks whether its sources are still valid and refreshes the
 [view of current work](docs/REQUEST-WORK-CONTEXT.md). Full recollection runs once
 per turn.
 
+The agent can open original tool results linked to a recalled request. These
+records describe the observation at the time; current state may require a fresh
+check. Source access and correct interpretation are measured separately.
+
 **Source records outlive search indexes.** SQLite supports the minimum
 installation. Optional Lance indexes support semantic search and can be replaced
 when embedding models change. A separate optional Neo4j memory graph remains

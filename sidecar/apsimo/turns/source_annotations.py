@@ -173,9 +173,11 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
                 own_annotation = conn.execute('SELECT * FROM source_annotations WHERE annotation_source_id=?',
                                               (identifier,)).fetchone()
                 for message in row['messages']:
-                    if (message.get('role') == 'assistant'
-                            and source_message_hash(row['session_id'], message) in selected_hashes):
-                        for ref in message.get('_supplied_sources', []):
+                    dependencies = (message.get('_supplied_sources', []) if message.get('role') == 'assistant'
+                        else message.get('_observation_sources', []) if message.get('role') == 'tool'
+                        and message.get('_native_tool_observation') == 'native-tool-observation-v1' else [])
+                    if source_message_hash(row['session_id'], message) in selected_hashes:
+                        for ref in dependencies:
                             parent = source(ref['source_id'])
                             if parent and canonical_turn_digest(parent['messages']) == ref['source_version']:
                                 # Dedicated annotations have exact target message

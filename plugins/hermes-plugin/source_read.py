@@ -15,7 +15,7 @@ def handle(args, scope, client, request_memory, context):
     if (not isinstance(args, dict) or set(args) - allowed
             or not isinstance(args.get('source_id'), str) or not 1 <= len(args['source_id']) <= 256
             or not re.fullmatch('[0-9a-f]{64}', str(args.get('source_version', '')))
-            or args.get('view', 'source') not in {'source', 'assertions', 'image', 'document', 'video'}
+            or args.get('view', 'source') not in {'source', 'assertions', 'observations', 'image', 'document', 'video'}
             or type(args.get('offset', 0)) is not int or not 0 <= args.get('offset', 0) <= 10000000
             or args.get('read_revision') is not None and not re.fullmatch('[0-9a-f]{64}', str(args['read_revision']))):
         return json.dumps({'error': 'Supply an exact source revision and bounded read selector'})
