@@ -211,6 +211,7 @@ def _historical_source_read(row):
         payload = json.JSONDecoder().raw_decode(text.lstrip())[0] if isinstance(text, str) else None
         return isinstance(payload, dict) and (
             payload.get('colony_source_read_v1') is True
+            or payload.get('apsimo_memory_search_v1') is True
             or payload.get('apsimo_native_history_read_v1') is True)
     except (TypeError, ValueError):
         return False
@@ -369,10 +370,13 @@ def filter_request(request, *, contact_id, watermark, rules, fresh, aliases=None
             return None
         row = dict(row)
         if (not receipt or not fresh or receipt['watermark'] != watermark
+                or receipt.get('search_current') is False
                 or receipt.get('image_url_hash') and not receipt.get('image_current')
                 or receipt.get('document_read') and not receipt.get('document_current')):
             field = 'output' if row.get('type') == 'function_call_output' else 'content'
-            row[field] = '[Opened source withheld; read again after source freshness is restored.]'
+            row[field] = ('[Search excerpts withheld; search again after source freshness is restored.]'
+                if receipt and receipt.get('evidence_kind') == 'search_excerpt' else
+                '[Opened source withheld; read again after source freshness is restored.]')
         return row
 
     for key in ('messages', 'input'):
@@ -608,15 +612,21 @@ class RequestMemory:
             self._aliases[key] = aliases, current, request_input, packets
             self._host_inputs[key] = {'text': text, 'sources': copy.deepcopy(sources), 'watermark': watermark}
 
-    def register_source_read(self, scope, tool_call_id, text, result, *, image_url=None):
+    def register_source_search(self, scope, tool_call_id, text, result):
+        """Register search excerpts for dispatch, without recording a source open."""
+        return self.register_source_read(scope, tool_call_id, text, result, evidence_kind='search_excerpt')
+
+    def register_source_read(self, scope, tool_call_id, text, result, *, image_url=None, evidence_kind='source_read'):
         """Register authentic output; it counts as supplied only at dispatch."""
         key = (scope.contact_id, scope.task_id, scope.turn_id)
         with self._lock:
             if key not in self._requests_seen or not tool_call_id:
                 return False
             self._read_receipts[key][tool_call_id] = {
-                'text': text, 'watermark': result['watermark'],
+                'text': text, 'watermark': result['watermark'], 'evidence_kind': evidence_kind,
                 'sources': copy.deepcopy(result['source_refs'])}
+            if evidence_kind == 'search_excerpt':
+                self._read_receipts[key][tool_call_id]['annotation_checks'] = copy.deepcopy(result['annotation_checks'])
             if image_url is not None:
                 self._read_receipts[key][tool_call_id].update(
                     image_url_hash=hashlib.sha256(image_url.encode()).hexdigest(),
@@ -681,6 +691,8 @@ class RequestMemory:
         # records or keep evidence current. Validate their current ownership in
         # the same round trip as erasure freshness, not by changing source IDs.
         source_refs = {}
+        annotation_checks = {}
+        searched_receipts = []
         unannotated_inputs = []
         try:
             current_packet = _native_packet(current)
@@ -696,14 +708,19 @@ class RequestMemory:
                     source_refs[(ref['source_id'], ref['source_version'])] = ref
             for row in _read_rows(request):
                 receipt = _read_receipt(row, read_receipts)
-                if receipt:
+                if receipt and receipt.get('search_current') is not False:
                     for ref in receipt['sources']:
                         source_refs[(ref['source_id'], ref['source_version'])] = ref
+                    if receipt.get('evidence_kind') == 'search_excerpt':
+                        call_id = row.get('tool_call_id') or row.get('call_id') or row.get('tool_use_id')
+                        searched_receipts.append((call_id, receipt))
+                        for check in receipt['annotation_checks']:
+                            annotation_checks[_content_key(check)] = check
             if operational and any(operational['text'] in text for text in _request_texts(request)):
                 for ref in operational['source_refs']:
                     source_refs[(ref['source_id'], ref['source_version'])] = ref
                 unannotated_inputs = operational['unannotated_input_refs']
-            parents_valid = len(source_refs) <= 512
+            parents_valid = len(source_refs) <= 512 and len(annotation_checks) <= 512
         except (KeyError, TypeError, ValueError, AttributeError):
             parents_valid = False
         deadline = time.monotonic() + .25
@@ -720,6 +737,7 @@ class RequestMemory:
                         response = self.client.post('/v1/host/memory/sources/erasures',
                             json={'contact_id': contact, 'after': watermark,
                                   'session_id': scope.session_id, 'source_refs': list(source_refs.values()),
+                                  **({'annotation_checks': list(annotation_checks.values())} if annotation_checks else {}),
                                   **({'unannotated_input_refs': unannotated_inputs} if unannotated_inputs else {})},
                             timeout=remaining, _deadline_monotonic=deadline)
                     else:
@@ -742,7 +760,26 @@ class RequestMemory:
                     # can continue from the persisted cursor on its one retry.
                     freshness_retryable = (page.get('complete') is False
                                            and int(page['through']) < int(page['head']))
+                if fresh and annotation_checks:
+                    current_checks = page.get('annotation_checks_current')
+                    if (not isinstance(current_checks, list) or len(current_checks) != len(annotation_checks)
+                            or any(type(value) is not bool for value in current_checks)):
+                        raise ValueError('search_annotation_freshness_unavailable')
+                    checked = dict(zip(annotation_checks, current_checks))
+                    for call_id, receipt in searched_receipts:
+                        receipt['search_current'] = all(checked[_content_key(check)]
+                            for check in receipt['annotation_checks'])
+                        if not receipt['search_current']:
+                            # A native transcript still contains the old tool
+                            # output after filtering. Retire only this authentic
+                            # stale receipt so a fresh search can recover in the
+                            # same turn without retaining obsolete excerpts.
+                            with self._lock:
+                                stored = self._read_receipts.get(observed_key, {}).get(call_id)
+                                if stored and stored['text'] == receipt['text']:
+                                    stored['search_current'] = False
         except Exception as error:
+            fresh = False
             freshness_retryable = (
                 isinstance(error, (TimeoutError, TimeoutException, NetworkError, RemoteProtocolError))
                 or (isinstance(error, HTTPStatusError) and error.response.status_code in {502, 503, 504}))
