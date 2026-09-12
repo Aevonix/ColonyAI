@@ -47,9 +47,9 @@ async def test_owner_context_excludes_unlinked_manual_and_legacy_mirrors_but_pre
             read = await client.get('/v1/host/mind/facts/'+row['id'], headers={'Authorization': 'Bearer owner-key'})
             assert read.status_code == 200 and read.json()['fact'] == row['fact']
         text = await context(client, 'hydrofoil')
-        assert 'separate hydrofoil memory' in text
+        assert 'separate hydrofoil memory' not in text
         assert all(value not in text for value in (old['fact'], manual['fact'], 'marker-only'))
-        assert graph.calls[0]['exclude_source_uris'] == ['tom:shared_fact']
+        assert graph.calls == []
         runtime.facts.delete_fact(old['id'])
         assert old['fact'] not in await context(client, 'hydrofoil')
     assert runtime.facts.get_fact(manual['id'])['metadata']['curated'] is True
@@ -143,9 +143,8 @@ async def test_linked_estimate_keeps_current_correction_and_exact_source_refs(co
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('p8_enabled', [False, True])
-@pytest.mark.parametrize('compression', ['off', 'balanced'])
-async def test_enriched_estimate_keeps_correction_refs_and_never_revives_erased_note(
-        contact_context, monkeypatch, p8_enabled, compression):
+async def test_canonical_estimate_keeps_correction_refs_and_never_revives_erased_note(
+        contact_context, monkeypatch, p8_enabled):
     runtime = contact_context
     if not p8_enabled:
         monkeypatch.setattr(host, '_p8_runtime', None)
@@ -161,12 +160,12 @@ async def test_enriched_estimate_keeps_correction_refs_and_never_revives_erased_
         author_principal='fixture-owner')
     payload = {'identity': {'host_id': 'native-fixture'},
         'context': {'contact_id': 'contact-a', 'session_id': 'later'},
-        'message': 'hydrofoil gate', 'compression': compression}
+        'incoming_message': {'role': 'user', 'content': 'hydrofoil gate'}}
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url='http://test') as client:
-        response = await client.post('/v1/host/context/enriched',
+        response = await client.post('/v1/host/context/assemble',
             headers={'Authorization': 'Bearer owner-key'}, json=payload)
         assert response.status_code == 200, response.text
-        section = next(s for s in response.json()['sections'] if s['id'] == 'colony-shared-facts')
+        section = next(s for s in response.json()['sections'] if s['id'] == 'colony-memory')
         assert 'amber' in section['body'] and 'attributed_correction' in section['body']
         assert 'shared-fact:'+fact['id'] in section['body']
         expected = runtime.ledger.source_references(['enriched-origin', correction['source_id']],
@@ -174,18 +173,17 @@ async def test_enriched_estimate_keeps_correction_refs_and_never_revives_erased_
         assert {r['source_id']: r['source_version'] for r in section['citations']} == {
             r['source_id']: r['source_version'] for r in expected}
         runtime.ledger.erase_sources(contact_id='contact-a', turn_ids=[correction['source_id']])
-        after = await client.post('/v1/host/context/enriched',
+        after = await client.post('/v1/host/context/assemble',
             headers={'Authorization': 'Bearer owner-key'}, json=payload)
         assert after.status_code == 200, after.text
-        assert not any(s['id'] == 'colony-shared-facts' for s in after.json()['sections'])
+        assert not any(s['id'] == 'colony-memory' for s in after.json()['sections'])
     assert runtime.facts.get_fact(fact['id'])['fact'] == original
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('change', ['unrelated_query', 'packet_budget', 'compression_budget', 'new_correction'])
-async def test_enriched_omits_irrelevant_incomplete_or_changed_source_packet(
+@pytest.mark.parametrize('change', ['unrelated_query', 'packet_budget', 'new_correction'])
+async def test_canonical_omits_irrelevant_incomplete_or_changed_source_packet(
         contact_context, monkeypatch, change):
-    from apsimo import compression
     runtime = contact_context
     original = 'The hydrofoil gate is violet.'
     fact = runtime.add(original)
@@ -201,24 +199,23 @@ async def test_enriched_omits_irrelevant_incomplete_or_changed_source_packet(
         query = 'telescope calibration'
     elif change == 'packet_budget':
         monkeypatch.setenv('COLONY_RECALL_CONTEXT_MAX_CHARS', '500')
-    elif change == 'compression_budget':
-        monkeypatch.setenv('COLONY_COMPRESSION_MAX_TOKENS', '25')
     else:
-        compress = compression.compress_sections
+        from apsimo.memory.selection import RecallSelector
+        class CorrectingSelector:
+            async def select_context(self, *args, **kwargs):
+                result = await RecallSelector().select_context(*args, **kwargs)
+                calls.append(correct('later-correction', 'A second observer reports a copper gate; resolve the disagreement.'))
+                return result
         calls = []
-        def compress_then_correct(**kwargs):
-            result = compress(**kwargs)
-            calls.append(correct('later-correction', 'A second observer reports a copper gate; resolve the disagreement.'))
-            return result
-        monkeypatch.setattr(compression, 'compress_sections', compress_then_correct)
+        monkeypatch.setattr(host, '_context_recall_selector', (host._reranker, CorrectingSelector()))
     async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url='http://test') as client:
-        response = await client.post('/v1/host/context/enriched',
+        response = await client.post('/v1/host/context/assemble',
             headers={'Authorization': 'Bearer owner-key'}, json={
                 'identity': {'host_id': 'native-fixture'},
                 'context': {'contact_id': 'contact-a', 'session_id': 'later'},
-                'message': query, 'compression': 'balanced'})
+                'incoming_message': {'role': 'user', 'content': query}})
     assert response.status_code == 200, response.text
-    assert not any(s['id'] == 'colony-shared-facts' for s in response.json()['sections'])
+    assert not any(s['id'] == 'colony-memory' for s in response.json()['sections'])
     if change == 'new_correction':
         assert len(calls) == 1
     assert runtime.facts.get_fact(fact['id'])['fact'] == original

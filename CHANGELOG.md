@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.8 - canonical recall and bounded runtime logs
+
+Automatic recall now selects canonical sources without adding graph-memory
+candidates. Explicit search and original-source reads use that same memory
+authority. Unused graph management routes, adaptive compression and a shadow
+preview buffer are removed. Active graph consumers outside recall still remain.
+
+Runtime logs rotate at a configured size, retaining a bounded number of archives.
+Fast successful requests on five routine polling routes are omitted; failures,
+slow requests and other traffic remain visible. The existing operational reader
+reports declared writer settings and observed archive sizes. A process-start
+declaration is identified separately from current process liveness.
+
+See [runtime logging](docs/RUNTIME-LOGGING.md) for configuration and the one-time
+transition from an existing unbounded file. These changes do not establish
+ordinary memory quality or a completed autonomous repair loop.
+
 ## v1.4.7 - canonical memory search
 
 Explicit search now reads canonical source records, using the same scoped

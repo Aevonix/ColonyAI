@@ -367,6 +367,7 @@ def test_private_outbox_rejects_symlink_parent_and_insecure_parent(tmp_path):
 
     insecure_parent = tmp_path / "insecure-parent"
     insecure_parent.mkdir(mode=0o755)
+    insecure_parent.chmod(0o755)  # Test the intended permissions regardless of umask.
     with pytest.raises(module.PrivateSQLitePathError):
         module.TurnOutbox(insecure_parent / "turns.sqlite3").prepare()
     assert stat.S_IMODE(insecure_parent.stat().st_mode) == 0o755

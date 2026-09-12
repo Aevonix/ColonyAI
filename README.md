@@ -59,6 +59,9 @@ still need improvement and testing. Models still make unsupported claims.
 Complete forgetting across old transcripts, unlinked copies and backups remains
 unfinished.
 
+[Runtime logs](docs/RUNTIME-LOGGING.md) have size and retention limits, with
+routine successful polling omitted to keep operational failures readable.
+
 Automatic persistent opinions are experimental and disabled by default. Trust
 and relationship estimates are separate from permissions. Useful autonomous
 self-improvement still needs an end-to-end demonstration.
@@ -100,9 +103,10 @@ and stored; none of these timestamps establishes that an old rule still applies.
 
 **Source records outlive search indexes.** SQLite supports the minimum
 installation. Optional Lance indexes support semantic search and can be replaced
-when embedding models change. A separate optional Neo4j memory graph remains
-in the code. It is not required by the supported setup, and graph records
-without canonical sources cannot be reconstructed from those sources.
+when embedding models change. Automatic recall, explicit memory search and
+source opening use the canonical ledger. A separate optional Neo4j graph remains
+for other research and autonomy consumers. It is not required by the supported
+setup; records without canonical sources cannot be reconstructed from those sources.
 
 **Models are assigned by role.** [Named roles](docs/FUNCTION-ROUTING.md) select
 configured endpoints and fallbacks. Later requests can use new assignments while

@@ -1,23 +1,15 @@
 # Hybrid recall and calibrated abstention
 
-The existing memory path can return unrelated passages when no stored fact
-answers the turn. It also searches vectors before sources, so an embedding
-backlog can hide a newly stored correction. This change adds a native source-text
-leg alongside Lance retrieval and preserves source IDs in injected context.
+Automatic context and explicit memory search combine lexical source search in
+SQLite with the optional Lance semantic projection. Both use the same canonical
+source IDs and enforce participant/session scope before selection. New source
+text and corrections remain available while semantic projection is pending.
 
-`COLONY_RECALL_HYBRID=on` enables full-text candidates from the existing Neo4j
-memory store. The ordinary graph migrations create `memory_content_fulltext`.
-Verify that this index is online before promotion. Its updates are synchronous
-with source writes; no new service or second authoritative store is introduced.
-Candidate filtering preserves exact person scope, excluded sources/metadata,
-confidence, strength and supersession. Independent ranks are fused before the
-existing reranker. Index absence or timeout degrades to the existing path.
-
-The default remains the existing vector/keyword behavior until a deployment
-qualifies and enables the hybrid path. Full-text query latency and scoped
-candidate completeness must be measured on the deployment's graph. The query
-timeout is bounded; this change does not claim that every scoped search can meet
-that deadline.
+An absent, incompatible or unavailable semantic index leaves lexical search
+available and reports the semantic limitation. A working empty search is distinct
+from an unavailable canonical store. Neither path uses Neo4j memory candidates.
+See [source semantic recall](SOURCE-SEMANTIC-RECALL.md) for projection identity,
+model swaps and the shared HTTP contract.
 
 ## Returning no useful memory
 
@@ -50,11 +42,11 @@ representative positive, paraphrased, corrected and no-answer queries, select a
 cutoff on its development subset, then test its held-out subset once. Keep that
 deployment's calibration values outside generic defaults.
 
-Version 1.0.31 identifies its candidate format as
+The calibrated candidate format is
 `grounded-quotation-bundles-v2-corrections-first`. Attributed corrections precede
 the original evidence in ranking text; all members remain in the complete output
-packet. This changes the configuration fingerprint even when the provider and
-numerical cutoff stay the same. Before selecting this version, test the intended
+packet. Changing that format changes the configuration fingerprint even when the
+provider and numerical cutoff stay the same. Before promotion, test the intended
 cutoff against useful corrections, other useful evidence and genuine no-memory
 queries, preserving any earlier failures. A configuration match alone is not
 quality qualification, and irrelevant competitors inside useful queries do not
@@ -75,13 +67,13 @@ context; scoped misses staying scoped; and a changed reranker configuration
 invalidating its old cutoff. Existing consent and tool authority remain with
 their execution owners.
 
-The development benchmark used actual LAN embedding and reranker models and a
+An earlier development benchmark used actual LAN embedding and reranker models and a
 disposable Lance store with fixture-backed graph hydration. A subsequent isolated
 Neo4j Community 2026.01.4 run applied all 50 migration statements, reached an
 ONLINE full-text index and passed six real-query checks: person scopes, a scoped
 miss, global union, source/metadata exclusion, supersession/confidence/strength
 filtering and immediate recall before vector creation. Production stores were
-not used. The production corpus and correction writer still require qualification.
+not used. Those graph results do not qualify the current canonical memory path.
 
 The initial implementation replay retrieved the expected sources but scored
 15 of 24 complete behavior cases against its original fixture. Review then found
@@ -94,20 +86,17 @@ not implement those remaining memory semantics.
 
 ## One selection path for turn context
 
-`/context/assemble` combines authorized graph candidates, lexical and semantic
-source hits, source-claim expansions, media descriptions and relevant contact
-facts when those producers are available. Graph candidate retrieval skips reranking and
-recall-strength updates. P8 visibility and projection-erasure checks precede the
-combined model call. Source search independently enforces contact/session scope
-and source-message erasure; a partially redacted turn can retain unrelated
-quotations while its old graph summary is suppressed.
+`/context/assemble` combines scoped lexical and semantic source hits,
+source-claim expansions, media descriptions and relevant contact estimates.
+Canonical source search independently enforces contact/session scope and
+source-message erasure. A partially redacted turn can retain unrelated quotations.
+No graph candidate or graph recall-strength update participates in this path.
 
-Both producers feed one rank-fusion and reranking pass. The same calibrated
-cutoff can reject either kind, including when the graph is unavailable. Context
-contains at most five total records in one `colony-memory` section. There is no
-separate conversation-evidence injection. Confidence in a belief is not treated
-as comparable to certainty that words were quoted: cross-kind selection uses
-rank and semantic relevance, preserving confidence separately as metadata.
+Canonical candidates feed one rank-fusion and reranking pass. The calibrated
+cutoff can reject every candidate. Context contains at most five total records
+in one `colony-memory` section. There is no separate conversation-evidence
+injection. Quotations remain evidence of what was said, while claims and contact
+estimates retain their distinct interpretation and uncertainty.
 
 Combined recall submits at most four times the requested packet count to the
 inline reranker, in fused rank order: 20 candidates for the default five-record

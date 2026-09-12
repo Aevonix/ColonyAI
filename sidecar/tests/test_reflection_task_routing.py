@@ -67,6 +67,6 @@ async def test_reflection_task_override_drives_actual_operator_budget_and_dispat
         assert call['model_id'] == 'openai/' + expected_model
         assert selected.function_deadline_seconds(context={'task': task}) == expected_deadline
         # The deployment task override does not move unrelated extraction.
-        for other in ('tom_affect_extraction', 'context_compression', 'source_claim_extraction'):
+        for other in ('tom_affect_extraction', 'source_claim_extraction'):
             assert selected.function_deadline_seconds(context={'task': other}) == 7
             assert selected.function_config(context={'task': other}).model_id == 'openai/fast-neutral'

@@ -285,7 +285,7 @@ async def test_task_override_reloads_only_selected_work_and_keeps_inflight_snaps
         earlier = await held
         assert earlier.function_role == 'extraction' and earlier.config_revision == old
         assert later.function_role == 'reasoning' and later.config_revision != old
-        for task in ('tom_affect_extraction', 'tom_belief_extraction', 'context_compression'):
+        for task in ('tom_affect_extraction', 'tom_belief_extraction'):
             result = await r.complete(messages, context={'task': task})
             assert result.function_role == 'extraction' and result.content == 'fast-neutral'
         explicit = {**context, 'function_role': 'extraction'}
@@ -296,7 +296,7 @@ async def test_task_override_reloads_only_selected_work_and_keeps_inflight_snaps
         path.write_text(json.dumps({**changed, 'taskRoles': {'typo_task': 'reasoning'}}))
         assert (await r.complete(messages, context=context)).config_revision == later.config_revision
         assert r.routing_status()['reload_error'] == 'ValueError'
-        assert len(a) == 5 and len(b) == 2
+        assert len(a) == 4 and len(b) == 2
 
 
 @pytest.mark.parametrize('mapping', [None, [], {'unknown_task': 'reasoning'},

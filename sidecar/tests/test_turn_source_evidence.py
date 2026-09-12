@@ -16,7 +16,7 @@ from apsimo.turns import TurnIdempotencyLedger, canonical_turn_digest
 @pytest.fixture
 def source_app(monkeypatch, tmp_path):
     monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    for name in ("_graph", "_contacts_store", "_presence_store", "_context_provenance", "_telemetry", "_p8_runtime", "_reranker", "_context_recall_selector"):
+    for name in ("_graph", "_contacts_store", "_presence_store", "_context_provenance", "_telemetry", "_p8_runtime", "_reranker", "_context_recall_selector", "_comms_log"):
         monkeypatch.setattr(host, name, None)
     app = FastAPI()
     app.include_router(host.router)

@@ -14,7 +14,6 @@ import logging
 import math
 import os
 import time
-from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Coroutine, Dict, List, Optional, TYPE_CHECKING
@@ -440,11 +439,6 @@ class ColonyGraph:
                 await self._vector_store.delete(collection=Collection.MEMORIES, id=memory_id)
             async with self.driver.session(database=self.database) as session:
                 await session.run("MATCH (m:Memory {id: $id}) DETACH DELETE m", id=memory_id)
-        ring = getattr(self, "_distill_preview", None)
-        if ring is not None:
-            retained = [item for item in ring if item.get("source_turn_id") not in turn_ids]
-            ring.clear()
-            ring.extend(retained)
         return len(ids)
 
     async def iter_indexable_memories(self, batch_size: int = 128):
@@ -730,18 +724,7 @@ class ColonyGraph:
             return ""
         return memory_id
 
-    def _distill_preview_ring(self) -> "deque":
-        """Bounded ring of shadow distill previews (created on first use so
-        alternate construction paths, e.g. tests, still work)."""
-        ring = getattr(self, "_distill_preview", None)
-        if ring is None:
-            ring = deque(maxlen=50)
-            self._distill_preview = ring
-        return ring
 
-    def distill_preview(self) -> List[Dict[str, Any]]:
-        """Newest-first shadow distill previews (empty once the flag is live)."""
-        return list(reversed(self._distill_preview_ring()))
 
     async def record_turn(
         self,
@@ -799,30 +782,10 @@ class ColonyGraph:
             _score += 0.05                         # a question = intent/curiosity worth recalling
         importance = round(min(_score, 0.95), 3)
 
-        # Optional distillation (shadow by default): store the salient content rather
-        # than the verbatim "User:/Agent:" wrapper. The distilled form is ALWAYS
-        # computed; off => stored content is unchanged and the would-be result goes
-        # into a bounded in-memory preview ring (GET /v1/host/memory/distill-preview)
-        # so the flip can be validated on real traffic first. On => store it.
+        # Only compute the alternate representation when it is selected.
         content = summary
-        distilled = distill_turn_summary(summary)
-        _distill = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
-        if _distill:
-            content = distilled
-        else:
-            try:
-                self._distill_preview_ring().append({
-                    "session_id": session_id,
-                    "source_turn_id": turn_id,
-                    "original": summary[:400],
-                    "distilled": distilled[:400],
-                    "importance": importance,
-                    "ts": time.time(),
-                })
-            except Exception:
-                logger.debug("distill preview append failed", exc_info=True)
-            logger.debug("distill(shadow): would store salient content for session %s (imp=%.2f)",
-                         session_id, importance)
+        if os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no"):
+            content = distill_turn_summary(summary)
 
         metadata: Dict[str, Any] = {
             "turn": True,

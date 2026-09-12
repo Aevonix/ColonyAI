@@ -44,7 +44,7 @@ does not make `api:access` a parent of other focused scopes. `work:control`
 protects WorkControl mutations and is never implied by the read scope.
 `tom:read` protects the bounded P8 status/Operator Deck read models and the
 owner-scoped Tom2 content report.
-`context:read` protects both context assembly endpoints because they retrieve
+`context:read` protects context assembly because it retrieves
 memory and relationship context. `events:read` protects both the event replay
 endpoint and the WebSocket handshake. `cognition:read` projects the scoped
 workspace; `cognition:manage` is required to resolve a concern because that

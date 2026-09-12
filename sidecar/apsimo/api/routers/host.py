@@ -79,8 +79,6 @@ from apsimo.api.schemas.host import (
     DeliveryListResponse,
     DeliveryMarkRequest,
     EmbedHealthResponse,
-    EnrichedContextRequest,
-    EnrichedContextResponse,
     EntityListResponse,
     EntityQueryRequest,
     EntityResponse,
@@ -108,16 +106,10 @@ from apsimo.api.schemas.host import (
     LearningWeightsResponse,
     MemoryEmbedRequest,
     MemoryEmbedResponse,
-    MemoryEntry,
     MemoryReadRequest,
     MemoryReadResponse,
-    MemoryConflictEntry,
-    MemoryConflictsResponse,
     MemorySearchRequest,
     MemorySearchResponse,
-    MemoryVerifyRequest,
-    MemoryVerifyResponse,
-    MemoryStatsResponse,
     RerankRequest,
     RerankResponse,
     RerankResult,
@@ -396,9 +388,7 @@ def set_telemetry(telemetry) -> None:
 
 def supported_capabilities() -> List[str]:
     """Return the list of capabilities this sidecar advertises."""
-    caps: list[str] = []
-    if _graph is not None:
-        caps.append("memory")
+    caps: list[str] = ["memory"]
     if _response_gate is not None:
         caps.append("response_gate")
     if _signal_collector is not None:
@@ -483,14 +473,10 @@ def supported_capabilities() -> List[str]:
     caps.append("event_journal")
     if _external_event_intake is not None:
         caps.append("external_cognition_events")
-    caps.append("context_compression")
     caps.append("skill_sandbox")
     caps.append("security_scanner")
     caps.append("tom_extract")
     return caps
-
-
-
 
 
 # ---------------------------------------------------------------------------
@@ -671,20 +657,17 @@ async def health() -> HostHealthResponse:
         pass
 
     memory_backend_down = False
-    if _graph is not None:
-        # "Wired" alone only means the client object was constructed. Probe
-        # the backend before advertising this graph-backed capability.
-        if await _graph_backend_reachable():
-            notes["memory"] = "ColonyGraph wired (backend reachable)"
-        else:
-            memory_backend_down = True
-            caps = [c for c in caps if c != "memory"]
-            notes["memory"] = (
-                "ColonyGraph wired but backend UNREACHABLE — "
-                "graph-backed reads are unavailable; canonical source search is independent"
-            )
-    else:
-        notes["memory"] = "Graph-backed reads unavailable; canonical source search is independent"
+    try:
+        from apsimo.turns import get_turn_idempotency_ledger
+        from contextlib import closing
+        ledger = get_turn_idempotency_ledger(get_state_dir())
+        with closing(ledger._connect()) as conn:
+            conn.execute('SELECT 1 FROM turn_sources LIMIT 1').fetchone()
+        notes['memory'] = 'Canonical source ledger readable; semantic projection is optional'
+    except Exception as exc:
+        memory_backend_down = True
+        caps = [c for c in caps if c != 'memory']
+        notes['memory'] = 'Canonical source ledger unavailable (' + type(exc).__name__ + ')'
     if _response_gate is not None:
         notes["response_gate"] = "ResponseGate wired"
     else:
@@ -1146,39 +1129,6 @@ def _p8_tool_actor_policy(
     )
 
 
-def _p8_filter_graph_recall(
-    rows: List[Mapping[str, Any]],
-) -> List[Mapping[str, Any]]:
-    """Remove SharedFacts graph mirrors from automatic context in every mode.
-
-    Current writes and the legacy backfill both use the exact source URI.
-    The bounded metadata check covers older mirrors that retained only the
-    marker. Contact knowledge estimates use the current source-linked store
-    view, with P8 audience checks in addition when enabled. A stale graph copy
-    must not revive a deleted, unlinked or outdated estimate.
-    """
-
-    def _is_shared_fact_mirror(row: Mapping[str, Any]) -> bool:
-        if str(row.get("source_uri") or "") == "tom:shared_fact":
-            return True
-        metadata = row.get("metadata")
-        if isinstance(metadata, Mapping):
-            return metadata.get("shared_fact") is True
-        raw = str(metadata or "")
-        return bool(
-            len(raw) <= 4_096
-            and re.search(
-                r"[\"']shared_fact[\"']\s*:\s*(?:true|True|1)",
-                raw,
-            )
-        )
-
-    return [
-        row for row in rows
-        if isinstance(row, Mapping) and not _is_shared_fact_mirror(row)
-    ]
-
-
 @router.get("/tom/p8/status")
 async def tom_p8_status(request: Request) -> dict:
     authority = request_authority(request)
@@ -1273,109 +1223,30 @@ def _validate_skill_id(skill_id: str) -> None:
         raise HTTPException(status_code=400, detail="invalid skill_id")
 
 
-async def _graph_backend_reachable() -> bool:
-    """Whether the wired graph's backend actually answers.
-
-    The remaining graph-backed reads and health checks share this probe.
-    False when no graph is wired at all.
-    """
-    if _graph is None:
-        return False
-    try:
-        await _graph.driver.verify_connectivity()
-        return True
-    except Exception:
-        return False
-
-
-async def _raise_if_graph_unreachable(op: str) -> None:
-    """503 when a wired graph backend is down.
-
-    Called from memory endpoints' failure paths so a dead backend becomes an
-    explicit error instead of an empty-success that is indistinguishable
-    from "no data".
-    """
-    if _graph is not None and not await _graph_backend_reachable():
-        raise HTTPException(status_code=503, detail={
-            "code": "memory_backend_unavailable",
-            "message": f"{op} failed: the graph backend is unreachable",
-        })
-
-
 @router.post("/memory/read", response_model=MemoryReadResponse)
-async def memory_read(
-    body: MemoryReadRequest,
-    request: Request = None,
-) -> MemoryReadResponse:
-    person_id = resolve_request_person(
-        request,
-        claimed_person_id=body.person_id,
-        audience=body.audience,
-    )
-    body.person_id = person_id
-    if body.source_id:
-        if not person_id:
-            raise HTTPException(status_code=403, detail='canonical source reads require a scoped person')
-        from apsimo.turns import get_turn_idempotency_ledger
-        from apsimo.turns.source_read import read, read_video
-        try:
-            if body.source_view == 'video':
-                return MemoryReadResponse(source=await read_video(get_turn_idempotency_ledger(get_state_dir()),
-                    contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
-                    source_version=body.source_version, asset_hash=body.asset_hash,
-                    requested_ms=body.requested_ms, read_revision=body.read_revision))
-            return MemoryReadResponse(source=read(get_turn_idempotency_ledger(get_state_dir()),
+async def memory_read(body: MemoryReadRequest, request: Request = None) -> MemoryReadResponse:
+    """Open one exact canonical revision in the authenticated participant scope."""
+    person_id = resolve_request_person(request, claimed_person_id=body.person_id)
+    _p8_viewer_for_request(request, person_id)
+    from apsimo.turns import get_turn_idempotency_ledger
+    from apsimo.turns.source_read import read, read_video
+    try:
+        ledger = get_turn_idempotency_ledger(get_state_dir())
+        if body.source_view == 'video':
+            return MemoryReadResponse(source=await read_video(ledger,
                 contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
-                source_version=body.source_version, view=body.source_view, claim_id=body.claim_id,
-                offset=body.offset, read_revision=body.read_revision, asset_hash=body.asset_hash, page=body.page))
-        except ValueError as exc:
-            raise HTTPException(status_code=409, detail=str(exc)) from None
-    if _graph is None:
-        return MemoryReadResponse(entries=[])
-    try:
-        entries_raw = await _graph.read_memories(
-            person_id=person_id,
-            memory_id=body.memory_id,
-            limit=body.limit or 20,
-        )
-        entries = [
-            MemoryEntry(
-                id=str(e.get("id") or uuid.uuid4()),
-                content=str(e.get("content", "")),
-                type=e.get("type"),
-                strength=float(e["strength"]) if e.get("strength") is not None else None,
-                person_id=e.get("person_id"),
-                entities=e.get("entities"),
-                tags=e.get("tags"),
-                # Neo4j hydrates created_at as neo4j.time.DateTime; the wire
-                # schema is a string, so normalise like memory_search does.
-                created_at=str(e["created_at"]) if e.get("created_at") is not None else None,
-                score=float(e["score"]) if e.get("score") is not None else None,
-            )
-            for e in entries_raw
-        ]
-        return MemoryReadResponse(entries=entries)
+                source_version=body.source_version, asset_hash=body.asset_hash,
+                requested_ms=body.requested_ms, read_revision=body.read_revision))
+        return MemoryReadResponse(source=read(ledger,
+            contact_id=person_id, session_id=body.session_id, source_id=body.source_id,
+            source_version=body.source_version, view=body.source_view, claim_id=body.claim_id,
+            offset=body.offset, read_revision=body.read_revision, asset_hash=body.asset_hash, page=body.page))
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from None
     except Exception as exc:
-        logger.warning("memory_read failed: %s", exc)
-        await _raise_if_graph_unreachable("memory_read")
-        return MemoryReadResponse(entries=[])
-
-
-@router.get("/memory/distill-preview")
-async def memory_distill_preview(limit: int = 50) -> Dict[str, Any]:
-    """Shadow distill previews: while COLONY_DISTILL_TURNS is off, every stored
-    turn also computes what distillation WOULD have stored; the last 50 pairs
-    (original vs distilled, newest first) live in an in-memory ring here so the
-    flip can be validated against real traffic before it changes stored content."""
-    enabled = os.environ.get("COLONY_DISTILL_TURNS", "0") not in ("0", "false", "no")
-    if _graph is None or not hasattr(_graph, "distill_preview"):
-        return {"enabled": enabled, "count": 0, "preview": []}
-    try:
-        items = _graph.distill_preview()[: max(0, int(limit))]
-    except Exception as exc:
-        logger.warning("memory_distill_preview failed: %s", exc)
-        return {"enabled": enabled, "count": 0, "preview": []}
-    return {"enabled": enabled, "count": len(items), "preview": items}
+        logger.warning('Canonical source read failed (%s)', type(exc).__name__)
+        raise HTTPException(status_code=503, detail={
+            'code': 'memory_backend_unavailable', 'message': 'Canonical source could not be read'}) from None
 
 
 @router.post("/memory/search", response_model=MemorySearchResponse)
@@ -1415,104 +1286,6 @@ async def memory_search(body: MemorySearchRequest, request: Request) -> MemorySe
             "code": "memory_backend_unavailable",
             "message": "Canonical memory could not be read or selected",
         }) from None
-
-
-@router.get("/memory/conflicts", response_model=MemoryConflictsResponse)
-async def memory_conflicts() -> MemoryConflictsResponse:
-    if _graph is None:
-        return MemoryConflictsResponse()
-    try:
-        # Query CONFLICTS_WITH relationships
-        async with _graph.driver.session(database=_graph.database) as session:
-            result = await session.run(
-                """
-                MATCH (m1:Memory)-[r:CONFLICTS_WITH]->(m2:Memory)
-                OPTIONAL MATCH (m1)-[:MENTIONS]->(e:Entity)<-[:MENTIONS]-(m2)
-                RETURN m1.id AS id_a, m2.id AS id_b, e.name AS entity_name,
-                       r.detected_at AS detected_at
-                """
-            )
-            conflicts = []
-            async for record in result:
-                conflicts.append(MemoryConflictEntry(
-                    memory_id_a=record["id_a"],
-                    memory_id_b=record["id_b"],
-                    entity_name=record["entity_name"] or "",
-                    reason="Semantic conflict detected",
-                    detected_at=str(record["detected_at"]) if record["detected_at"] else None,
-                ))
-            return MemoryConflictsResponse(conflicts=conflicts, total=len(conflicts))
-    except Exception as exc:
-        logger.warning("memory_conflicts failed: %s", exc)
-        return MemoryConflictsResponse()
-
-
-@router.get("/memory/stats", response_model=MemoryStatsResponse)
-async def memory_stats() -> MemoryStatsResponse:
-    if _graph is None:
-        return MemoryStatsResponse()
-    try:
-        async with _graph.driver.session(database=_graph.database) as session:
-            # Count by epistemic state
-            result = await session.run(
-                """
-                MATCH (m:Memory)
-                RETURN m.epistemic_state AS state, count(m) AS cnt
-                """
-            )
-            by_state = {}
-            async for record in result:
-                by_state[record["state"] or "inferred"] = record["cnt"]
-            # Count by source type
-            result = await session.run(
-                """
-                MATCH (m:Memory)
-                RETURN m.source_type AS source, count(m) AS cnt
-                """
-            )
-            by_source = {}
-            async for record in result:
-                by_source[record["source"] or "inference"] = record["cnt"]
-            # Count archived
-            result = await session.run(
-                """MATCH (a:ArchivedMemory) RETURN count(a) AS cnt"""
-            )
-            record = await result.single()
-            total_archived = record["cnt"] if record else 0
-            # Count protected
-            result = await session.run(
-                """MATCH (m:Memory) WHERE m.protected = true RETURN count(m) AS cnt"""
-            )
-            record = await result.single()
-            protected_count = record["cnt"] if record else 0
-            total_active = sum(v for k, v in by_state.items() if k != "archived")
-            return MemoryStatsResponse(
-                by_state=by_state,
-                by_source=by_source,
-                total_active=total_active,
-                total_archived=total_archived,
-                protected_count=protected_count,
-            )
-    except Exception as exc:
-        logger.warning("memory_stats failed: %s", exc)
-        return MemoryStatsResponse()
-
-
-@router.post("/memory/verify", response_model=MemoryVerifyResponse)
-async def memory_verify(body: MemoryVerifyRequest) -> MemoryVerifyResponse:
-    if _graph is None:
-        return MemoryVerifyResponse(memory_id=body.memory_id, verified=False)
-    try:
-        await _graph.verify_memory(body.memory_id)
-        mem = await _graph.get_memory(body.memory_id)
-        return MemoryVerifyResponse(
-            memory_id=body.memory_id,
-            verified=True,
-            effective_confidence=float(mem.get("effective_confidence", 0.0)) if mem else 0.0,
-        )
-    except Exception as exc:
-        logger.warning("memory_verify failed: %s", exc)
-        return MemoryVerifyResponse(memory_id=body.memory_id, verified=False)
 
 
 @router.post("/memory/embed", response_model=MemoryEmbedResponse)
@@ -1993,34 +1766,6 @@ async def migrate_status(task_id: str) -> MigrateResponse:
     )
 
 
-class VectorVacuumRequest(BaseModel):
-    dry_run: bool = True
-    max_delete: Optional[int] = None
-
-
-@router.post("/memory/vector-vacuum")
-async def memory_vector_vacuum(body: VectorVacuumRequest) -> dict:
-    """Explicit admin op: remove orphaned memory vectors (ANN entries whose
-    graph node was deleted without its vector). Orphans keep matching in
-    semantic search and then vanish at hydration, stealing recall slots.
-
-    dry_run defaults true (count + sample only). Fails closed: a Neo4j
-    error aborts before any deletion — see ColonyGraph.vacuum_orphan_vectors.
-    """
-    if _graph is None:
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                            detail="Memory graph not initialized")
-    if not hasattr(_graph, "vacuum_orphan_vectors"):
-        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED,
-                            detail="Graph backend lacks vacuum_orphan_vectors")
-    try:
-        return await _graph.vacuum_orphan_vectors(
-            dry_run=body.dry_run, max_delete=body.max_delete)
-    except Exception as exc:
-        raise HTTPException(status_code=500,
-                            detail=f"vector vacuum aborted: {exc}")
-
-
 @router.post("/memory/index", response_model=IndexResponse)
 async def memory_index(body: IndexRequest) -> IndexResponse:
     """Embed and store items in one call."""
@@ -2404,21 +2149,6 @@ async def context_assemble(
     # --- Memory: authorized candidates, one selection and one budget ---
     if _canonical_person_allowed and query_text:
         from apsimo.memory.search import collect_sources, select_memory
-        beliefs = []
-        if not _canonical_only and _graph is not None:
-            try:
-                candidates_fn = getattr(_graph, "recall_candidates", None)
-                recall_kwargs = {
-                    "query": query_text,
-                    "limit": 25 if callable(candidates_fn) else 5,
-                    "person_id": body.context.contact_id,
-                }
-                if _p8_runtime is not None or callable(candidates_fn):
-                    recall_kwargs["exclude_source_uris"] = ["tom:shared_fact"]
-                recall_fn = candidates_fn if callable(candidates_fn) else _graph.recall
-                beliefs = _p8_filter_graph_recall(await recall_fn(**recall_kwargs))
-            except Exception as exc:
-                logger.warning("context_assemble memory search failed: %s", exc)
         try:
             from apsimo.turns import get_turn_idempotency_ledger
             from apsimo.vector import get_store, get_pipeline
@@ -2427,11 +2157,6 @@ async def context_assemble(
             collected = await collect_sources(source_ledger, query=query_text,
                 contact_id=body.context.contact_id, session_id=body.context.session_id,
                 vector_store=get_store(), embedding_pipeline=get_pipeline())
-            # Existing graph input remains caller-owned until its retirement.
-            erased_filter = (getattr(_graph, "_filter_erased_source_memories", None)
-                             if not _canonical_only else None)
-            if not _canonical_only and callable(erased_filter):
-                beliefs = await erased_filter(beliefs)
             contact_tz = None
             if not _canonical_only and _contacts_store is not None:
                 try:
@@ -2441,7 +2166,7 @@ async def context_assemble(
                     logger.debug("contact timezone unavailable for memory recall", exc_info=True)
             from apsimo.util.temporal import resolve_communication_timezone
             packet = await select_memory(collected, query=query_text, selector=_memory_context_selector(),
-                extra_candidates=beliefs, contact_facts=_tom_context_facts,
+                contact_facts=_tom_context_facts,
                 contact_facts_allowed=not _canonical_only,
                 timezone_name=resolve_communication_timezone(
                     contact_tz, body.context.timezone or ("UTC" if _canonical_only else None)),
@@ -2450,10 +2175,6 @@ async def context_assemble(
                 sections.append(ContextSection(
                     id="colony-memory", title="Relevant Memories", body=packet.content,
                     priority=90, citations=packet.source_refs or None))
-                record_use = (getattr(_graph, "record_recall_use", None)
-                              if not _canonical_only else None)
-                if not _canonical_only and callable(record_use):
-                    record_use(packet.selected)
         except Exception as exc:
             logger.warning("combined memory selection failed (%s)", type(exc).__name__)
 
@@ -2496,7 +2217,7 @@ async def context_assemble(
             logger.warning("context_assemble initiatives failed: %s", exc)
 
     # Stored global briefings have no query or participant relevance contract.
-    # Keep them available through /briefings and explicit enriched requests;
+    # Keep them available through /briefings;
     # do not prepend the latest three (possibly old dataclass dumps) to every turn.
 
     # --- World Model Entities ---
@@ -10941,452 +10662,6 @@ async def dismiss_insight(insight_id: str) -> dict:
         raise HTTPException(status_code=503, detail="insight_store_not_initialized")
     _insight_store.dismiss(insight_id)
     return {"ok": True, "insight_id": insight_id}
-
-
-# ---------------------------------------------------------------------------
-# Enriched Context (all-systems assembly)
-# ---------------------------------------------------------------------------
-
-@router.post("/context/enriched", response_model=EnrichedContextResponse)
-async def enriched_context(
-    body: EnrichedContextRequest,
-    request: Request = None,
-) -> EnrichedContextResponse:
-    """Pull from all intelligence systems to build enriched context.
-
-    This is the one-stop endpoint for context assembly — it queries
-    memory, relationships, goals, world model, insights, and style
-    in parallel and returns assembled sections.
-    """
-    import asyncio
-
-    sections: list[ContextSection] = []
-    contact_id = resolve_request_person(
-        request,
-        context_person_id=(body.context.contact_id if body.context else None),
-        audience=body.audience,
-    )
-    if body.context is not None and contact_id is not None:
-        body.context.contact_id = contact_id
-    _enriched_p8_viewer = None
-    if _p8_runtime is not None and contact_id:
-        try:
-            _enriched_p8_viewer = _p8_viewer_for_request(
-                request, contact_id)
-        except HTTPException:
-            logger.debug("P8 enriched context omitted: scoped viewer unavailable")
-    _enriched_legacy_global_allowed = _p8_legacy_global_context_allowed(
-        _enriched_p8_viewer)
-    _enriched_exact_person_allowed = _p8_exact_person_context_allowed(
-        _enriched_p8_viewer)
-    features = body.features or {}
-    msg = body.message
-
-    # Collect context from all available systems in parallel
-    tasks: dict[str, Any] = {}
-
-    # 1. Memory search
-    if _enriched_exact_person_allowed and _graph is not None:
-        async def _mem():
-            try:
-                recall_kwargs = {
-                    "query": msg,
-                    "limit": 5,
-                    "person_id": contact_id,
-                }
-                if _p8_runtime is not None or callable(getattr(_graph, 'recall_candidates', None)):
-                    recall_kwargs["exclude_source_uris"] = [
-                        "tom:shared_fact"]
-                results = await _graph.recall(**recall_kwargs)
-                results = _p8_filter_graph_recall(results)
-                return ("memory", results)
-            except Exception:
-                return ("memory", [])
-        tasks["memory"] = _mem()
-
-    # 2. Contact / relationship
-    if _enriched_exact_person_allowed and _contacts_store is not None\
-            and contact_id and features.get("relationships", True):
-        async def _contact():
-            try:
-                c = await _contacts_store.get(contact_id)
-                return ("contact", c.to_dict() if hasattr(c, 'to_dict') else c)
-            except Exception:
-                return ("contact", None)
-        tasks["contact"] = _contact()
-
-    # 3. Contact style
-    if _enriched_exact_person_allowed and _contacts_store is not None\
-            and contact_id and features.get("style", True):
-        async def _style():
-            try:
-                s = await _contacts_store.get_style(contact_id)
-                return ("style", s)
-            except Exception:
-                return ("style", None)
-        tasks["style"] = _style()
-
-    # 4. Active goals
-    if _enriched_legacy_global_allowed and _goals_store is not None\
-            and features.get("goals", True):
-        async def _goals():
-            try:
-                # GoalEngine.list_goals takes (status, limit, offset) — no person_id —
-                # and returns Goal objects; the section renderer expects dicts.
-                items = _goals_store.list_goals(status="active", limit=10)
-                g = [{
-                    "title": getattr(x, "title", "?"),
-                    "status": getattr(getattr(x, "status", None), "value",
-                                      str(getattr(x, "status", "?"))),
-                    "progress": float(getattr(x, "progress_pct", 0.0) or 0.0),
-                } for x in (items or [])]
-                return ("goals", g)
-            except Exception:
-                return ("goals", [])
-        tasks["goals"] = _goals()
-
-    # 5. World model entities
-    if _enriched_legacy_global_allowed and _world_store is not None\
-            and features.get("worldModel", True):
-        async def _world():
-            try:
-                e = await _world_context_entities(msg, limit=5)
-                return ("world", e)
-            except Exception:
-                return ("world", [])
-        tasks["world"] = _world()
-
-    # 6. Recent insights
-    if _enriched_legacy_global_allowed and _connection_discoverer is not None\
-            and features.get("insights", True):
-        async def _insights():
-            try:
-                c = await _connection_discoverer.discover_connections(person_id=contact_id, min_novelty=0.3)
-                return ("insights", c[:3])
-            except Exception:
-                return ("insights", [])
-        tasks["insights"] = _insights()
-
-    # 7. Identity snapshot (colony_id, node_id, trust tier)
-    if features.get("identity", True) and _chain_manager is not None:
-        async def _identity():
-            try:
-                status = await identity_status()
-                return ("identity", status)
-            except Exception:
-                return ("identity", None)
-        tasks["identity"] = _identity()
-
-    # 8. Recent briefings
-    if _enriched_legacy_global_allowed and _briefings_engine is not None\
-            and features.get("briefings", False):
-        async def _briefings():
-            try:
-                briefings = _briefings_engine.get_recent(limit=3)
-                return ("briefings", briefings or [])
-            except Exception:
-                return ("briefings", [])
-        tasks["briefings"] = _briefings()
-
-    # 9. Known contacts (top N — useful when the agent references someone
-    # not tied to the current contact_id).
-    if _enriched_legacy_global_allowed and _contacts_store is not None\
-            and features.get("contactsList", False):
-        async def _contacts_list():
-            try:
-                contacts = await _contacts_store.list()
-                return ("contactsList", contacts[:8] if contacts else [])
-            except Exception:
-                return ("contactsList", [])
-        tasks["contactsList"] = _contacts_list()
-
-    # 10. Cognition snapshot (CPI — self-awareness metric)
-    if _enriched_legacy_global_allowed and _metalearner is not None\
-            and features.get("cognition", False):
-        async def _cognition():
-            try:
-                cpi = await _metalearner.evaluate()
-                return ("cognition", cpi)
-            except Exception:
-                return ("cognition", None)
-        tasks["cognition"] = _cognition()
-
-    # 11. Use the same source-linked estimate and correction packet as native
-    # assembly. A P8 visibility envelope is an additional audience check, not
-    # a replacement for current source membership or attributed corrections.
-    if _facts_store is not None and contact_id and features.get("shared_facts", True)\
-            and (_p8_runtime is None or _enriched_p8_viewer is not None):
-        async def _shared_facts():
-            try:
-                from apsimo.memory.recall import contact_fact_candidates, pack_memory_context
-                from apsimo.turns.source_annotations import expand, current_candidates
-                store = _p8_runtime.facts_store if _p8_runtime is not None else _facts_store
-                view = (_p8_runtime.projected_facts_view(_enriched_p8_viewer,
-                    now=datetime.now(timezone.utc), source_linked_only=True)
-                    if _p8_runtime is not None else store.automatic_view())
-                result = view.list_facts(contact_id=contact_id, limit=512)
-                facts = result if isinstance(result, list) else result.get('facts', [])
-                ledger = store._ledger()
-                scope = {'contact_id': contact_id, 'session_id': body.context.session_id}
-                candidates = expand(ledger, contact_fact_candidates(msg, facts), **scope)
-                # An erase/revision between the fact read and expansion must
-                # not leave an unbound estimate in the automatic packet.
-                candidates = [row for row in candidates if any(
-                    ref['source_id'] == row.get('source_turn_id')
-                    for ref in row.get('_annotation_source_refs', []))]
-                candidates = current_candidates(ledger, candidates, **scope)
-                try:
-                    max_chars = int(os.environ.get('COLONY_RECALL_CONTEXT_MAX_CHARS', '6000'))
-                except (TypeError, ValueError):
-                    max_chars = 6000
-                selected, text = pack_memory_context(candidates, limit=5,
-                    max_chars=max(0, min(max_chars, 24000)))
-                return ('shared_facts', (ledger, selected, text))
-            except Exception:
-                logger.debug('enriched source-linked facts unavailable', exc_info=True)
-                return ('shared_facts', None)
-        tasks['shared_facts'] = _shared_facts()
-
-    # Run all tasks in parallel
-    results = {}
-    if tasks:
-        task_items = list(tasks.items())
-        gathered = await asyncio.gather(*[t[1] for t in task_items], return_exceptions=True)
-        for (name, _), result in zip(task_items, gathered):
-            if isinstance(result, Exception):
-                logger.debug("enriched_context %s failed: %s", name, result)
-            elif isinstance(result, tuple):
-                results[result[0]] = result[1]
-
-    # Build sections from results
-    if results.get("memory"):
-        body_text = "\n".join(
-            f"- [{r.get('score', 0):.2f}] {r.get('content', '')}"
-            for r in results["memory"]
-        )
-        sections.append(ContextSection(id="colony-memory", title="Relevant Memories", body=body_text, priority=90))
-
-    shared_section = None
-    shared_packet = results.get('shared_facts')
-    if shared_packet:
-        _, selected, body_text = shared_packet
-        if body_text:
-            refs = {ref['source_id']: ref for row in selected
-                for ref in row['_annotation_source_refs']}
-            shared_section = ContextSection(id='colony-shared-facts',
-                title='Relevant Contact Knowledge Estimates', body=body_text,
-                priority=70, citations=list(refs.values()))
-            sections.append(shared_section)
-
-    if results.get("contact"):
-        c = results["contact"]
-        sections.append(ContextSection(
-            id="colony-relationship",
-            title="Relationship",
-            body=f"Trust tier: {c.get('trust_tier', 'unknown')}\n{c.get('style_notes', '')}",
-            priority=85,
-        ))
-
-    if results.get("style"):
-        s = results["style"]
-        lines = [f"{k}: {v}" for k, v in s.items() if v]
-        if lines:
-            sections.append(ContextSection(id="colony-style", title="Communication Style", body="\n".join(lines), priority=80))
-
-    if results.get("goals"):
-        goals = results["goals"]
-        if goals:
-            body_text = "\n".join(f"- {g.get('title', '?')} [{g.get('status', '?')}] {g.get('progress', 0):.0%}" for g in goals)
-            sections.append(ContextSection(id="colony-goals", title="Active Goals", body=body_text, priority=75))
-
-    if results.get("world"):
-        entities = results["world"]
-        if entities:
-            body_text = "\n".join(f"- {e.get('name', '?')} ({e.get('entity_type', '?')})" for e in entities)
-            sections.append(ContextSection(id="colony-world", title="Known Entities", body=body_text, priority=70))
-
-    if results.get("insights"):
-        connections = results["insights"]
-        if connections:
-            body_text = "\n".join(
-                f"- [{getattr(c, 'novelty', 0):.2f}] {getattr(c, 'description', '') or getattr(c, 'connection_type', '')}"
-                for c in connections
-            )
-            sections.append(ContextSection(id="colony-insights", title="Recent Insights", body=body_text, priority=65))
-
-    identity = results.get("identity")
-    if identity is not None:
-        lines = []
-        if getattr(identity, "colony_id", None):
-            lines.append(f"colony_id: {identity.colony_id}")
-        if getattr(identity, "node_id", None):
-            lines.append(f"node_id: {identity.node_id}")
-        if getattr(identity, "trust_tier", None):
-            anchor = "verified" if identity.trust_anchor_verified else "unverified"
-            lines.append(f"trust_tier: {identity.trust_tier} (anchor {anchor})")
-        if getattr(identity, "is_genesis", False):
-            lines.append("role: GENESIS colony")
-        if lines:
-            sections.append(ContextSection(
-                id="colony-identity",
-                title="Apsimo Identity",
-                body="\n".join(lines),
-                priority=95,
-            ))
-
-    briefings = results.get("briefings")
-    if briefings:
-        parts = []
-        for b in briefings[:3]:
-            # Careful not to shadow the request model `body` — it is
-            # still read below (compression, citations).
-            # The engine returns Briefing dataclasses, whose narratives live in
-            # sections. Use the same projection as the explicit history API.
-            brief = b if isinstance(b, dict) else _briefing_to_response(b).model_dump()
-            b_title = brief.get("title") or ""
-            b_body = brief.get("body") or ""
-            if b_title or b_body:
-                parts.append(f"- {b_title}: {b_body[:200]}" if b_title else f"- {b_body[:200]}")
-        if parts:
-            sections.append(ContextSection(
-                id="colony-briefings",
-                title="Recent Briefings",
-                body="\n".join(parts),
-                priority=60,
-            ))
-
-    contacts_list = results.get("contactsList")
-    if contacts_list:
-        parts = []
-        for c in contacts_list[:8]:
-            cd = c if isinstance(c, dict) else _to_dict(c)
-            name = cd.get("display_name") or cd.get("name") or cd.get("contact_id") or ""
-            tier = cd.get("trust_tier") or ""
-            if name:
-                parts.append(f"- {name}" + (f" ({tier})" if tier else ""))
-        if parts:
-            sections.append(ContextSection(
-                id="colony-contacts",
-                title="Known Contacts",
-                body="\n".join(parts),
-                priority=55,
-            ))
-
-    cognition = results.get("cognition")
-    if cognition is not None:
-        lines = []
-        for attr in ("overall", "memory", "reasoning", "social", "autonomy"):
-            val = getattr(cognition, attr, None)
-            if val is not None:
-                lines.append(f"{attr}: {val:.2f}")
-        if lines:
-            sections.append(ContextSection(
-                id="colony-cognition",
-                title="Cognitive Performance",
-                body="\n".join(lines),
-                priority=50,
-            ))
-
-    # Pending commitments
-    if _enriched_exact_person_allowed and _commitment_store is not None\
-            and contact_id and features.get("commitments", True):
-        try:
-            pending = _commitment_store.get_pending_for_person(contact_id)
-            if pending:
-                body_text = "\n".join(
-                    f"- {c['description']}"
-                    + (f" (due {c['due_at'][:10]})" if c.get('due_at') else "")
-                    + f" [priority {c['priority']}]"
-                    for c in pending[:5]
-                )
-                sections.append(ContextSection(
-                    id="colony-commitments",
-                    title="Pending Commitments",
-                    body=body_text,
-                    priority=72,
-                ))
-        except Exception:
-            logger.debug("commitment section failed", exc_info=True)
-
-    # Surprises (noteworthy observations)
-    if _enriched_legacy_global_allowed and _surprise_store is not None\
-            and contact_id and features.get("surprises", True):
-        try:
-            unresolved = _surprise_store.get_unresolved(min_score=0.5, limit=5)
-            if unresolved:
-                lines = []
-                for s in unresolved:
-                    lines.append(f"- [{s['surprise_score']:.1f}] {s['observation']}")
-                sections.append(ContextSection(
-                    id="colony-surprises",
-                    title="Noteworthy Observations",
-                    body="Unexpected observations:\n" + "\n".join(lines),
-                    priority=75,
-                ))
-        except Exception:
-            logger.debug("surprises section failed", exc_info=True)
-
-    def current_sections(items):
-        if shared_section is None:
-            return items
-        from apsimo.turns.source_annotations import current_candidates
-        ledger, selected, _ = shared_packet
-        try:
-            current = current_candidates(ledger, selected, contact_id=contact_id,
-                session_id=body.context.session_id)
-        except Exception:
-            logger.debug('enriched source-linked packet recheck unavailable', exc_info=True)
-            current = []
-        # Generic section compression can drop citations, cut off a correction,
-        # or summarize it. Only publish this bounded packet byte-for-byte, with
-        # its checked revisions, or omit it entirely. Recheck after async work.
-        result = []
-        for item in items:
-            if item.id != 'colony-shared-facts':
-                result.append(item)
-            elif len(current) == len(selected) and item.body == shared_section.body:
-                result.append(shared_section)
-        return result
-
-    # Adaptive compression
-    compression_mode_str = None
-    if body.compression:
-        compression_mode_str = body.compression
-    try:
-        from apsimo.compression import (
-            CompressionMode,
-            compress_sections,
-            compress_sections_with_llm,
-        )
-        override = CompressionMode(compression_mode_str) if compression_mode_str else None
-        # Aggressive mode can use the LLM router (when wired) to actually
-        # summarize truncated sections instead of just tight-truncating.
-        if (
-            override == CompressionMode.AGGRESSIVE
-            or (override is None and os.environ.get("COLONY_COMPRESSION_MODE", "").lower() == "aggressive")
-        ) and _llm_router is not None:
-            result = await compress_sections_with_llm(
-                sections=[s.model_dump() for s in sections],
-                llm_router=_llm_router,
-                query=msg,
-                override_mode=override,
-            )
-        else:
-            result = compress_sections(
-                sections=[s.model_dump() for s in sections],
-                query=msg,
-                override_mode=override,
-            )
-        compressed = [ContextSection(**s) for s in result["sections"]]
-        return EnrichedContextResponse(
-            sections=current_sections(compressed),
-            contact_id=contact_id,
-            metadata=result.get("metadata"),
-        )
-    except Exception:
-        logger.debug("compression failed, returning uncompressed", exc_info=True)
-
-    return EnrichedContextResponse(sections=current_sections(sections), contact_id=contact_id)
 
 
 # ---------------------------------------------------------------------------

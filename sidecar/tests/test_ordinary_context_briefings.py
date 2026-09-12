@@ -57,14 +57,4 @@ async def test_ordinary_recall_preserves_source_and_history_without_global_brief
         assert retained.json()['briefings'][0]['id'] == 'retained-brief'
         assert retained.json()['briefings'][0]['body'] == 'Obsolete unrelated operational narrative.'
         assert calls == [10]
-        if not scoped_projection:
-            requested = await client.post('/v1/host/context/enriched', headers=headers, json={
-                'identity': {'host_id': 'native-fixture'},
-                'context': {'contact_id': 'contact-a', 'session_id': 'later-voice'},
-                'message': 'Show the stored briefings.', 'features': {'briefings': True}})
-            assert requested.status_code == 200, requested.text
-            section = next(s for s in requested.json()['sections'] if s['id'] == 'colony-briefings')
-            assert 'Obsolete unrelated operational narrative.' in section['body']
-            assert 'old operational detail' not in section['body']
-            assert calls == [10, 3]
     assert len(brief.sections[0].content['unrelated']) == 46000

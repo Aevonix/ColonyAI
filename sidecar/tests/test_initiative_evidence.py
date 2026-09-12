@@ -105,11 +105,15 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
 
     monkeypatch.setenv('HOME', str(tmp_path))
     logs = tmp_path/'.colony/logs'
+    monkeypatch.setenv('APSIMO_LOG_PATH', str(logs/'sidecar.log'))
     logs.mkdir(parents=True)
     for name, size in [('sidecar.log', 99 * 1024 * 1024), ('monitor.log', 2 * 1024 * 1024)]:
         with (logs/name).open('wb') as stream:
             stream.write(b'retained log evidence\n')
             stream.truncate(size)  # Sparse fixture, no large allocation.
+    for name in ('sidecar.log.1', 'sidecar-old.log.bak', 'historical.log.gz'):
+        with (logs/name).open('wb') as stream:
+            stream.truncate(1024 * 1024)
     canonical = tmp_path/'.hermes/sessions/source.json'
     canonical.parent.mkdir(parents=True)
     canonical.write_text('canonical conversation evidence')
@@ -132,6 +136,9 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
     assert row.priority >= loop.config.initiative_confidence_threshold
     assert row.context['total_size_bytes'] == 101 * 1024 * 1024
     assert row.context['file_count'] == 2
+    assert row.context['retained_archive_count'] == 3
+    assert row.context['retained_archive_bytes'] == 3 * 1024 * 1024
+    assert row.context['volume_scope'] == 'top_level_log_files_excluding_rotated_archives'
     assert [item['path'] for item in row.context['largest_files']] == [str(logs/'sidecar.log'), str(logs/'monitor.log')]
     review = NativeInitiativeWork(store).get(row.id)['review']
     assert review['action'] == 'operational_review'
@@ -150,6 +157,7 @@ async def test_measured_log_volume_reaches_default_proposal_gate_without_mutatin
 async def test_log_review_ignores_archives_and_does_not_invent_pressure_at_threshold(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     logs = tmp_path/'.colony/logs'
+    monkeypatch.setenv('APSIMO_LOG_PATH', str(logs/'sidecar.log'))
     logs.mkdir(parents=True)
     for name in ['sidecar.log', 'historical.log.gz']:
         with (logs/name).open('wb') as stream:

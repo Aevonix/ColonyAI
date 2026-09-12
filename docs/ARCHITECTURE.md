@@ -150,8 +150,9 @@ graph node must not remove a person's canonical identity or permission history.
 Lance is an optional, replaceable semantic index. A deployment can start with
 lexical source recall and add embeddings later. Original image bytes retain
 content hashes and source-ledger ownership independently of generated captions.
-A separate optional Neo4j memory graph remains in the implementation and is
-outside the supported lightweight setup. It is distinct from the canonical
+A separate optional Neo4j graph remains for other research and autonomy consumers,
+outside automatic context, explicit memory search and source opening. It is
+outside the supported lightweight setup and distinct from the canonical
 SQLite source ledger and typed world observations. Graph records without
 canonical provenance cannot be reconstructed from source memory; retiring
 their store requires an explicit disposition of those records.
@@ -221,3 +222,9 @@ commitment observed through another interface, and a decision that can wait
 while independent work continues. Source-backed images, inspectable self-state
 and native skill evaluation extend those contracts. Their availability in a
 package does not establish that a deployment has enabled or qualified them.
+
+## Memory operations
+
+Automatic context, explicit `/v1/host/memory/search` and `/v1/host/memory/read` use scoped canonical sources. Search returns a selected evidence packet, its item count and source revisions. It does not return graph strength, global memory counts or an unscoped list of private conflicts. Source annotations carry corrections; they do not mark a claim as true merely because an operator clicked verify.
+
+Hermes owns conversation compression and its durable memory-provider checkpoint. The sidecar has no parallel adaptive-compression package. Graph-only memory statistics, manual verification, conflict lists, distillation previews and the manual vector-vacuum route are removed. The remaining autonomy graph-pruning sweep and its orphan-vector cleanup still run according to their existing configuration; graph-backed research, synthesis and maintenance need separate migration.

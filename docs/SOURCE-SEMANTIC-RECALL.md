@@ -30,10 +30,16 @@ those exact references. Empty results are successful reads; an unavailable
 canonical store or selector returns HTTP 503. Semantic failure keeps current
 lexical evidence and reports the semantic degradation.
 
-Search receives no graph candidates. Automatic context temporarily retains its
-existing graph input outside the canonical helper. Source claims, attributed
+Search and automatic context use canonical evidence without a graph dependency.
+Source claims, attributed
 corrections, media descriptions and scoped contact estimates retain their
 existing ranking, temporal interpretation and shared context budget.
+
+`POST /v1/host/memory/read` opens an exact source ID/version for the authenticated
+participant and session. It returns a `source` object with the requested evidence
+view and pagination metadata. Graph IDs, audience selectors and listing limits
+are not part of this request. `/health` checks canonical SQLite readability;
+missing or failed optional semantic projection does not remove source memory.
 
 The existing source-freshness POST accepts the search response's
 `annotation_checks` alongside its exact source references. It returns aligned
@@ -129,6 +135,6 @@ measures retrieval quality; these tests alone do not establish it.
 
 This increment does not provide audio/video embeddings, unrestricted media URL
 fetching, automatic embedding-provider replacement or migration of unlinked
-historical graph memories into canonical sources. Existing graph memory remains
-important for those historical records. Query latency and retrieval coverage on
+historical graph memories into canonical sources. Historical graph records are
+not read by automatic context or the canonical source API. Query latency and retrieval coverage on
 a large deployed corpus still require measurements with that corpus.

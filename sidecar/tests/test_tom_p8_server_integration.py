@@ -21,7 +21,6 @@ from apsimo.api.middleware import ApiKeyMiddleware
 from apsimo.api.routers import host
 from apsimo.api.schemas.host import (
     ContextAssembleRequest,
-    EnrichedContextRequest,
     HostIdentity,
     HostMessage,
     HostTurnContext,
@@ -48,7 +47,9 @@ from apsimo.turns import TurnIdempotencyLedger
 def current_fact_source(facts, tmp_path, person, text):
     """Actual canonical support for automatic-context fixture positives."""
     import uuid
-    ledger = TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db')
+    from pathlib import Path
+    from apsimo import get_state_dir
+    ledger = TurnIdempotencyLedger(Path(get_state_dir()) / 'turn-idempotency.db')
     facts._source_ledger = ledger
     turn = 'fact-support-' + uuid.uuid4().hex
     ledger.record_source(turn, contact_id=person, session_id='prior',
@@ -113,7 +114,9 @@ def _context(person: str) -> ContextAssembleRequest:
 
 
 @pytest.fixture(autouse=True)
-def _restore_host_globals():
+def _restore_host_globals(monkeypatch, tmp_path):
+    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
+    monkeypatch.setenv("COLONY_RECALL_RERANK", "off")
     names = (
         "_p8_runtime", "_facts_store", "_graph", "_tom2_store",
         "_relationship_profiler", "_embedder", "_goals_store",
@@ -125,6 +128,9 @@ def _restore_host_globals():
     )
     originals = {name: getattr(host, name, None) for name in names}
     yield
+    # Tests mix direct spy wiring with monkeypatch replacements. Undo those
+    # replacements first, so their captured spies cannot overwrite this restore.
+    monkeypatch.undo()
     for name, value in originals.items():
         setattr(host, name, value)
 
@@ -238,7 +244,9 @@ class _LegacyGlobalContextSpies:
         host._goals_store = self.goals
         host._initiative_store = self.initiatives
         host._briefings_engine = self.briefings
-        host._world_store = object()
+        class World:
+            async def property_views(self, *args, **kwargs): return []
+        host._world_store = World()
         host._directive_manager = self.directives
         host._surprise_store = self.surprises
         host._contacts_store = self.contacts
@@ -247,10 +255,7 @@ class _LegacyGlobalContextSpies:
 
         async def world_context(_query, limit=5):
             self.calls["world"] += 1
-            return [{
-                "name": "owner-global-world-entity",
-                "entity_type": "concept",
-            }]
+            return [SimpleNamespace(id='world-fixture', name='owner-global-world-entity', entity_type='concept')]
 
         monkeypatch.setattr(host, "_world_context_entities", world_context)
 
@@ -387,27 +392,6 @@ class _PersonalContextSpies:
         host.set_relationship_profiler(self.profiler)
 
 
-def _enriched_request(person: str) -> EnrichedContextRequest:
-    return EnrichedContextRequest(
-        identity=HostIdentity(host_id="hermes"),
-        context=HostTurnContext(
-            contact_id=person,
-            session_id="session:1",
-            channel_id="body-claimed-channel",
-        ),
-        message="hello",
-        features={
-            "goals": True,
-            "worldModel": True,
-            "insights": True,
-            "briefings": True,
-            "contactsList": True,
-            "cognition": True,
-            "surprises": True,
-        },
-    )
-
-
 @pytest.mark.asyncio
 async def test_p8_non_owner_never_queries_untyped_global_context(
     tmp_path, monkeypatch,
@@ -428,10 +412,8 @@ async def test_p8_non_owner_never_queries_untyped_global_context(
     assembled_body.projection_policy = "scoped_viewer_required"
     assembled = await host.context_assemble(
         assembled_body, request=_request(_authority("alice")))
-    enriched = await host.enriched_context(
-        _enriched_request("alice"), request=_request(_authority("alice")))
 
-    rendered = repr((assembled, enriched))
+    rendered = repr(assembled)
     assert "owner-global" not in rendered
     assert all(count == 0 for count in spies.calls.values())
     projection = assembled.projection_attestation
@@ -462,10 +444,8 @@ async def test_p8_unsealed_owner_claim_never_queries_untyped_global_context(
     assembled_body.include_initiatives = True
     assembled = await host.context_assemble(
         assembled_body, request=legacy_request)
-    enriched = await host.enriched_context(
-        _enriched_request("owner"), request=legacy_request)
 
-    assert "owner-global" not in repr((assembled, enriched))
+    assert "owner-global" not in repr(assembled)
     assert all(count == 0 for count in spies.calls.values())
 
 
@@ -487,18 +467,15 @@ async def test_p8_exact_owner_retains_untyped_global_context(
     assembled_body.include_initiatives = True
     assembled = await host.context_assemble(
         assembled_body, request=owner_request)
-    enriched = await host.enriched_context(
-        _enriched_request("owner"), request=owner_request)
 
-    rendered = repr((assembled, enriched))
+    rendered = repr(assembled)
     for marker in (
         "owner-global-goal", "owner-global-initiative",
-        "owner-global-briefing", "owner-global-world-entity",
+        "owner-global-world-entity",
         "owner-global-directive", "owner-global-surprise",
-        "owner-global-insight", "owner-global-contact-list",
     ):
         assert marker in rendered
-    assert all(count > 0 for count in spies.calls.values())
+    assert all(spies.calls[name] > 0 for name in ("goals", "initiatives", "world", "directive_brief", "surprises"))
     projection = assembled.projection_attestation
     assert projection is not None
     assert projection.viewer_person_id == "owner"
@@ -636,12 +613,10 @@ async def test_p8_unsealed_selector_never_queries_person_context(
 
     assembled = await host.context_assemble(
         _context(selector), request=legacy_request)
-    enriched = await host.enriched_context(
-        _enriched_request(selector), request=legacy_request)
     temporal = await host.context_temporal(
         contact_id=selector, request=legacy_request)
 
-    assert "PERSONAL OWNER" not in repr((assembled, enriched, temporal))
+    assert "PERSONAL OWNER" not in repr((assembled, temporal))
     assert all(not calls for calls in spies.calls.values())
 
 
@@ -661,21 +636,17 @@ async def test_p8_scoped_non_owner_queries_only_exact_person_commitments(
 
     assembled = await host.context_assemble(
         _context("alice"), request=request)
-    enriched = await host.enriched_context(
-        _enriched_request("alice"), request=request)
 
-    assert spies.calls["graph"] and all(
-        call["person_id"] == "alice" for call in spies.calls["graph"])
+    assert spies.calls["graph"] == []
     assert spies.calls["commitment_list"]
     assert all(call == {
         "person_id": "alice",
         "status": ["pending", "overdue"],
         "limit": 5,
     } for call in spies.calls["commitment_list"])
-    assert spies.calls["commitment_pending"] == ["alice"]
+    assert spies.calls["commitment_pending"] == []
     assert spies.calls["commitment_overdue"] == []
     assert "PERSONAL OWNER COMMITMENT" in repr(assembled)
-    assert "PERSONAL OWNER PENDING" in repr(enriched)
 
 
 @pytest.mark.asyncio
@@ -719,12 +690,8 @@ async def test_p8_off_preserves_blank_person_legacy_queries(
     legacy_request = _request(legacy_authority())
 
     await host.context_assemble(_context(""), request=legacy_request)
-    await host.enriched_context(
-        _enriched_request(""), request=legacy_request)
 
-    assert len(spies.calls["graph"]) == 2
-    assert spies.calls["graph"][0]["person_id"] == ""
-    assert spies.calls["graph"][1]["person_id"] is None
+    assert spies.calls["graph"] == []
     assert spies.calls["commitment_list"][0]["person_id"] == ""
     assert spies.calls["commitment_overdue"]
 
@@ -1500,30 +1467,14 @@ async def test_p8_context_filters_shared_fact_graph_mirrors_before_render(
         _context("alice"), request=scoped_request)
     assembled_text = "\n".join(
         section.body for section in assembled.sections)
-    assert "ordinary recipient-scoped memory" in assembled_text
+    assert "ordinary recipient-scoped memory" not in assembled_text
     assert "P8 subject-private launch secret" not in assembled_text
 
-    enriched = await host.enriched_context(EnrichedContextRequest(
-        identity=HostIdentity(host_id="hermes"),
-        context=HostTurnContext(
-            contact_id="alice", session_id="session:1",
-            channel_id="body-claimed-channel",
-        ),
-        message="launch",
-    ), request=scoped_request)
-    enriched_text = "\n".join(
-        section.body for section in enriched.sections)
-    assert "ordinary recipient-scoped memory" in enriched_text
-    assert "P8 subject-private launch secret" not in enriched_text
-    assert len(graph.calls) == 2
-    assert all(
-        call["exclude_source_uris"] == ["tom:shared_fact"]
-        for call in graph.calls
-    )
+    assert graph.calls == []
 
 
 @pytest.mark.asyncio
-async def test_default_off_preserves_strict_graph_recall_signature(monkeypatch):
+async def test_default_off_never_queries_obsolete_graph_recall(monkeypatch):
     class StrictGraphRecall:
         async def recall(self, query, limit, person_id):
             assert query
@@ -1546,17 +1497,8 @@ async def test_default_off_preserves_strict_graph_recall_signature(monkeypatch):
 
     assembled = await host.context_assemble(
         _context("alice"), request=request)
-    assert "strict legacy graph memory" in repr(assembled)
+    assert "strict legacy graph memory" not in repr(assembled)
 
-    enriched = await host.enriched_context(EnrichedContextRequest(
-        identity=HostIdentity(host_id="hermes"),
-        context=HostTurnContext(
-            contact_id="alice", session_id="session:1",
-            channel_id="channel:1",
-        ),
-        message="memory",
-    ), request=request)
-    assert "strict legacy graph memory" in repr(enriched)
 
 
 @pytest.mark.asyncio
@@ -1637,7 +1579,7 @@ async def test_p8_fact_view_is_the_only_tom2_context_content_path(
 
 
 @pytest.mark.asyncio
-async def test_enriched_context_never_falls_through_to_raw_legacy_facts(
+async def test_canonical_context_never_falls_through_to_raw_legacy_facts(
     tmp_path, monkeypatch,
 ):
     monkeypatch.setenv("COLONY_RECIPIENT_SIMULATOR_MODE", "shadow")
@@ -1654,14 +1596,9 @@ async def test_enriched_context_never_falls_through_to_raw_legacy_facts(
     facts.create_fact(
         contact_id="alice", fact="raw legacy enriched leak", confidence=1.0)
 
-    response = await host.enriched_context(EnrichedContextRequest(
-        identity=HostIdentity(host_id="hermes"),
-        context=HostTurnContext(
-            contact_id="alice", session_id="session:1",
-            channel_id="body-claimed-channel",
-        ),
-        message="authorized enriched fact",
-    ), request=request)
+    body = _context('alice')
+    body.incoming_message = HostMessage(role='user', content='authorized enriched fact')
+    response = await host.context_assemble(body, request=request)
     rendered = "\n".join(section.body for section in response.sections)
     assert "authorized enriched fact" in rendered
     assert "raw legacy enriched leak" not in rendered

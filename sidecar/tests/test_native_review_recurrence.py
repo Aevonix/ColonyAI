@@ -196,6 +196,7 @@ async def test_receipt_failure_completion_suppresses_same_attempt_but_new_attemp
 async def test_log_growth_does_not_immediately_repeat_settled_native_review(tmp_path, monkeypatch, clock):
     monkeypatch.setenv('HOME', str(tmp_path))
     path = tmp_path/'.colony/logs/sidecar.log'
+    monkeypatch.setenv('APSIMO_LOG_PATH', str(path))
     path.parent.mkdir(parents=True)
     with path.open('wb') as stream:
         stream.truncate(101 * 1024 * 1024)
