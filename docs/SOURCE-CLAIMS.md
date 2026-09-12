@@ -40,7 +40,7 @@ A newer timestamp alone never supersedes a conflicting assertion. Generated prop
 
 ## Recall and time
 
-Graph candidates and direct source hits locate assertion keys. Recall expands each key into its scoped, time-appropriate evidence before the existing shared reranker and context budget. An unresolved conflict is one atomic candidate: the packet cannot retain just the winning side or truncate away its qualifications. Raw source chunks have the projected spans removed; each remaining excerpt is still a contiguous quotation, including when source chunks overlap. Recognized graph summaries are candidate locators, rather than a second route for injecting superseded assertions.
+Canonical source hits locate assertion keys. Recall expands each key into its scoped, time-appropriate evidence before the existing shared reranker and context budget. An unresolved conflict is one atomic candidate: the packet cannot retain just the winning side or truncate away its qualifications. Raw source chunks have the projected spans removed; each remaining excerpt is still a contiguous quotation, including when source chunks overlap. Graph summaries do not participate in automatic context or explicit canonical memory search.
 
 The injected assertion cards share repeated exact quotations from the same
 canonical message version. A packet-local `evidence_ref` links each assertion to
@@ -84,7 +84,7 @@ These syntax rules affect only temporal interpretation; lexical and
 semantic retrieval retain the complete original query. Unmarked narrative and
 malformed or truncated pasted structures can remain ambiguous.
 
-One key expands to at most eight distinct values. A larger group supplies a compact incomplete-history marker with a source/claim anchor; it does not choose a value. The shared five-result/character budget still applies. An oversized atomic assertion bundle can similarly supply an opening anchor when the marker fits. Repeated identical values do not crowd out a distinct conflict. This remains bounded discovery, not a guarantee that every relevant source is found. Legacy graph memories without source lineage keep their existing behavior.
+One key expands to at most eight distinct values. A larger group supplies a compact incomplete-history marker with a source/claim anchor; it does not choose a value. The shared five-result/character budget still applies. An oversized atomic assertion bundle can similarly supply an opening anchor when the marker fits. Repeated identical values do not crowd out a distinct conflict. This remains bounded discovery, not a guarantee that every relevant source is found. Graph records without source lineage are outside canonical recall.
 
 ## Complete source opening and event precision
 
@@ -98,9 +98,9 @@ proposal. The existing semantic reviewer checks the complete source and its
 conditions; this representation does not independently prove entailment. Earlier
 assertions without precision metadata remain labelled legacy precision unknown.
 
-`colony_memory_read_source` opens a source ID/version supplied to the current
-participant. The existing `POST /v1/host/memory/read` accepts additive canonical
-selectors alongside graph reads: `source_id`, `source_version`, `session_id`, and
+`apsimo_memory_read_source` opens a source ID/version supplied to the current
+participant. The `POST /v1/host/memory/read` route requires exact canonical
+selectors: `person_id`, `source_id`, `source_version`, `session_id`, and
 optional `source_view=assertions` plus an anchored `claim_id`. Source pages contain
 at most 4,096 characters of serialized canonical messages and applicable
 attributed corrections. History pages contain at most eight assertions, including

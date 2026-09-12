@@ -54,14 +54,15 @@ other graph consumers remain, P8 startup excludes existing copies with the
 `tom:shared_fact` source URI or `shared_fact` metadata marker. It applies during
 `recall()` and `read_memories()` hydration before
 confidence/relevance ranking or reranking, so model tools, synthesis,
-background thinkers, normal memory reads, and the research pipeline all share
+background thinkers and the research pipeline all share
 the same boundary. Research borrows this configured graph and never creates or
 closes a policy-free live client. Multimodal searches over the `memories`
 collection boundedly oversample, hydrate ambiguous vector IDs against the
 authoritative graph, filter, and then trim; non-graph image vectors remain
-available. The host also filters these mirrors. Current typed facts reach
-context through P8 projection rather than retained graph copies; other graph
-memories retain their existing exact-person recall behavior. If the governed startup graph is
+available. Canonical memory reads and automatic context do not query the graph.
+Current typed facts reach context through P8 projection rather than retained
+graph copies; other graph consumers retain their existing exact-person recall
+behavior. If the governed startup graph is
 unavailable while P8 is attached, research graph gathering and ambiguous
 multimodal memory text fail empty; they never create a policy-free fallback
 client.
@@ -71,7 +72,7 @@ adapter backed by current P8 projection. Unresolved legacy refs disappear
 entirely—even the owner renderer does not expose their raw IDs or topology.
 
 Older global context producers do not yet carry P8 visibility envelopes.
-While P8 is attached, both `/context/assemble` and `/context/enriched` query
+While P8 is attached, `/context/assemble` queries
 those sources only for a server-attested exact owner viewer. A guest or an
 unsealed migration caller receives no global goals, initiatives, briefings,
 world-model entities, insights, contact list, cognition snapshot, directives,

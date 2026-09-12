@@ -109,13 +109,13 @@ async def test_irrelevant_quotations_cannot_bypass_combined_abstention(source_ap
         assert (await client.put("/v2/host/turns/quote", json=envelope("quote"))).status_code == 201
         assert await recalled(client, query="hydrofoil hull insurance") == ""
     assert len(reranker.calls) == 1
-    assert len(reranker.calls[0]) == 2
-    assert graph.calls[0]["person_id"] == "contact-a"
+    assert len(reranker.calls[0]) == 1
+    assert graph.calls == []
     assert graph.used == []
 
 
 @pytest.mark.asyncio
-async def test_one_context_section_preserves_both_kinds_and_one_budget(source_app, monkeypatch):
+async def test_one_context_section_uses_canonical_evidence_and_one_budget(source_app, monkeypatch):
     reranker = Reranker()
     calibrate(monkeypatch, reranker)
     monkeypatch.setattr(host, "_reranker", reranker)
@@ -137,9 +137,9 @@ async def test_one_context_section_preserves_both_kinds_and_one_budget(source_ap
     assert len(memory) == 1
     text = memory[0]["body"]
     assert len(text) <= 1400
-    assert '"kind": "belief"' in text and '"kind": "source_quote"' in text
+    assert '"kind": "belief"' not in text and '"kind": "source_quote"' in text
     assert '"source": "turn:quote"' in text and '"role": "user"' in text
-    assert graph.used == ["belief-a"]
+    assert graph.used == [] and graph.calls == []
     assert len(reranker.calls) == 1
 
 
@@ -162,12 +162,13 @@ async def test_visibility_filter_runs_before_combined_model_call(source_app, mon
     private = {**belief("Private unrelated fact"), "id": "private"}
     graph = Graph([private, belief()])
     monkeypatch.setattr(host, "_graph", graph)
-    monkeypatch.setattr(host, "_p8_filter_graph_recall", lambda rows: [row for row in rows if row["id"] != "private"])
     graph._filter_erased_source_memories = AsyncMock(side_effect=lambda rows: rows)
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url="http://test") as client:
+        await client.put('/v2/host/turns/quote', json=envelope('quote'))
         assert "hydrofoil" in await recalled(client)
-    assert reranker.calls == [["A hydrofoil departure was reported."]]
-    graph._filter_erased_source_memories.assert_awaited_once()
+    assert len(reranker.calls) == 1 and 'Private unrelated fact' not in repr(reranker.calls)
+    assert graph.calls == []
+    graph._filter_erased_source_memories.assert_not_awaited()
 
 
 @pytest.mark.asyncio

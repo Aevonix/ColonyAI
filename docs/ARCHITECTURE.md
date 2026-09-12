@@ -150,8 +150,9 @@ graph node must not remove a person's canonical identity or permission history.
 Lance is an optional, replaceable semantic index. A deployment can start with
 lexical source recall and add embeddings later. Original image bytes retain
 content hashes and source-ledger ownership independently of generated captions.
-A separate optional Neo4j memory graph remains in the implementation and is
-outside the supported lightweight setup. It is distinct from the canonical
+A separate optional Neo4j graph remains for other research and autonomy consumers,
+outside automatic context, explicit memory search and source opening. It is
+outside the supported lightweight setup and distinct from the canonical
 SQLite source ledger and typed world observations. Graph records without
 canonical provenance cannot be reconstructed from source memory; retiring
 their store requires an explicit disposition of those records.

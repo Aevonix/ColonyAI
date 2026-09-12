@@ -1,83 +1,45 @@
-"""Regression test for the 2026-09-04 recall probe.
-
-Observed by RUNNING the sidecar against a real Neo4j: POST /memory/read
-always answered ``{"entries": []}`` while /memory/search returned rows,
-because ColonyGraph.read_memories hydrates ``created_at`` as a
-``neo4j.time.DateTime`` and the router handed it to MemoryEntry (a string
-field) unconverted. The pydantic error was swallowed into the empty
-"no data" reply, so the endpoint looked healthy and returned nothing.
-"""
-
-from __future__ import annotations
-
+"""Exact canonical source reads do not depend on graph hydration or its schemas."""
 import pytest
-from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from apsimo.api.routers import host
+from test_canonical_memory_search import memory_app
+from test_turn_source_evidence import source_app
 
 
-class _Neo4jDateTime:
-    """Stand-in for neo4j.time.DateTime: not a str, stringifies like one."""
-
-    def __str__(self) -> str:
-        return "2026-09-04T10:41:03.459000000+00:00"
-
-
-class _HydratingGraph:
-    class _Driver:
-        async def verify_connectivity(self):
-            return None
-
-    def __init__(self) -> None:
-        self.driver = self._Driver()
-        self._embed_fn = None
-        self._vector_store = None
-
-    async def read_memories(self, **kwargs):
-        return [{
-            "id": "mem-1",
-            "content": "the user prefers oat milk",
-            "type": "preference",
-            "strength": 0.83,
-            "created_at": _Neo4jDateTime(),
-            "entities": ["oat milk"],
-            "person_id": kwargs.get("person_id"),
-        }]
-
-
-@pytest.fixture
-def hydrating_graph(monkeypatch, tmp_path):
-    monkeypatch.setenv("COLONY_STATE_DIR", str(tmp_path))
-    graph = _HydratingGraph()
-    monkeypatch.setattr(host, "_graph", graph)
-    monkeypatch.setattr(host, "_presence_store", None)
-    monkeypatch.setattr(host, "_contacts_store", None)
-    monkeypatch.setattr(host, "_context_provenance", None)
-    monkeypatch.setattr(host, "_telemetry", None)
-    return graph
-
-
-@pytest.fixture
-def app() -> FastAPI:
-    app = FastAPI()
-    app.include_router(host.router)
-    return app
+class NoGraph:
+    def __getattr__(self, name):
+        raise AssertionError('canonical read touched graph: ' + name)
 
 
 @pytest.mark.asyncio
-async def test_memory_read_serialises_graph_datetimes(app, hydrating_graph):
-    async with AsyncClient(
-        transport=ASGITransport(app=app), base_url="http://test",
-    ) as client:
-        resp = await client.post("/v1/host/memory/read", json={
-            "identity": {"host_id": "t"},
-        })
-    assert resp.status_code == 200
-    entries = resp.json()["entries"]
-    assert len(entries) == 1, "a hydrated row must not collapse into 'no data'"
-    entry = entries[0]
-    assert entry["id"] == "mem-1"
-    assert entry["created_at"] == "2026-09-04T10:41:03.459000000+00:00"
-    assert entry["strength"] == pytest.approx(0.83)
-    assert entry["entities"] == ["oat milk"]
+async def test_memory_read_opens_canonical_source_without_graph(memory_app, monkeypatch):
+    app, ledger = memory_app
+    monkeypatch.setattr(host, '_graph', NoGraph())
+    ref = ledger.source_references(['report'], contact_id='person', session_id='later')[0]
+    body = {'identity': {'host_id': 'fixture'}, 'person_id': 'person', 'session_id': 'later', **ref}
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test',
+                           headers={'Authorization':'Bearer person'}) as client:
+        response = await client.post('/v1/host/memory/read', json=body)
+        assert response.status_code == 200, response.text
+        assert set(response.json()) == {'source'}
+        assert 'Friday at nine' in response.json()['source']['content']
+        for change in ({'memory_id':'old-node'}, {'audience':'owner'}, {'limit':5}):
+            assert (await client.post('/v1/host/memory/read', json=body | change)).status_code == 422
+        del body['source_id']
+        assert (await client.post('/v1/host/memory/read', json=body)).status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_memory_read_backend_failure_is_not_empty_success(memory_app, monkeypatch):
+    from apsimo import turns
+    app, ledger = memory_app
+    ref = ledger.source_references(['report'], contact_id='person', session_id='later')[0]
+    def unavailable(*args): raise OSError('fixture unavailable')
+    monkeypatch.setattr(turns, 'get_turn_idempotency_ledger', unavailable)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test',
+                           headers={'Authorization':'Bearer person'}) as client:
+        response = await client.post('/v1/host/memory/read', json={
+            'identity': {'host_id': 'fixture'}, 'person_id': 'person', 'session_id': 'later', **ref})
+        assert response.status_code == 503
+        assert response.json()['detail']['code'] == 'memory_backend_unavailable'

@@ -43,7 +43,7 @@ Startup recovers files stranded before a source transaction committed, only in t
 
 ## Recall and inspection
 
-Descriptions have a rebuildable local FTS index. Authorized matches enter the same candidate selection, reranking and character budget as textual source evidence and graph memories. There is no second media injection. The packet carries the asset handle, source turn, role, model alias and uncertainty label. Description recall remains available after changing the interaction model because descriptions and originals live outside the model.
+Descriptions have a rebuildable local FTS index. Authorized matches enter the same candidate selection, reranking and character budget as textual source evidence. There is no second media injection. The packet carries the asset handle, source turn, role, model alias and uncertainty label. Description recall remains available after changing the interaction model because descriptions and originals live outside the model.
 
 The source status endpoint now includes recent media jobs:
 

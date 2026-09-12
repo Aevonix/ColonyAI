@@ -127,8 +127,8 @@ The shared integration implements the identity boundary, versioned SharedFacts
 envelopes, outbound shadow observation, audit persistence, and bounded read
 model below. The broader producers remain future work:
 
-1. **Identity boundary (implemented):** `context_assemble` and
-   `enriched_context` construct `ViewerContextV1` only after
+1. **Identity boundary (implemented):** `context_assemble`
+   constructs `ViewerContextV1` only after
    `resolve_request_person()` returns the server-authorized person. Principal,
    revision, and audiences come from request authority; body channel/session
    and model output grant nothing. Relationship detail and context rapport

@@ -137,12 +137,11 @@ async def test_health(client):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_memory_read_empty(client):
+async def test_memory_read_requires_exact_source(client):
     resp = await client.post("/v1/host/memory/read", json={
         "identity": {"host_id": "test"},
     })
-    assert resp.status_code == 200
-    assert resp.json()["entries"] == []
+    assert resp.status_code == 422
 
 
 @pytest.mark.asyncio
@@ -193,8 +192,7 @@ async def test_enriched_context(client):
         "context": {"session_id": "s1", "contact_id": "c1"},
         "message": "hello",
     })
-    assert resp.status_code == 200
-    assert "sections" in resp.json()
+    assert resp.status_code == 404
 
 
 # ---------------------------------------------------------------------------

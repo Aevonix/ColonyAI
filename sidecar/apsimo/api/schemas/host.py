@@ -74,34 +74,13 @@ class HostHealthResponse(BaseModel):
 
 # --- Memory -----------------------------------------------------------------
 
-class MemoryEntry(BaseModel):
-    id: str
-    content: str
-    type: Optional[str] = None
-    strength: Optional[float] = None
-    effective_confidence: Optional[float] = None
-    epistemic_state: Optional[str] = None
-    source_type: Optional[str] = None
-    source_uri: Optional[str] = None
-    source_version: Optional[str] = None
-    content_hash: Optional[str] = None
-    protected: Optional[bool] = None
-    person_id: Optional[str] = None
-    entities: Optional[List[str]] = None
-    tags: Optional[List[str]] = None
-    created_at: Optional[str] = None
-    score: Optional[float] = None
-
-
 class MemoryReadRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     identity: HostIdentity
-    memory_id: Optional[str] = None
-    person_id: Optional[str] = None
-    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
-    limit: Optional[int] = None
-    source_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
-    source_version: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
-    session_id: Optional[str] = Field(default=None, min_length=1, max_length=256)
+    person_id: str = Field(min_length=1, max_length=256)
+    source_id: str = Field(min_length=1, max_length=256)
+    source_version: str = Field(pattern='^[0-9a-f]{64}$')
+    session_id: str = Field(min_length=1, max_length=256)
     source_view: Literal['source', 'assertions', 'observations', 'image', 'document', 'video'] = 'source'
     asset_hash: Optional[str] = Field(default=None, pattern='^[0-9a-f]{64}$')
     page: Optional[int] = Field(default=None, ge=1, strict=True)
@@ -112,29 +91,23 @@ class MemoryReadRequest(BaseModel):
 
     @model_validator(mode='after')
     def canonical_read_selector(self):
-        if self.source_id:
-            if not self.source_version or not self.session_id or self.memory_id:
-                raise ValueError('canonical reads require source version/session and no graph memory ID')
-            if (self.source_view == 'assertions') != bool(self.claim_id):
-                raise ValueError('assertion history requires its source claim ID')
-            if (self.source_view in {'image', 'document', 'video'}) != bool(self.asset_hash):
-                raise ValueError('image, document and video reads require an exact asset hash')
-            if self.source_view in {'image', 'video'} and self.offset:
-                raise ValueError('image and video reads take no page offset')
-            if (self.source_view == 'video') != (self.requested_ms is not None):
-                raise ValueError('video reads require a clip-relative requested_ms')
-            if (self.source_view == 'document') != (self.page is not None):
-                raise ValueError('document reads require an original page number')
-            if self.offset and not self.read_revision:
-                raise ValueError('continuation requires the preceding read revision')
-        elif self.source_version or self.claim_id or self.asset_hash or self.page is not None or self.requested_ms is not None or self.offset or self.read_revision or self.source_view != 'source':
-            raise ValueError('canonical read fields require a source ID')
+        if (self.source_view == 'assertions') != bool(self.claim_id):
+            raise ValueError('assertion history requires its source claim ID')
+        if (self.source_view in {'image', 'document', 'video'}) != bool(self.asset_hash):
+            raise ValueError('image, document and video reads require an exact asset hash')
+        if self.source_view in {'image', 'video'} and self.offset:
+            raise ValueError('image and video reads take no page offset')
+        if (self.source_view == 'video') != (self.requested_ms is not None):
+            raise ValueError('video reads require a clip-relative requested_ms')
+        if (self.source_view == 'document') != (self.page is not None):
+            raise ValueError('document reads require an original page number')
+        if self.offset and not self.read_revision:
+            raise ValueError('continuation requires the preceding read revision')
         return self
 
 
 class MemoryReadResponse(BaseModel):
-    entries: List[MemoryEntry] = []
-    source: Optional[Dict[str, Any]] = None
+    source: Dict[str, Any]
 
 
 class MemorySearchRequest(BaseModel):
@@ -1011,23 +984,6 @@ class InsightResponse(BaseModel):
 
 class InsightsListResponse(BaseModel):
     insights: List[InsightResponse] = []
-
-
-# --- Enriched Context -------------------------------------------------------
-
-class EnrichedContextRequest(BaseModel):
-    identity: HostIdentity
-    context: HostTurnContext
-    audience: Optional[Literal["viewer", "owner", "shared", "global"]] = None
-    message: str
-    features: Optional[Dict[str, bool]] = None
-    compression: Optional[Literal["off", "conservative", "balanced", "aggressive"]] = None
-
-
-class EnrichedContextResponse(BaseModel):
-    sections: List[ContextSection] = []
-    contact_id: Optional[str] = None
-    metadata: Optional[Dict[str, Any]] = None
 
 
 # --- Chain / Identity -------------------------------------------------------

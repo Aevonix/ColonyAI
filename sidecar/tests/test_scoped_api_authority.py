@@ -395,31 +395,31 @@ async def test_memory_person_is_derived_and_body_cannot_broaden_it(tmp_path, gra
             json=_memory_payload(query="alpha", person_id="someone-else"),
         )
 
-    assert (read.status_code, search.status_code) == (200, 200)
+    assert (read.status_code, search.status_code) == (422, 200)
     assert broaden.status_code == 403
-    assert graph.read_calls[0]["person_id"] == "contact-owner"
+    assert graph.read_calls == []
     assert graph.search_calls == []
 
 
 @pytest.mark.asyncio
-async def test_enriched_context_uses_authenticated_viewer_not_body_claim(tmp_path, graph):
+async def test_canonical_context_uses_authenticated_viewer_not_body_claim(tmp_path, graph):
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["context:read"])])
     app = _app(keyring)
     base = {
         "identity": {"host_id": "test-host"},
-        "message": "alpha",
+        "incoming_message": {"role":"user", "content":"alpha"},
     }
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         valid = await c.post(
-            "/v1/host/context/enriched", headers=_headers("scoped-secret"),
+            "/v1/host/context/assemble", headers=_headers("scoped-secret"),
             json={
                 **base,
                 "context": {"session_id": "s1", "contact_id": "contact-owner"},
             },
         )
         spoofed = await c.post(
-            "/v1/host/context/enriched", headers=_headers("scoped-secret"),
+            "/v1/host/context/assemble", headers=_headers("scoped-secret"),
             json={
                 **base,
                 "context": {"session_id": "s2", "contact_id": "someone-else"},
@@ -428,7 +428,7 @@ async def test_enriched_context_uses_authenticated_viewer_not_body_claim(tmp_pat
 
     assert valid.status_code == 200
     assert spoofed.status_code == 403
-    assert graph.search_calls[0]["person_id"] == "contact-owner"
+    assert graph.search_calls == []
 
 
 @pytest.mark.asyncio

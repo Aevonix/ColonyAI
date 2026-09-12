@@ -67,13 +67,12 @@ the source, and estimates are not exact canonical quotations.
 This preserves bounded lexical access to useful retained estimates without a new
 index or model. It does not guarantee paraphrase-only recall or coverage beyond
 the current 512-record window. Explicit contact-knowledge listing remains
-available. The legacy `/v1/host/context/enriched` route and automatic ToM context
-use the same source eligibility rule. Enriched contact estimates also require
-query overlap and carry the existing attributed-correction packet and exact
-source references. The complete packet must fit the recall character budget;
-if later section compression changes it, the section is omitted. Source and
-correction revisions are rechecked after compression. Explicit history remains
-available when an automatic packet cannot fit. Automatic relationship inferences
+available. Automatic context and ToM context use the same source eligibility
+rule. Contact estimates require query overlap and carry their attributed
+correction packet and exact source references. The complete packet must fit the
+recall character budget. Source and correction revisions are rechecked after
+selection; explicit source history remains available when a packet cannot fit.
+Automatic relationship inferences
 also require current supporting facts. A correction suppresses the old inference
 rather than interpreting it again; missing source membership cannot produce a
 UUID-only fallback. Cached audience views and context assembly recheck the current
@@ -86,11 +85,11 @@ canonical source is invented for those records.
 
 Shared-fact writes no longer create graph copies. Explicit fact listing uses
 only the canonical store; automatic recall reads its current source-checked
-view. Automatic context also excludes retained `tom:shared_fact` graph copies
-and copies marked with shared-fact metadata. A mirror cannot bypass an expired,
-deleted, unlinked or outdated contact estimate. Unrelated graph memories keep their
-existing behavior. No retained fact, mirror or original source is deleted or
-migrated by this selection change.
+view. Automatic context uses no graph memory candidates, including retained
+`tom:shared_fact` copies and copies marked with shared-fact metadata. A mirror
+cannot bypass an expired, deleted, unlinked or outdated contact estimate.
+Other graph consumers retain their existing policies. No retained fact, mirror
+or original source is deleted or migrated by this selection change.
 
 Persistent extraction consumers use the provider's completed final answer.
 Reasoning-only and truncated responses are not saved as assertions, affect,

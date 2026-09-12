@@ -1,6 +1,6 @@
 """Adaptive context compression for Colony.
 
-Compresses enriched-context sections to fit within a token budget
+Compresses supplied sections to fit within a token budget
 while preserving the most relevant information. Three compression
 modes with increasing aggression:
 
@@ -11,7 +11,7 @@ modes with increasing aggression:
 Compression is off by default. Enable via:
   COLONY_COMPRESSION_MODE=conservative|balanced|aggressive
 
-Or per-request via the ``compression`` field on EnrichedContextRequest.
+Callers can also provide an explicit ``CompressionMode`` override.
 """
 
 from __future__ import annotations
@@ -140,7 +140,7 @@ def compress_sections(
     config: Optional[CompressionConfig] = None,
     override_mode: Optional[CompressionMode] = None,
 ) -> Dict[str, Any]:
-    """Compress enriched-context sections to fit a token budget.
+    """Compress supplied sections to fit a token budget.
 
     Args:
         sections: List of ContextSection dicts (id, title, body, priority).

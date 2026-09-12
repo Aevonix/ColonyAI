@@ -206,30 +206,29 @@ async def test_safety_check_populates_gate_context(app, monkeypatch):
 # ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_memory_endpoints_distinguish_backend_down(app, dead_graph):
+async def test_health_canonical_memory_does_not_probe_graph(app, monkeypatch):
+    class NoGraph:
+        def __getattr__(self, name): raise AssertionError('health touched graph')
+    monkeypatch.setattr(host, '_graph', NoGraph())
     async with _client(app) as client:
-        read = await client.post("/v1/host/memory/read", json={
-            "identity": {"host_id": "t"},
-        })
-        assert read.status_code == 503
-        assert read.json()["detail"]["code"] == "memory_backend_unavailable"
+        response = await client.get('/v1/host/health')
+    assert response.status_code == 200, response.text
+    assert 'memory' in response.json()['capabilities']
+    assert 'Canonical source ledger readable' in response.json()['notes']['memory']
 
-
-
-# ---------------------------------------------------------------------------
-# 6. /health must not advertise a memory capability whose backend is dead
-# ---------------------------------------------------------------------------
 
 @pytest.mark.asyncio
-async def test_health_does_not_claim_dead_memory_backend(app, dead_graph):
+async def test_health_does_not_claim_unavailable_canonical_memory(app, monkeypatch):
+    from apsimo import turns
+    def unavailable(*args): raise OSError('fixture unavailable')
+    monkeypatch.setattr(turns, 'get_turn_idempotency_ledger', unavailable)
     async with _client(app) as client:
-        resp = await client.get("/v1/host/health")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert "memory" not in data["capabilities"], (
-        "an unreachable backend must not be advertised as a live capability")
-    assert "UNREACHABLE" in data["notes"]["memory"]
-    assert data["status"] == "degraded"
+        response = await client.get('/v1/host/health')
+    assert response.status_code == 200
+    data = response.json()
+    assert 'memory' not in data['capabilities']
+    assert data['status'] == 'degraded'
+    assert 'Canonical source ledger unavailable' in data['notes']['memory']
 
 
 # ---------------------------------------------------------------------------

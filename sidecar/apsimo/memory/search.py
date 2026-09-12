@@ -60,18 +60,18 @@ async def collect_sources(ledger, *, query: str, contact_id: str, session_id: st
 
 
 async def select_memory(collected: CollectedSources, *, query: str, selector,
-                        extra_candidates=(), contact_facts=None, contact_facts_allowed=False,
+                        contact_facts=None, contact_facts_allowed=False,
                         timezone_name=None, current_work_available=False, limit=5) -> MemoryPacket:
     """Apply the existing projections, corrections, ranking and shared budget once.
 
-    Optional existing noncanonical candidates are supplied by the caller. This
-    module does not query a graph or infer an audience from a subject selector.
+    The caller supplies an authenticated audience and an optional projected
+    contact fact view. All source candidates come from the canonical ledger.
     """
     from apsimo.beliefs.source_time import interpret_time_query, filter_unstructured
     from apsimo.util import temporal
     ledger = collected.ledger
     scope = {'contact_id': collected.contact_id, 'session_id': collected.session_id}
-    beliefs = list(extra_candidates)
+    beliefs = []
     quotations = source_candidates(collected.hits)
     time_query = interpret_time_query(query, now=temporal.now_utc(), timezone_name=timezone_name)
     if ledger is not None:

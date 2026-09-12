@@ -10,6 +10,7 @@ import time
 
 import httpx
 import pytest
+from fastapi import FastAPI
 from pypdf import PdfWriter
 from pypdf.generic import DictionaryObject, NameObject, DecodedStreamObject
 
@@ -17,6 +18,9 @@ from apsimo.turns import TurnIdempotencyLedger
 from apsimo.turns.documents import MAX_DOCUMENT_BYTES, MAX_PAGE_STREAM_BYTES, extract_document
 from apsimo.turns.idempotency import SourceErased, source_message_hash
 from apsimo.turns.media import SourceMedia
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host
+from test_scoped_api_authority import _principal, _write_keyring
 from test_turn_source_evidence import source_app, envelope
 from test_hermes_turn_outbox import _load_client
 
@@ -96,8 +100,15 @@ async def test_actual_pdf_http_retention_and_page_extraction_without_model(sourc
         assert (await client.get('/v1/host/memory/sources/assets/' + asset,
                                 params={'contact_id': 'other', 'session_id': 's'})).status_code == 404
         ref = ledger.source_references(['pdf'], contact_id='contact-a', session_id='later')[0]
-        response = await client.post('/v1/host/memory/read', json={'identity': {'host_id': 'fixture'},
-            'person_id': 'contact-a', 'session_id': 'later', **ref, 'source_view': 'document', 'asset_hash': asset, 'page': 2})
+        keyring = tmp_path/'reader-keys.json'
+        _write_keyring(keyring, [_principal(viewer='contact-a', secret='read', scopes=['memory:read'])])
+        reader = FastAPI()
+        reader.include_router(host.router)
+        reader.add_middleware(ApiKeyMiddleware, keyring_path=str(keyring))
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=reader), base_url='http://fixture',
+                                     headers={'Authorization': 'Bearer read'}) as scoped_client:
+            response = await scoped_client.post('/v1/host/memory/read', json={'identity': {'host_id': 'fixture'},
+                'person_id': 'contact-a', 'session_id': 'later', **ref, 'source_view': 'document', 'asset_hash': asset, 'page': 2})
         assert response.status_code == 200, response.text
         assert 'nine tiles' in response.json()['source']['content']
         ledger.erase_sources(contact_id='contact-a', turn_ids=['pdf'])
