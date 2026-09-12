@@ -1,5 +1,29 @@
 # Changelog
 
+## v1.5.1 - shared task results and ordinary memory eligibility
+
+Completed Hermes tasks now expose their retained run summary to other owner
+conversations. Each excerpt identifies the board, task and completed run, states
+whether it is truncated, and links to the existing `kanban_show` reader. Reopened,
+running, cancelled and archived tasks do not present an earlier result as their
+current completion. A worker's report remains distinct from verified delivery or
+other external effects.
+
+Tool-result retention checks the origin of the actual native session. A
+background worker cannot become eligible for ordinary conversation memory by
+using a CLI transport or completing its task. Ordinary owner retention and the
+separate task-completion report path remain available.
+
+Revising a retained appraisal uses the named `source_appraisal_revision` function,
+which defaults to reasoning. Initial formation still defaults to extraction.
+Both remain configurable by role, and recollection does not wait for background
+updates.
+
+Focused checks exercise native task completion and reopening, owner scope,
+bounded result transfer, native retention eligibility and appraisal routing.
+Phase 1 validation remains open, including useful outcome accuracy, ordinary
+memory quality and measurable value from evolving appraisals.
+
 ## v1.5.0 - PacoMind namespaces and current installation
 
 PacoMind uses one public namespace: `pacomind`, `pacomind-hermes` and
