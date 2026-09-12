@@ -14,6 +14,7 @@ import logging
 from pathlib import Path
 import sqlite3
 import uuid
+from contextlib import closing
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from apsimo.tom.source_lineage import SourceLinkedStore
@@ -74,9 +75,47 @@ class CommsLog(SourceLinkedStore):
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_comms_reply_ref "
             "ON communications(contact_id,reply_to_ref,ts)")
+        self._conn.execute("""CREATE INDEX IF NOT EXISTS idx_comms_source_lineage
+            ON communications(contact_id,json_extract(source_lineage_json,'$.turn_id'))
+            WHERE source_lineage_json IS NOT NULL""")
         self._conn.commit()
         from .transport_ingress import ensure_schema
         ensure_schema(self._conn)
+
+    def _ledger(self):
+        # An offline copy can belong to another profile. Missing local source
+        # rows are not evidence that its linked communications were erased.
+        if self._source_ledger is None:
+            raise ValueError('communications_source_ledger_required')
+        return self._source_ledger
+
+    def _reconcile_erasure_ids(self, contact_id=None) -> None:
+        """Read existing tombstone IDs, not every original conversation body."""
+        where, params = (' AND contact_id=?', (contact_id,)) if contact_id else ('', ())
+        if self._conn.execute('SELECT 1 FROM communications WHERE source_lineage_json IS NOT NULL'
+                              + where + ' LIMIT 1', params).fetchone() is None:
+            return
+        condition = ' WHERE e.contact_id=?' if contact_id else ''
+        with closing(self._ledger()._connect()) as conn:
+            erased = conn.execute('''SELECT e.contact_id,coalesce(r.source_turn_id,e.turn_id)
+                FROM source_erasures e LEFT JOIN source_erasure_revisions r USING(sequence)'''
+                + condition + ''' UNION SELECT e.contact_id,p.turn_id FROM source_erasures e
+                LEFT JOIN source_erasure_revisions r USING(sequence)
+                JOIN source_projection_erasures p ON p.source_turn_id=coalesce(r.source_turn_id,e.turn_id)'''
+                + condition, params + params).fetchall()
+        with self._conn:
+            self._conn.executemany('''DELETE FROM communications WHERE contact_id=?
+                AND source_lineage_json IS NOT NULL
+                AND json_extract(source_lineage_json,'$.turn_id')=?''', [tuple(row) for row in erased])
+
+    def _summary_rows(self, query, params, fields, *, contact_id=None):
+        self._reconcile_erasure_ids(contact_id)
+        rows = self._conn.execute(query, params).fetchall()
+        invalid = self._invalid_sources([row for row in rows if row['source_lineage_json'] is not None])
+        rejected = {row['id'] for row in invalid}
+        with self._conn:
+            self._conn.executemany('DELETE FROM communications WHERE id=?', [(key,) for key in rejected])
+        return [{key: row[key] for key in fields} for row in rows if row['id'] not in rejected]
 
     def purge_erased_sources(self, turn_ids=None, *, contact_id=None) -> int:
         sql = ('SELECT id,contact_id,source_lineage_json FROM communications '
@@ -168,31 +207,30 @@ class CommsLog(SourceLinkedStore):
             raise SourceErased('source_erased')
 
     def history(self, contact_id: str, limit: int = 15) -> List[Dict[str, Any]]:
-        self.purge_erased_sources(contact_id=contact_id)
-        rows = self._conn.execute(
-            "SELECT channel, direction, summary, ts FROM communications WHERE contact_id=?"
-            " ORDER BY ts DESC LIMIT ?", (contact_id, limit)).fetchall()
-        return [dict(r) for r in rows]
+        return self._summary_rows(
+            "SELECT id,contact_id,source_lineage_json,channel,direction,summary,ts "
+            "FROM communications WHERE contact_id=? ORDER BY ts DESC LIMIT ?",
+            (contact_id, limit), ('channel', 'direction', 'summary', 'ts'), contact_id=contact_id)
 
     def last_per_channel(self, contact_id: str) -> Dict[str, Dict[str, Any]]:
-        self.purge_erased_sources(contact_id=contact_id)
-        rows = self._conn.execute(
-            "SELECT channel, direction, summary, MAX(ts) AS ts FROM communications"
-            " WHERE contact_id=? GROUP BY channel", (contact_id,)).fetchall()
+        rows = self._summary_rows(
+            "SELECT id,contact_id,source_lineage_json,channel,direction,summary,MAX(ts) AS ts "
+            "FROM communications WHERE contact_id=? GROUP BY channel", (contact_id,),
+            ('channel', 'direction', 'summary', 'ts'), contact_id=contact_id)
         return {r["channel"]: {"direction": r["direction"], "summary": r["summary"], "ts": r["ts"]}
                 for r in rows}
 
     def last_outbound(self, contact_id: str) -> Optional[Dict[str, Any]]:
-        self.purge_erased_sources(contact_id=contact_id)
-        r = self._conn.execute(
-            "SELECT channel, summary, ts FROM communications WHERE contact_id=? AND direction='out'"
-            " ORDER BY ts DESC LIMIT 1", (contact_id,)).fetchone()
-        return dict(r) if r else None
+        rows = self._summary_rows(
+            "SELECT id,contact_id,source_lineage_json,channel,summary,ts "
+            "FROM communications WHERE contact_id=? AND direction='out' ORDER BY ts DESC LIMIT 1",
+            (contact_id,), ('channel', 'summary', 'ts'), contact_id=contact_id)
+        return rows[0] if rows else None
 
     def inbound_since(self, contact_id: str, since_iso: str) -> List[str]:
         """Timestamps of inbound rows from a contact since an ISO instant
         (selfhood benchmark: did the owner respond after a delivery)."""
-        self.purge_erased_sources(contact_id=contact_id)
+        self._reconcile_erasure_ids(contact_id)
         rows = self._conn.execute(
             "SELECT ts FROM communications WHERE contact_id=? AND"
             " direction='in' AND ts >= ? ORDER BY ts ASC LIMIT 5000",
@@ -208,19 +246,18 @@ class CommsLog(SourceLinkedStore):
         until_iso: str,
     ) -> List[Dict[str, Any]]:
         """Explicit inbound reactions tied to exact outbound references."""
-        self.purge_erased_sources(contact_id=contact_id)
         bounded = sorted({str(ref) for ref in refs if str(ref).strip()})[:5000]
         if not bounded:
             return []
         placeholders = ",".join("?" for _ in bounded)
-        rows = self._conn.execute(
-            "SELECT id,channel,summary,ts,external_ref,reply_to_ref,reaction,"
+        return self._summary_rows(
+            "SELECT id,contact_id,source_lineage_json,channel,summary,ts,external_ref,reply_to_ref,reaction,"
             "receipt_ref FROM communications WHERE contact_id=? "
             "AND direction='in' AND ts>=? AND ts<? AND reply_to_ref IN ("
             f"{placeholders}) AND reaction IS NOT NULL ORDER BY ts",
             [contact_id, since_iso, until_iso, *bounded],
-        ).fetchall()
-        return [dict(row) for row in rows]
+            ('id', 'channel', 'summary', 'ts', 'external_ref', 'reply_to_ref', 'reaction', 'receipt_ref'),
+            contact_id=contact_id)
 
     def match_reply(self, *, contact_id: str, outbound_ref: str, since_iso: str,
                     until_iso: Optional[str] = None, connection=None) -> Dict[str, Any]:
@@ -258,20 +295,18 @@ class CommsLog(SourceLinkedStore):
         require_receipt: bool = False,
     ) -> List[Dict[str, Any]]:
         """One auditable outbound cohort for benchmark denominators."""
-        self.purge_erased_sources(contact_id=contact_id)
         query = (
-            "SELECT id,channel,summary,ts,external_ref,receipt_ref "
+            "SELECT id,contact_id,source_lineage_json,channel,summary,ts,external_ref,receipt_ref "
             "FROM communications WHERE contact_id=? AND direction='out' "
             "AND ts>=? AND ts<?")
         if require_receipt:
             query += " AND receipt_ref IS NOT NULL AND receipt_ref!=''"
         query += " ORDER BY ts"
-        rows = self._conn.execute(
-            query, (contact_id, since_iso, until_iso)).fetchall()
-        return [dict(row) for row in rows]
+        return self._summary_rows(query, (contact_id, since_iso, until_iso),
+            ('id', 'channel', 'summary', 'ts', 'external_ref', 'receipt_ref'), contact_id=contact_id)
 
     def counts(self, contact_id: str) -> Dict[str, Any]:
-        self.purge_erased_sources(contact_id=contact_id)
+        self._reconcile_erasure_ids(contact_id)
         r = self._conn.execute(
             "SELECT SUM(direction='in') AS inbound, SUM(direction='out') AS outbound,"
             " COUNT(DISTINCT channel) AS channels FROM communications WHERE contact_id=?",
@@ -284,7 +319,7 @@ class CommsLog(SourceLinkedStore):
         the consumer shifts into the contact's timezone). Feeds the
         relationship profiler's approach guidance (preferred channel,
         best time to reach)."""
-        self.purge_erased_sources(contact_id=contact_id)
+        self._reconcile_erasure_ids(contact_id)
         rows = self._conn.execute(
             "SELECT channel, ts FROM communications"
             " WHERE contact_id=? AND ts >= datetime('now', ?)",
@@ -303,17 +338,16 @@ class CommsLog(SourceLinkedStore):
         """The newest exchanges across ALL contacts and channels, most recent
         first. The per-contact reads above answer 'how do I stand with X';
         this answers 'what has been flowing lately' for an ops ledger view."""
-        self.purge_erased_sources()
         limit = max(1, min(500, int(limit)))
-        rows = self._conn.execute(
-            "SELECT contact_id, channel, direction, summary, ts FROM communications"
-            " ORDER BY ts DESC LIMIT ?", (limit,)).fetchall()
-        return [dict(r) for r in rows]
+        return self._summary_rows(
+            "SELECT id,contact_id,source_lineage_json,channel,direction,summary,ts "
+            "FROM communications ORDER BY ts DESC LIMIT ?", (limit,),
+            ('contact_id', 'channel', 'direction', 'summary', 'ts'))
 
     def rollup(self, *, since_days: int = 30) -> Dict[str, Dict[str, int]]:
         """Inbound/outbound counts per channel over a window: the ledger's
         flow summary. ``{channel: {"in": n, "out": n}}``."""
-        self.purge_erased_sources()
+        self._reconcile_erasure_ids()
         rows = self._conn.execute(
             "SELECT channel, direction, COUNT(*) AS n FROM communications"
             " WHERE ts >= datetime('now', ?) GROUP BY channel, direction",

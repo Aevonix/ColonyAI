@@ -25,7 +25,8 @@ def turn(identifier, text, *, contact='person'):
 
 @pytest.mark.asyncio
 async def test_ordinary_capture_forget_removes_only_linked_summaries(source_app, tmp_path, monkeypatch):
-    log = CommsLog(str(tmp_path / 'communications.db'))
+    log = CommsLog(str(tmp_path / 'communications.db'),
+                   source_ledger=TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db'))
     monkeypatch.setattr(host, '_comms_log', log)
     log.log('person', summary='An older unlinked note.', session_id='shared-session')
     log.log_receipt(event_id='receipt-event', contact_id='person', channel='sms:fixture', direction='out',
@@ -52,7 +53,7 @@ async def test_ordinary_capture_forget_removes_only_linked_summaries(source_app,
             assert not db.execute("SELECT 1 FROM communications WHERE summary LIKE '%Copper inventory%'").fetchall()
         retry = await client.put('/v2/host/turns/first', json=turn('first', 'Copper inventory contains seven crates.'))
         assert retry.json()['source_recorded'] is False
-        reopened = CommsLog(log._db_path)
+        reopened = CommsLog(log._db_path, source_ledger=log._source_ledger)
         assert not any('Copper inventory' in row['summary'] for row in reopened.history('person'))
 
 
@@ -132,7 +133,8 @@ def test_legacy_rows_are_not_backlinked_by_identical_summary_or_session(tmp_path
 
 @pytest.mark.asyncio
 async def test_projection_cleanup_failure_stays_pending_and_read_retries(source_app, tmp_path, monkeypatch):
-    log = CommsLog(str(tmp_path / 'communications.db'))
+    log = CommsLog(str(tmp_path / 'communications.db'),
+                   source_ledger=TurnIdempotencyLedger(tmp_path / 'turn-idempotency.db'))
     monkeypatch.setattr(host, '_comms_log', log)
     async with AsyncClient(transport=ASGITransport(app=source_app), base_url='http://fixture') as client:
         await client.put('/v2/host/turns/first', json=turn('first', 'Copper inventory has seven crates.'))
@@ -180,3 +182,60 @@ async def test_configured_store_failure_remains_pending(source_app, tmp_path, mo
     assert result['source_erased'] and result['graph_cleanup'] == result['vector_cleanup'] == 'pending'
     graph.delete_source_memories.assert_awaited_once()
     vectors.erase_source_projections.assert_awaited_once()
+
+
+def test_unbound_foreign_profile_read_preserves_linked_rows(tmp_path, monkeypatch):
+    import apsimo
+    ledger, log, lineage = linked_log(tmp_path)
+    log.log('person', summary='A fact owned by the original profile.', source_lineage=lineage)
+    monkeypatch.setattr(apsimo, 'get_state_dir', lambda: tmp_path / 'unrelated-profile')
+    reopened = CommsLog(log._db_path)
+    for read in (lambda: reopened.history('person'), reopened.recent,
+                 lambda: reopened.counts('person'), reopened.purge_erased_sources):
+        with pytest.raises(ValueError, match='communications_source_ledger_required'):
+            read()
+        assert reopened._conn.execute('SELECT count(*) FROM communications').fetchone()[0] == 1
+    assert ledger.source_references(['original'], contact_id='person', session_id='session')
+    assert not (tmp_path / 'unrelated-profile').exists()
+    legacy = CommsLog(str(tmp_path / 'legacy-unlinked.db'))
+    legacy.log('person', summary='An unlinked historical entry.')
+    assert legacy.history('person')[0]['summary'] == 'An unlinked historical entry.'
+    assert legacy.counts('person')['inbound'] == 1
+
+
+def test_prose_validation_follows_selected_rows_not_whole_contact(tmp_path, monkeypatch):
+    _, log, lineage = linked_log(tmp_path)
+    for index in range(100):
+        log.log('person', channel='sms' if index % 2 else 'voice', direction='out',
+                summary='A neutral summary.', source_lineage=lineage)
+    selected_counts = []
+    validate = log._invalid_sources
+    def selected(rows, turn_ids=None):
+        selected_counts.append(len(rows))
+        return validate(rows, turn_ids)
+    monkeypatch.setattr(log, '_invalid_sources', selected)
+    assert len(log.history('person', limit=3)) == 3
+    assert log.last_outbound('person') is not None
+    assert len(log.last_per_channel('person')) == 2
+    assert len(log.recent(limit=2)) == 2
+    assert selected_counts == [3, 1, 2, 2]
+    assert log._conn.execute('SELECT count(*) FROM communications').fetchone()[0] == 100
+
+
+def test_metadata_aggregates_use_erasure_ids_without_hashing_source_text(tmp_path, monkeypatch):
+    import apsimo.turns.idempotency as sources
+    ledger, log, lineage = linked_log(tmp_path)
+    log.log('person', direction='out', summary='A linked summary.', source_lineage=lineage)
+    log.log('person', direction='in', summary='Independent unlinked history.')
+    with monkeypatch.context() as guard:
+        guard.setattr(sources, 'source_message_hash', lambda *a: pytest.fail('aggregate rehashed canonical text'))
+        assert log.counts('person') == {'inbound': 1, 'outbound': 1, 'channels': 1}
+        assert log.stats('person')['total'] == 2
+        assert log.rollup()['unknown'] == {'in': 1, 'out': 1}
+        assert len(log.inbound_since('person', '2020-01-01')) == 1
+    ledger.erase_sources(contact_id='person', turn_ids=['original'])
+    monkeypatch.setattr(sources, 'source_message_hash', lambda *a: pytest.fail('aggregate rehashed canonical text'))
+    assert log.counts('person') == {'inbound': 1, 'outbound': 0, 'channels': 1}
+    assert log.stats('person')['total'] == 1
+    assert log.rollup()['unknown'] == {'in': 1, 'out': 0}
+    assert log._conn.execute('SELECT count(*) FROM communications').fetchone()[0] == 1

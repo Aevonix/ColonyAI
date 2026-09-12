@@ -186,8 +186,14 @@ reconciliation. A repeated request retries the same derived cleanup targets.
 
 New ordinary communication summaries retain the canonical contact, turn, session
 and exact message hashes through the existing source-lineage reader. Erasure
-removes their incoming and outgoing summary rows; startup and summary reads
-reconcile missed cleanup, and writes check their source before and after insertion.
+removes their incoming and outgoing summary rows. Startup and explicit erasure
+perform full reconciliation. Reads reconcile existing erasure IDs, then validate
+only the prose rows selected by the query; count/date aggregates do not parse
+original conversation bodies. Writes check their source before and after insertion.
+Linked communication data requires an explicitly supplied canonical ledger.
+Opening an offline copy without that binding reports an error when linked data
+is read or reconciled; it never treats a different process-default profile as
+evidence of erasure. Existing unlinked-only reads remain compatible.
 Transport receipt metadata and unrelated contact history remain. The additive
 `communications_cleanup` field reports only `source_linked_summaries_only` scope.
 `communications_unlinked_rows` counts same-contact non-receipt summaries without
