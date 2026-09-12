@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import configparser
+from email.parser import BytesParser
 import importlib.util
 import json
 import os
@@ -11,6 +12,7 @@ import tarfile
 import zipfile
 
 import pytest
+import yaml
 from conftest import ROOT, run_python as run
 
 
@@ -29,13 +31,15 @@ def test_artifacts_contain_canonical_adapters_without_sidecar_or_worker(artifact
         names = archive.namelist()
         for destination, canonical in expected.items():
             assert archive.read(destination) == (ROOT / canonical).read_bytes()
-        assert "colony_memory/plugin.yaml" in names
+        metadata = BytesParser().parsebytes(archive.read(next(
+            name for name in names if name.endswith(".dist-info/METADATA")
+        )))
+        for package in ("apsimo_hermes", "apsimo_memory", "colony_hermes", "colony_memory"):
+            manifest = yaml.safe_load(archive.read(f"{package}/plugin.yaml"))
+            assert manifest["version"] == metadata["Version"], package
         assert "apsimo_memory/SKILL.md" in names
-        assert "apsimo_memory/plugin.yaml" in names
-        assert "apsimo_hermes/plugin.yaml" in names
         assert "colony_memory/provider.py" not in names
         assert "colony_hermes/client.py" not in names
-        assert "colony_hermes/plugin.yaml" in names
         assert not any(
             "colony_sidecar" in name or name.startswith("apsimo/") or "/worker.py" in name or "/ops/" in name
             or "hermes-context" in name for name in names
