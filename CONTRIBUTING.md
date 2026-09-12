@@ -101,7 +101,7 @@ on PyPI with the same version. `apsimo-hostworker` has its own package version. 
 
 ## Release flow
 
-1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra. Bump `hostworker/pyproject.toml` only for an independent hostworker release.
+1. Bump the synchronized versions in `pyproject.toml` and `sidecar/pyproject.toml`, including the `hermes` extra, and the four adapter manifests under `plugins/hermes-plugin`, `plugins/apsimo-memory`, `compat/colony_hermes` and `compat/colony_memory`. Bump `hostworker/pyproject.toml` only for an independent hostworker release.
 2. Add an entry at the top of `CHANGELOG.md` (`## vX.Y.Z — title`, prose + bullets)
 3. Commit and tag: `git tag vX.Y.Z && git push --tags`
 4. CI (`.github/workflows/release.yml`) publishes to PyPI, pushes the Docker
