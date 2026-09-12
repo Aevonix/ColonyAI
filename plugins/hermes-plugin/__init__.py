@@ -2930,6 +2930,8 @@ def register(ctx: Any) -> None:
         return None  # No provider request changes.
     ctx.register_middleware("llm_request", capture_review_parent)
     ctx.register_middleware('llm_request', reconcile_request)
+    from .skill_context import SkillContext
+    ctx.register_middleware('llm_request', SkillContext())
     ctx.register_hook("transform_llm_output", transform_llm_output)
     ctx.register_hook("post_llm_call", post_llm_call)
     def detached_turn_end(**kwargs):
