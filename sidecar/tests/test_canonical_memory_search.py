@@ -146,6 +146,47 @@ async def test_search_uses_real_semantic_index_and_keeps_lexical_on_model_swap(m
 
 
 @pytest.mark.asyncio
+async def test_unprojected_lance_table_is_not_healthy_empty_search(memory_app, tmp_path, monkeypatch):
+    from apsimo import vector
+    from apsimo.vector import Collection
+    app, _ = memory_app
+    _, store, pipeline, projection = await setup(tmp_path)
+    monkeypatch.setattr(vector, 'get_store', lambda: store)
+    monkeypatch.setattr(vector, 'get_pipeline', lambda: pipeline)
+    queries = []
+    original_embed = pipeline.embed_query
+
+    async def embed(query):
+        queries.append(query)
+        return await original_embed(query)
+
+    monkeypatch.setattr(pipeline, 'embed_query', embed)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test',
+                           headers={'Authorization': 'Bearer person'}) as client:
+        empty = await search(client, query='unmatched vermilion planet')
+        assert empty['count'] == 0 and empty['retrieval']['semantic'] == 'ready'
+        assert queries == ['unmatched vermilion planet']
+
+        # Keep the real active generation and remove only its required source
+        # projection column. An incompatible table must not look like no hits.
+        table = await store._table(Collection.CONVERSATIONS)
+        await table.drop_columns(['scope_key'])
+        lexical = await search(client)
+        assert 'Friday at nine' in lexical['content']
+        assert 'amber' not in lexical['content'] and 'cobalt' not in lexical['content']
+        assert lexical['retrieval']['semantic'] == 'failed'
+        assert queries == ['unmatched vermilion planet']  # No unnecessary inference.
+
+        # The existing projection worker supplies the missing column and
+        # records. A later semantic query recovers without another readiness API.
+        await drain(projection)
+        restored = await search(client, query='vessel departure identifier')
+        assert 'Friday at nine' in restored['content']
+        assert restored['retrieval']['semantic'] == 'ready'
+        assert queries == ['unmatched vermilion planet', 'vessel departure identifier']
+
+
+@pytest.mark.asyncio
 async def test_erasure_during_semantic_await_never_returns_stale_excerpt(memory_app, tmp_path, monkeypatch):
     from apsimo import vector
     app, _ = memory_app
