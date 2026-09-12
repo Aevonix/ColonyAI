@@ -51,6 +51,31 @@ def _available_retention(request):
     return None
 
 
+def _ordinary_native_origin(scope):
+    """Transport identity cannot turn a native worker into an owner conversation.
+
+    The native session origin survives kanban_complete clearing its claim/run.
+    Read that exact session, not a task's current status or model-supplied fields.
+    Child execution can inherit a parent's transport and source; its native
+    ContextVar also has to agree before borrowing any ordinary-turn receipt.
+    """
+    try:
+        from agent.delegation_context import is_delegated_child_process_context
+        from gateway.session_context import get_session_env
+        from hermes_state import _default_db_path
+        if is_delegated_child_process_context():
+            return False
+        source = str(get_session_env('HERMES_SESSION_SOURCE', '') or '').strip()
+        if source and source != scope.platform:
+            return False
+        path = _default_db_path().resolve()
+        with closing(sqlite3.connect(path.as_uri()+'?mode=ro', uri=True, timeout=.25)) as db:
+            row = db.execute('SELECT source FROM sessions WHERE id=?', (scope.session_id,)).fetchone()
+        return bool(row and row[0] == scope.platform)
+    except (ImportError, OSError, sqlite3.Error):
+        return False
+
+
 def _key(scope):
     if (scope is None or not scope.valid_participant or scope.authority_lane not in {'owner', 'system'}
             or scope.platform in {'cron', 'subagent', 'background_review', 'pacomind_task'}
@@ -60,7 +85,7 @@ def _key(scope):
             or not all(getattr(scope, name, '') for name in ('contact_id', 'session_id', 'task_id', 'turn_id'))):
         return None
     from .input_provenance import current
-    if current() is not None:
+    if current() is not None or not _ordinary_native_origin(scope):
         return None
     return scope.contact_id, scope.session_id, scope.task_id, scope.turn_id
 
@@ -234,7 +259,9 @@ class ToolObservations:
 
     def handle(self, args, scope, context):
         key = _key(scope)
-        if (key is None or not isinstance(args, dict) or set(args) != {'call_id', 'reason'}
+        if key is None:
+            return json.dumps({'accepted': False, 'error': 'Retention requires an ordinary authenticated owner conversation with matching native session origin'})
+        if (not isinstance(args, dict) or set(args) != {'call_id', 'reason'}
                 or not isinstance(args['call_id'], str) or not 1 <= len(args['call_id']) <= 256
                 or not isinstance(args['reason'], str) or not args['reason'].strip() or len(args['reason']) > 512):
             return json.dumps({'accepted': False, 'error': 'Nominate one completed current owner-turn call and a bounded future-use reason'})

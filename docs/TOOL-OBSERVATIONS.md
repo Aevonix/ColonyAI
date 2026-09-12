@@ -63,6 +63,14 @@ tool responses, background workers and derived tasks are outside this first
 route. Those limits do not replace the broader cross-channel and worker memory
 goals. There is no bulk tool-result ingestion or new memory database.
 
+Eligibility uses the authenticated transport and the origin recorded in the
+exact native session, together with Hermes' delegated-child execution context.
+A CLI worker whose native origin is `kanban` remains a worker after completing
+its task and releasing its claim. A custom qualification origin is likewise
+not an ordinary CLI conversation. Nomination arguments cannot change either
+origin. Missing or unavailable native origin evidence does not authorize
+retention. The separate attested task-completion report path is unchanged.
+
 Nominate meaningful outcomes and durable findings. Skip incidental output,
 repeated status, secrets and information with no likely future use. The tool's
 normal description supplies that guidance. Model nomination quality requires a
