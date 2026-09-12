@@ -33,18 +33,14 @@ def _runtime(supplied, explicit_python):
         if not selected:
             raise FileNotFoundError('No selected Hermes interpreter')
         python = str(Path(selected).expanduser().absolute())
-        # Metadata only in the selected native interpreter. No Hermes imports or profile state.
-        code = ('import hashlib,importlib.util,json,pathlib,sys; '
-                's=importlib.util.find_spec("run_agent"); '
-                'p=pathlib.Path(s.origin) if s and s.origin else None; '
-                'print(json.dumps({"python":sys.executable,"python_version":sys.version.split()[0],'
-                '"native_source_sha256":hashlib.sha256(p.read_bytes()).hexdigest() if p else None}))')
+        # Inspect the actual selected payload, including editable sources, without imports.
+        inspector = Path(__file__).with_name('native_identity.py')
         with tempfile.TemporaryDirectory(prefix='pacomind-native-inspect-') as home:
-            probe = subprocess.run([python, '-I', '-c', code], cwd=home,
+            probe = subprocess.run([python, '-I', '-B', str(inspector)], cwd=home,
                 env=_environment(Path(home), {'providers': {}}), capture_output=True, text=True, timeout=5)
         info = json.loads(probe.stdout) if probe.returncode == 0 else {}
-        if not info.get('native_source_sha256'):
-            raise ModuleNotFoundError('Selected interpreter has no Hermes runtime')
+        if not info.get('native_payload_sha256'):
+            raise ModuleNotFoundError('Selected Hermes runtime has no inspectable distribution inventory')
         return {**info, 'status': 'ready'}
     except (OSError, ValueError, subprocess.TimeoutExpired, ModuleNotFoundError) as exc:
         return {'status': 'unavailable', 'error_type': type(exc).__name__, 'python': str(selected) if selected else None}
@@ -73,6 +69,15 @@ def configuration(path, binding, *, hermes_python=None):
     selected = {'model': {'provider': binding, 'default': model}, 'providers': {binding: provider},
         'agent': {**reasoning, 'environment_probe': False, 'api_max_retries': 0},
         'auxiliary': {'title_generation': {'enabled': False}}, 'fallback_providers': []}
+    # Named endpoints resolve to the custom transport. Keep its timeout fallback
+    # separate so Hermes retains per-model/named-provider precedence. Do not copy
+    # an unrelated custom endpoint or its credentials into the isolated profile.
+    custom = supplied.get('providers', {}).get('custom', {})
+    defaults = {k: deepcopy(custom[k]) for k in
+                ('request_timeout_seconds', 'stale_timeout_seconds', 'models')
+                if isinstance(custom, dict) and k in custom}
+    if binding != 'custom' and defaults:
+        selected['providers']['custom'] = defaults
     if isinstance(current, dict) and current.get('provider') == binding and 'context_length' in current:
         selected['model']['context_length'] = current['context_length']
     runtime = _runtime(supplied, hermes_python)
@@ -81,8 +86,8 @@ def configuration(path, binding, *, hermes_python=None):
         'boundary': 'native_hermes', 'consumer': 'isolated_native_cli_loop',
         'native_runtime': runtime,
         'native_worker_sha256': hashlib.sha256(Path(__file__).with_name('native_worker.py').read_bytes()).hexdigest(),
-        'request_timeout_seconds': provider.get('request_timeout_seconds'),
-        'stale_timeout_seconds': provider.get('stale_timeout_seconds'),
+        'request_timeout_seconds': provider.get('request_timeout_seconds', defaults.get('request_timeout_seconds')),
+        'stale_timeout_seconds': provider.get('stale_timeout_seconds', defaults.get('stale_timeout_seconds')),
         'returned_model': None, 'observed_weight_revision': None,
         'basis': 'configured CLI-loop recipe; no gateway, channel, tool or memory qualification'}
     return selected, recipe
@@ -166,6 +171,10 @@ async def native_cli(inputs, context):
                 await proc.wait()
             raise
         finally:
+            spawn_error = (spawning.exception() if proc is None and spawning.done()
+                           and not spawning.cancelled() else None)
+            no_child = spawn_error is not None
+            observed['process_spawn_failed'] = no_child
             observed['process_exited'] = proc is not None and proc.returncode is not None
             observed['exit_code'] = proc.returncode if proc else None
             result_path = state/'native-result.json'
@@ -179,11 +188,13 @@ async def native_cli(inputs, context):
                 hard_interrupt_requested=result.get('hard_interrupt_requested', False),
                 owned_worker_stopped=result.get('worker_stopped', False),
                 agent_close_returned=result.get('agent_close_returned', False),
-                error_type=result.get('error_type'), configured_model=result.get('model'))
+                error_type=type(spawn_error).__name__ if no_child else result.get('error_type'),
+                configured_model=result.get('model'))
             observed['native_turn'] = result.get('turn')
             if observed['outcome'] != 'cancelled':
                 observed['outcome'] = result.get('stage', 'error')
-            context.state_cleanup_safe = clean and observed['process_exited'] and not observed['forced_termination']
+            context.state_cleanup_safe = no_child or (
+                clean and observed['process_exited'] and not observed['forced_termination'])
             observed['elapsed_ms'] = round((time.monotonic()-started)*1000, 3)
             context.observe(observed)
     if proc.returncode != 0 or result.get('stage') != 'returned':

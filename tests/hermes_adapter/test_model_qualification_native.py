@@ -97,7 +97,7 @@ def arguments(config, output, *, deadline=8, cleanup=5):
     return parser.parse_args(['models', 'evaluate', 'fixture', '--suite', 'native',
         '--config', str(config), '--output', str(output), '--evidence-mode', 'controlled',
         '--hermes-python', sys.executable,
-        '--deadline-seconds', str(deadline), '--cleanup-seconds', str(cleanup)])
+        '--deadline-seconds='+str(deadline), '--cleanup-seconds', str(cleanup)])
 
 
 def test_cli_native_case_runs_actual_loop_in_fresh_home_and_keeps_scope_honest(tmp_path, monkeypatch):
@@ -204,7 +204,8 @@ def test_recorded_separate_hermes_python_needs_no_pacomind_install(tmp_path):
         assert run(args) == 0
         runtime = read(output/'run.json')['recipe']['native_runtime']
         assert runtime['python'] == str(python) and runtime['python'] != sys.executable
-        assert runtime['native_source_sha256']
+        assert runtime['native_payload_sha256']
+        assert {'run_agent', 'hermes_cli', 'hermes_constants', 'agent'} <= runtime['native_modules'].keys()
         assert len(requests) == 1
 
 
@@ -275,6 +276,154 @@ async def _native_cancellation_records_real_interruption_and_exit(tmp_path):
 def test_incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch):
     import asyncio
     asyncio.run(_incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch))
+
+
+@pytest.mark.parametrize('named, expected', [({}, [.2, .3]),
+    ({'request_timeout_seconds': .4}, [.4, .3]),
+    ({'models': {'native-fixture': {'timeout_seconds': .6, 'stale_timeout_seconds': .7}}}, [.6, .7])])
+def test_shared_custom_defaults_preserve_actual_native_timeout_resolution(tmp_path, named, expected):
+    import subprocess
+    from pacomind.qualification.native import _environment
+    path = configured(tmp_path, 'http://127.0.0.1:9/v1')
+    document = json.loads(path.read_text())
+    for key in ('request_timeout_seconds', 'stale_timeout_seconds'):
+        document['providers']['fixture'].pop(key)
+    document['providers']['fixture'].update(named)
+    defaults = {'request_timeout_seconds': .2,
+        'models': {'native-fixture': {'stale_timeout_seconds': .3}}}
+    document['providers']['custom'] = {**defaults, 'api_key': 'unrelated-custom-credential'}
+    path.write_text(json.dumps(document))
+    selected, recipe = configuration(path, 'fixture', hermes_python=sys.executable)
+    assert selected['providers']['custom'] == defaults
+    assert recipe['request_timeout_seconds'] == named.get('request_timeout_seconds', .2)
+    # Use the actual selected runtime's resolver, including its named endpoint
+    # canonicalization and per-model precedence; no server or generation is needed.
+    code = ('import json; from hermes_cli.timeouts import '
+        'get_provider_request_timeout as request,get_provider_stale_timeout as stale; '
+        'print(json.dumps([f("custom","native-fixture",requested_provider="fixture") '
+        'for f in (request,stale)]))')
+    for label, config in [('original', document), ('isolated', selected)]:
+        home = tmp_path/label
+        home.mkdir()
+        (home/'config.yaml').write_text(json.dumps(config))
+        result = subprocess.run([sys.executable, '-I', '-B', '-c', code], cwd=home,
+            env=_environment(home, config), capture_output=True, text=True, timeout=5)
+        assert result.returncode == 0, result.stderr
+        assert json.loads(result.stdout) == expected
+
+
+@pytest.mark.parametrize('deadline', [-1, 0, float('nan'), float('inf'), -float('inf')])
+def test_invalid_native_deadline_creates_no_run(tmp_path, monkeypatch, deadline):
+    config = configured(tmp_path, 'http://127.0.0.1:9/v1')
+    output = tmp_path/'invalid-run'
+    async def forbidden_spawn(*args, **kwargs):
+        pytest.fail('Invalid deadline must not spawn native work')
+    monkeypatch.setattr('pacomind.qualification.native.asyncio.create_subprocess_exec', forbidden_spawn)
+    with pytest.raises(ValueError, match='Case deadline'):
+        run(arguments(config, output, deadline=deadline))
+    assert not output.exists()
+
+
+@pytest.mark.parametrize('spawn_delay', [0, .2])
+def test_spawn_failure_without_child_removes_state_and_allows_later_case(tmp_path, monkeypatch, spawn_delay):
+    import asyncio
+    from pacomind.qualification import native
+    from pacomind.qualification.cases import EVALUATORS
+    from pacomind.qualification.runner import evaluate
+
+    async def attempt():
+        calls = []
+
+        async def unavailable(*args, **kwargs):
+            calls.append(args)
+            await asyncio.sleep(spawn_delay)
+            raise FileNotFoundError('Controlled disappeared interpreter')
+
+        config, recipe = configuration(configured(tmp_path, 'http://127.0.0.1:9/v1'),
+            'fixture', hermes_python=sys.executable)
+        monkeypatch.setattr(native.asyncio, 'create_subprocess_exec', unavailable)
+        case = native.cases(['chat'], deadline_seconds=.1)[0]
+        output = tmp_path/'spawn-run'
+        await evaluate(output, recipe, [case, replace(case, id='later')], {'native_cli': native_cli},
+            EVALUATORS, lambda _: native_context(config, recipe))
+        assert len(calls) == 2
+        for name in (case.id, 'later'):
+            row = read(output/'attempts'/name/'result.json')
+            assert row['outcome'] != 'pass' and row['output'] is None
+            assert row['cleanup'] == 'state_directory_removed'
+            assert not row['observations'][0]['process_exited']
+            assert row['observations'][0]['process_spawn_failed']
+            assert row['observations'][0]['error_type'] == 'FileNotFoundError'
+            assert not list((output/'attempts'/name).glob('state-*'))
+
+    asyncio.run(attempt())
+
+
+def test_selected_runtime_identity_tracks_dependency_bytes_and_blocks_changed_resume(tmp_path):
+    import asyncio
+    import venv
+    from pacomind.qualification import native
+    from pacomind.qualification.cases import EVALUATORS
+    from pacomind.qualification.runner import evaluate
+
+    # A selected editable-style installation. Importing any fixture module is an
+    # error; the metadata probe must only inspect its declared source/data bytes.
+    home = tmp_path/'identity-python'
+    venv.EnvBuilder(with_pip=False, symlinks=True).create(home)
+    site = home/f'lib/python{sys.version_info.major}.{sys.version_info.minor}/site-packages'
+    source = tmp_path/'native-source'
+    source.mkdir()
+    for name in ('run_agent.py', 'hermes_constants.py', 'utils.py', 'agent/__init__.py',
+                 'agent/client.py', 'hermes_cli/__init__.py', 'hermes_cli/config.py',
+                 'hermes_cli/runtime_provider.py'):
+        path = source/name
+        path.parent.mkdir(exist_ok=True)
+        path.write_text('raise AssertionError("Metadata must not import Hermes")\n')
+    (source/'hermes_cli/providers.json').write_text('{"fixture": 1}\n')
+    (site/'selected-native.pth').write_text(str(source)+'\n')
+    dist = site/'hermes_agent-0.1.dist-info'
+    dist.mkdir()
+    (dist/'METADATA').write_text('Name: hermes-agent\nVersion: 0.1\n')
+    (dist/'top_level.txt').write_text('run_agent\nhermes_constants\nagent\nhermes_cli\nutils\n')
+    python = home/'bin/python'
+    original = native._runtime({}, python)
+    assert original['status'] == 'ready'
+    assert original['native_modules']['hermes_cli']['files'] == 4
+    # Package caches and external profiles do not identify the source recipe.
+    cache = source/'agent/__pycache__'
+    cache.mkdir()
+    (cache/'client.pyc').write_bytes(b'not source')
+    (home/'SOUL.md').write_text('Unrelated profile')
+    assert native._runtime({}, python) == original
+    for name in ('hermes_cli/config.py', 'hermes_cli/runtime_provider.py',
+                 'hermes_constants.py', 'agent/client.py', 'utils.py', 'hermes_cli/providers.json'):
+        path = source/name
+        before = path.read_bytes()
+        path.write_bytes(before+b'\n')
+        changed = native._runtime({}, python)
+        assert changed['status'] == 'ready'
+        assert changed['native_payload_sha256'] != original['native_payload_sha256']
+        assert changed['native_modules']['run_agent'] == original['native_modules']['run_agent']
+        path.write_bytes(before)
+
+    async def returned(inputs, context):
+        return {'output': '{"blue":"drawer 4","silver":null}'}
+
+    async def check_resume():
+        output = tmp_path/'identity-run'
+        case = native.cases(['chat'])[0]
+        recipe = {'binding': 'fixture', 'native_runtime': original}
+        await evaluate(output, recipe, [case], {'native_cli': returned}, EVALUATORS, lambda _: None)
+        first = (output/'attempts'/case.id/'result.json').read_bytes()
+        changed_path = source/'hermes_cli/runtime_provider.py'
+        changed_path.write_bytes(changed_path.read_bytes()+b'\n')
+        changed_recipe = {**recipe, 'native_runtime': native._runtime({}, python)}
+        with pytest.raises(ValueError, match='identical recipe'):
+            await evaluate(output, changed_recipe, [case], {'native_cli': returned}, EVALUATORS,
+                           lambda _: None, resume=True)
+        assert (output/'attempts'/case.id/'result.json').read_bytes() == first
+
+    asyncio.run(check_resume())
 
 
 async def _incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch):
