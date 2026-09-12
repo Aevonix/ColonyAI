@@ -14,6 +14,8 @@ from pathlib import Path
 from types import SimpleNamespace as NS
 sys.path.insert(0, sys.argv[1])
 if sys.argv[2]: sys.path.append(sys.argv[2])
+if os.environ.get('PACOMIND_TEST_HERMES_PATH'):
+    sys.path.insert(0, os.environ['PACOMIND_TEST_HERMES_PATH'])
 def no_network(*args, **kwargs): raise AssertionError('No network in native board fixture')
 socket.socket.connect = no_network
 from hermes_cli import kanban_db as kb
@@ -22,9 +24,9 @@ from httpx import ASGITransport, AsyncClient
 from pacomind.api.authority import RequestAuthority
 from pacomind.api.routers import executions, host
 from pacomind.turns.hermes_kanban import kanban_view
-from pacomind.turns.executions import format_view
+from pacomind.turns.executions import format_view, request_work_context
 root = Path(os.environ['HERMES_HOME']); root.mkdir()
-(root/'config.yaml').write_text('plugins: {enabled: []}\n')
+(root/'config.yaml').write_text('plugins: {enabled: []}\ntoolsets: [kanban]\n')
 state = Path(os.environ['PACOMIND_STATE_DIR']); state.mkdir()
 kb.create_board('operations')
 kb.create_board('unselected')
@@ -98,9 +100,30 @@ async def observe():
             'session_id':'independent-session-b','projection':'request'})).json()
         assert task in after['text'] and '"status": "done"' in after['text']
         assert '"status": "running"' not in after['text']
-        assert 'PRIVATE_RESULT_PROSE' not in after['text'] and 'PRIVATE_TASK_BODY' not in after['text']
+        assert 'PRIVATE_RESULT_PROSE' in after['text'] and 'PRIVATE_TASK_BODY' not in after['text']
+        assert 'worker report; external effects not verified' in after['text']
+        assert '"truncated": false' in after['text']
         full = (await client.get('/v1/host/executions',params={'contact_id':'owner'})).json()
         assert 'Compare current release manifests' in format_view(full)
+        assert 'PRIVATE_RESULT_PROSE' in format_view(full)
+        completed = full['native_kanban']['recent'][0]
+        assert completed['native_run_id'] is None and completed['native_run_status'] is None
+        outcome = completed['terminal_result']
+        assert outcome['run_id'] == run_id and outcome['status'] == 'done'
+        assert outcome['outcome'] == 'completed' and outcome['summary'] == 'PRIVATE_RESULT_PROSE'
+        assert outcome['summary_chars'] == len('PRIVATE_RESULT_PROSE') and not outcome['truncated']
+        # The existing native reader accepts this exact board/task reference
+        # from an ordinary owner profile, with no worker environment binding.
+        from tools.kanban_tools import _handle_show, _check_kanban_mode
+        from tools.kanban_tools_schemas import KANBAN_SHOW_SCHEMA
+        assert _check_kanban_mode()
+        assert set(outcome['reader']['arguments']) <= set(KANBAN_SHOW_SCHEMA['parameters']['properties'])
+        opened = json.loads(_handle_show(outcome['reader']['arguments']))
+        matching = next(row for row in opened['runs'] if row['id'] == run_id)
+        assert matching['summary'] == 'PRIVATE_RESULT_PROSE'
+        guest = (await client.get('/v1/host/executions',headers={'fixture-person':'guest'},
+            params={'contact_id':'guest','session_id':'other','projection':'request'})).json()
+        assert 'PRIVATE_RESULT_PROSE' not in json.dumps(guest) and task not in json.dumps(guest)
         assert full['native_kanban']['complete'] is False
 asyncio.run(observe())
 
@@ -118,6 +141,49 @@ assert record['status'] == 'archived' and record['native_run_id'] is None
 assert record['native_run_status'] is None
 assert record['completed_at'] is None and record['terminal_record_at'] == archive_at
 assert record['liveness'] == 'native_terminal_record' and view['recent_total'] == 2
+assert 'terminal_result' not in record
+
+# A long completed report remains a bounded prefix with a working full reader.
+with kb.connect(board='operations') as db:
+    long_task = kb.create_task(db, title='Retained long handoff', assignee='default', board='operations')
+    long_run = kb.claim_task(db, long_task).current_run_id
+    long_summary = 'Useful first finding. ' + ('quoted "字" \\n' * 400) + ' Final finding.'
+    assert kb.complete_task(db, long_task, summary=long_summary, expected_run_id=long_run,
+                            fire_lifecycle_hook=False)
+long_row = next(row for row in kanban_view()['recent'] if row['native_task_id'] == long_task)
+outcome = long_row['terminal_result']
+assert outcome['summary'] == long_summary[:1200] and outcome['truncated']
+assert outcome['summary_chars'] == len(long_summary)
+from tools.kanban_tools import _handle_show
+opened = json.loads(_handle_show(outcome['reader']['arguments']))
+assert next(row for row in opened['runs'] if row['id'] == long_run)['summary'] == long_summary
+projected = request_work_context({'items': [], 'native_kanban': {
+    'available': True, 'items': [], 'recent': [long_row], 'boards': []}}, max_chars=1800)
+assert len(projected['text']) <= 1800
+shown = next(json.loads(line) for line in projected['text'].splitlines()
+             if line.startswith('{') and 'terminal_result' in line)
+assert shown['terminal_result']['truncated'] and shown['terminal_result']['summary_chars'] == len(long_summary)
+assert long_summary.startswith(shown['terminal_result']['summary'])
+assert shown['terminal_result']['reader'] == outcome['reader']
+assert long_row['terminal_result']['summary'] == long_summary[:1200], 'Rendering cannot mutate the source view'
+
+# Reopened native-schema state, followed by a real new claim and archive.
+with kb.connect(board='operations') as db:
+    db.execute("UPDATE tasks SET status='ready',completed_at=NULL WHERE id=?", (task,))
+    db.commit()
+    second_run = kb.claim_task(db, task).current_run_id
+    assert second_run != run_id
+active_row = next(row for row in kanban_view()['items'] if row['native_task_id'] == task)
+assert active_row['native_run_id'] == second_run and 'terminal_result' not in active_row
+with kb.connect(board='operations') as db:
+    assert kb.archive_task(db, task)
+archived_row = next(row for row in kanban_view()['recent'] if row['native_task_id'] == task)
+assert archived_row['status'] == 'archived' and 'terminal_result' not in archived_row
+# Archiving the completed task itself must also not relabel its old report.
+with kb.connect(board='operations') as db:
+    assert kb.archive_task(db, long_task)
+assert 'terminal_result' not in next(row for row in kanban_view()['recent']
+                                   if row['native_task_id'] == long_task)
 
 # Read-only snapshots preserve the actual native file, and expose omissions.
 with kb.connect(board='operations') as db:
@@ -145,6 +211,8 @@ def test_actual_native_general_task_observed_across_sessions(tmp_path):
         HERMES_BUNDLED_PLUGINS=str(tmp_path/'bundled'),PYTHONDONTWRITEBYTECODE='1',
         HERMES_DISABLE_TELEMETRY='1',HERMES_DISABLE_LAZY_INSTALLS='1',
         PACOMIND_SKIP_DOTENV='1',PYTHON_DOTENV_DISABLED='1',LITELLM_LOCAL_MODEL_COST_MAP='True')
+    if os.environ.get('PACOMIND_TEST_HERMES_PATH'):
+        env['PACOMIND_TEST_HERMES_PATH'] = os.environ['PACOMIND_TEST_HERMES_PATH']
     result = subprocess.run([python,'-I','-B','-c',PROBE,str(root/'sidecar'),
                              os.environ.get('PACOMIND_TEST_DEPENDENCY_PATH','')],
         cwd=tmp_path,env=env,capture_output=True,text=True,timeout=60)

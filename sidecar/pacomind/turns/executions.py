@@ -357,6 +357,10 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
                 digest = result.get('report_sha256')
                 if isinstance(digest, str) and len(digest) == 64 and all(c in '0123456789abcdef' for c in digest):
                     item['report_sha256'] = digest
+            if source == 'native_kanban' and isinstance(row.get('terminal_result'), dict):
+                # Native task completion clears current_run_id. Keep the
+                # separately bound completed attempt and its existing reader.
+                item['terminal_result'] = dict(row['terminal_result'])
             assessment = row.get('semantic_review')
             if isinstance(assessment,dict):
                 item['semantic_review'] = {key:assessment[key] for key in
@@ -421,6 +425,24 @@ def request_work_context(view: dict, *, limit: int = 8, max_chars: int = 4000,
                        if current['source'] == 'execution' else None)
         bundle.reverse()
         lines = ''.join(line_for(row) for row in bundle)
+        result = item.get('terminal_result')
+        if result is not None and len(text) + len(lines) > max_chars - 200:
+            # Preserve an exact prefix and explicit incompleteness within the
+            # same budget. A long result must not hide its task/run/reader.
+            summary = result['summary']
+            result['summary'] = ''
+            result['truncated'] = result['summary_chars'] > 0
+            low, high = 0, len(summary)
+            while low < high:
+                mid = (low + high + 1) // 2
+                result['summary'] = summary[:mid]
+                if len(text) + sum(len(line_for(row)) for row in bundle) <= max_chars - 200:
+                    low = mid
+                else:
+                    high = mid - 1
+            result['summary'] = summary[:low]
+            result['truncated'] = low < result['summary_chars']
+            lines = ''.join(line_for(row) for row in bundle)
         if shown + len(bundle) > limit or len(text) + len(lines) > max_chars - 200:
             return
         text += lines
