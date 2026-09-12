@@ -34,6 +34,22 @@ context=ApsimoMemoryProvider.__new__(ApsimoMemoryProvider)._format_sections(sect
 assert 'behavioral_correction' not in context and 'Available Skills' not in context,context
 from agent.prompt_builder import build_skills_system_prompt
 from tools.skills_tool import skills_list,skill_view
+# Derive availability from native selected schemas, including an explicit
+# deferral override. A bridge or a group summary alone grants no skill tool.
+from apsimo_hermes.skill_context import SkillContext, _tool_names
+from model_tools import get_tool_definitions
+from tools.tool_search import ToolSearchConfig, assemble_tool_defs, bridge_tool_schemas
+definitions=get_tool_definitions(enabled_toolsets=['skills'],quiet_mode=True,skip_tool_search_assembly=True)
+deferred=assemble_tool_defs(definitions,config=ToolSearchConfig.from_raw({
+    'enabled':'on','defer':['skills_list','skill_view','skill_manage']})).tool_defs
+assert 'skill_view' not in {row['function']['name'] for row in deferred}
+assert 'skill_view' in _tool_names({'tools':deferred})
+disabled=get_tool_definitions(enabled_toolsets=['skills'],disabled_toolsets=['skills'],
+    quiet_mode=True,skip_tool_search_assembly=True)
+for unavailable in ({'tools':None},{'tools':disabled},{'tools':bridge_tool_schemas(3)},
+        {'tools':deferred,'tool_choice':'none'},
+        {'tools':[row for row in definitions if row['function']['name']!='skill_view']}):
+    assert SkillContext()(unavailable) is None,unavailable
 catalog=build_skills_system_prompt(available_tools={'skills_list','skill_view'},
     skills_dir_override=home/'skills')
 assert 'manual-index' in catalog and 'Organize printed manuals with colored tabs.' in catalog,catalog

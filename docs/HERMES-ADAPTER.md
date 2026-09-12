@@ -77,11 +77,38 @@ not replace the profile's skill; run `--skills-only` explicitly for that update.
 Hermes advertises the name and short description in its compact skill index;
 `skills_list` discovers it and `skill_view(name="apsimo-deep-research")` loads
 the full instructions on demand. The installer does not inject the body into
-every prompt or enable otherwise disabled skill tools. Hermes 0.21.2 caches
-both the index in process memory and existing session prompts: use a fresh
-process **and** a new session after installation. For a running gateway, use
-its normal restart lifecycle and then a new conversation. No process is
-restarted by this command, and stored conversation prompts are not rewritten.
+every prompt or enable otherwise disabled skill tools.
+
+With this adapter version active, Apsimo refreshes skill discovery in ongoing
+conversations. Before a model request it checks the current native skill
+locations and disabled state, hashes changed files including instruction bodies,
+and invalidates the native index/list caches when their inputs change. This
+covers ordinary profile skills created with Hermes tools as well as bundles.
+Unchanged skills retain their caches. A compact request-only notice supplies
+changed descriptions, identifies removed or disabled skills, and asks for a new
+`skill_view` before using stale loaded instructions. A current complete native
+tool result clears that skill's reload notice. Full bodies still arrive only
+through native skill loading.
+
+Native loading can preprocess templates, so returned instructions need not
+equal the raw file bytes. A new successful native load after Apsimo observed
+the same unchanged file version also settles the notice. A restored transformed
+copy without that observation requires one reload; Apsimo does not execute
+template commands to compare it.
+
+Refresh requires `skill_view` to be available directly or named in Hermes'
+current deferred-tool catalog. The default native configuration exposes skill
+tools directly. Explicit deferral works with full or names-only catalogs; a
+group-only or omitted catalog cannot establish an individual tool's availability,
+so Apsimo does not infer access or announce reloads from those summaries.
+
+Hermes' original session prompt and historical tool results remain stored
+unchanged. Current discovery notices explicitly supersede their stale skill
+information; no global conversation rewrite or new chat is required. Selecting
+this adapter code initially still uses the normal runtime activation lifecycle.
+Afterward, skill file changes require no process restart. Installing skills alone
+does not enable Apsimo in an otherwise native-only profile; that profile retains
+Hermes' own cache behavior. The installer never restarts a process.
 
 Built-artifact tests exercise native discovery and deliver the loaded skill
 through the real Hermes tool loop into a controlled SDK request. This proves

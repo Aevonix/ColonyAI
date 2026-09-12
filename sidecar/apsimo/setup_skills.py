@@ -87,4 +87,4 @@ def install(updates):
                 directory.rmdir()
         raise
     names = sorted({path.parent.name for path, _, _ in updates})
-    print('Bundled skills available: '+', '.join(names)+'. Use a fresh Hermes process and session to refresh the skill index.')
+    print('Bundled skills available: '+', '.join(names)+'. With this Apsimo adapter version active, ongoing conversations refresh skill discovery on their next request.')
