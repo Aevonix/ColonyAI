@@ -44,14 +44,7 @@ make learning and continuity survive changes to those models.
 | Background deliberation | Reviews the agent's situation and proposes work through the existing initiative path. Its operating mode and cadence belong to the deployment. |
 | Learning | Uses ordinary experience to improve remembered knowledge and preferences. Skill proposals, evaluation and rollback provide a path toward broader improvements. Reliable autonomous self-improvement remains a development goal. |
 
-```mermaid
-flowchart LR
-    Channels[Conversations and devices] <--> Hermes[Hermes runtime]
-    Hermes <-->|Plugins, memory provider and request hooks| PacoMind[PacoMind]
-    Hermes --> Models[Models selected by role]
-    PacoMind --> Models
-    PacoMind <--> State[Private memory, identity and shared work]
-```
+![Conversations and devices connect to Hermes. Hermes and PacoMind exchange information through plugins, a memory provider and request hooks. Both use models selected by role. PacoMind maintains private memory, identity and shared work.](docs/architecture.svg)
 
 **Memory belongs to the agent, independently of the model.** SQLite holds
 canonical source records in the minimum installation. Optional Lance indexes
