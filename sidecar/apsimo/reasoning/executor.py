@@ -76,6 +76,7 @@ class ToolExecutor:
         self._dynamic_provider = None
         self._directive_manager = None
         self._boundary_required = False
+        self._canonical_memory_handler = None
 
         # Auto-register Colony-native tool handlers if registry is provided
         if registry is not None:
@@ -83,6 +84,8 @@ class ToolExecutor:
                 if name not in self._handlers:
                     # Wrap handler to inject registry
                     self._handlers[name] = lambda args, h=handler, r=registry: h(args, r)
+                    if name == "colony_memory_search":
+                        self._canonical_memory_handler = self._handlers[name]
 
     def register(self, name: str, handler: ToolHandler) -> None:
         """Register a tool handler."""
@@ -401,6 +404,7 @@ class ToolExecutor:
         session_id: str = "",
         allowed_tools: set[str] | frozenset[str] | None = None,
         actor_policy: ToolActorPolicy | None = None,
+        memory_search=None,
     ) -> list[dict[str, Any]]:
         """Execute a batch of tool calls and return results.
 
@@ -481,7 +485,11 @@ class ToolExecutor:
                 continue
 
             try:
-                result = await handler(arguments)
+                if handler is self._canonical_memory_handler:
+                    result = await TOOL_HANDLERS['colony_memory_search'](
+                        arguments, self._registry, search=memory_search)
+                else:
+                    result = await handler(arguments)
                 if isinstance(result, (dict, list)):
                     content = json.dumps(result)
                 else:

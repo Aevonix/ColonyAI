@@ -107,6 +107,8 @@ def _headers(secret: str, principal: str | None = None) -> dict[str, str]:
 
 def _memory_payload(**extra) -> dict:
     payload = {"identity": {"host_id": "test-host"}}
+    if "query" in extra:
+        payload.update(person_id="contact-owner", session_id="test-session")
     payload.update(extra)
     return payload
 
@@ -211,7 +213,7 @@ def graph(monkeypatch, tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_legacy_and_scoped_tokens_are_accepted_during_migration(tmp_path, graph):
+async def test_canonical_search_requires_scoped_token(tmp_path, graph):
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal(scopes=["memory:search"])])
     app = _app(keyring, legacy_key="legacy-secret")
@@ -229,10 +231,8 @@ async def test_legacy_and_scoped_tokens_are_accepted_during_migration(tmp_path, 
         )
 
     assert scoped.status_code == 200
-    assert legacy.status_code == 200
-    assert [call["person_id"] for call in graph.search_calls] == [
-        "contact-owner", "legacy-contact"
-    ]
+    assert legacy.status_code == 403
+    assert graph.search_calls == []
 
 
 @pytest.mark.asyncio
@@ -288,7 +288,7 @@ async def test_claimed_principal_header_must_match_token(tmp_path, graph):
 
 
 @pytest.mark.asyncio
-async def test_keyring_requires_private_permissions_but_legacy_still_works(tmp_path, graph):
+async def test_invalid_keyring_cannot_fall_back_to_unscoped_memory(tmp_path, graph):
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [_principal()], mode=0o644)
     app = _app(keyring, legacy_key="legacy-secret")
@@ -304,7 +304,7 @@ async def test_keyring_requires_private_permissions_but_legacy_still_works(tmp_p
             json=_memory_payload(query="alpha", person_id="legacy-contact"),
         )
     assert scoped.status_code == 401
-    assert legacy.status_code == 200
+    assert legacy.status_code == 403
 
 
 @pytest.mark.asyncio
@@ -401,7 +401,7 @@ async def test_memory_person_is_derived_and_body_cannot_broaden_it(tmp_path, gra
     assert (read.status_code, search.status_code, write.status_code) == (200, 200, 200)
     assert broaden.status_code == 403
     assert graph.read_calls[0]["person_id"] == "contact-owner"
-    assert graph.search_calls[0]["person_id"] == "contact-owner"
+    assert graph.search_calls == []
     assert graph.write_calls[0]["person_id"] == "contact-owner"
 
 
@@ -455,7 +455,7 @@ async def test_enriched_context_uses_authenticated_viewer_not_body_claim(tmp_pat
 
 
 @pytest.mark.asyncio
-async def test_owner_shared_global_lanes_are_explicit_and_single_scoped(tmp_path, graph):
+async def test_canonical_search_rejects_legacy_audience_selectors(tmp_path, graph):
     keyring = tmp_path / "keys.json"
     _write_keyring(keyring, [
         _principal(audiences=["viewer", "owner", "shared", "global"])
@@ -467,12 +467,9 @@ async def test_owner_shared_global_lanes_are_explicit_and_single_scoped(tmp_path
                 "/v1/host/memory/search", headers=_headers("scoped-secret"),
                 json=_memory_payload(query="alpha", audience=audience),
             )
-            assert response.status_code == 200
+            assert response.status_code == 422
 
-    assert [call["person_id"] for call in graph.search_calls] == [
-        "contact-owner", "audience-shared", "audience-global"
-    ]
-    assert all(call["person_id"] is not None for call in graph.search_calls)
+    assert graph.search_calls == []
 
 
 @pytest.mark.asyncio
@@ -485,7 +482,7 @@ async def test_ungranted_audience_lane_is_rejected(tmp_path, graph):
             "/v1/host/memory/search", headers=_headers("scoped-secret"),
             json=_memory_payload(query="alpha", audience="global"),
         )
-    assert response.status_code == 403
+    assert response.status_code == 422
     assert graph.search_calls == []
 
 
@@ -508,13 +505,11 @@ async def test_anonymous_dev_mode_never_gets_reserved_authority(graph):
             "/v1/host/memory/search",
             json=_memory_payload(query="alpha", audience="global"),
         )
-    assert ordinary.status_code == 200
-    assert derived.status_code == 200
+    assert ordinary.status_code == 403
+    assert derived.status_code == 403
     assert owner.status_code == 403
-    assert global_lane.status_code == 403
-    assert [call["person_id"] for call in graph.search_calls] == [
-        "local-scratch", "dev-anonymous"
-    ]
+    assert global_lane.status_code == 422
+    assert graph.search_calls == []
 
 
 @pytest.mark.asyncio

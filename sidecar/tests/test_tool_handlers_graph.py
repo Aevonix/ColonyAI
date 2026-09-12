@@ -56,36 +56,29 @@ class _World:
 
 
 @pytest.mark.asyncio
-async def test_memory_search_uses_recall_and_maps():
+async def test_memory_search_requires_invocation_scope_without_graph_fallback():
     graph = _Graph()
-    registry = SimpleNamespace(graph=graph)
-    out = json.loads(await handle_memory_search(
-        {"query": "preferences", "limit": 5}, registry,
-    ))
-    assert "error" not in out
-    assert graph.recall_calls == [("preferences", 5)]
-    assert out["count"] == 3
-    assert out["memories"][0]["content"] == "the owner prefers concise replies"
-    assert out["memories"][0]["relevance"] == 0.91
-    assert out["memories"][0]["timestamp"] == "2026-07-01T00:00:00Z"
-    # None content mapped to "" without crashing
-    assert out["memories"][1]["content"] == ""
-    # A datetime created_at is serialised to an ISO string (was the real
-    # production crash: "Object of type DateTime is not JSON serializable")
-    assert out["memories"][2]["timestamp"].startswith("2026-07-04T00:00:00")
+    out = json.loads(await handle_memory_search({'query': 'private'}, SimpleNamespace(graph=graph)))
+    assert out['status'] == 'unavailable'
+    assert 'bound participant' in out['error']
+    assert graph.recall_calls == []
 
 
 @pytest.mark.asyncio
-async def test_memory_search_coerces_string_limit():
-    """A string/float limit (as LLMs often emit) must not crash."""
+async def test_memory_search_preserves_canonical_packet_without_truncation():
+    packet = {'content': 'evidence ' * 200, 'count': 1,
+              'source_refs': [{'source_id': 'source', 'source_version': 'a'*64}],
+              'watermark': 0, 'annotation_checks': []}
+    calls = []
+    async def search(args):
+        calls.append(args)
+        return packet
     graph = _Graph()
-    registry = SimpleNamespace(graph=graph)
-    out = json.loads(await handle_memory_search(
-        {"query": "q", "limit": "5"}, registry,
-    ))
-    assert "error" not in out
-    # coerced to int before reaching recall / slicing
-    assert graph.recall_calls == [("q", 5)]
+    out = json.loads(await handle_memory_search({'query': 'private', 'limit': 5},
+                    SimpleNamespace(graph=graph), search=search))
+    assert out == packet
+    assert calls == [{'query': 'private', 'limit': 5}]
+    assert graph.recall_calls == []
 
 
 @pytest.mark.asyncio

@@ -27,7 +27,7 @@ def contact_context(source_app, tmp_path, monkeypatch):
     assert runtime is not None
     keyring = tmp_path/'keys.json'
     principals = [_principal(principal=who, secret=who+'-key', viewer=person,
-        scopes=['context:read', 'memory:write']) for who, person in [('owner','contact-a'), ('other','contact-b')]]
+        scopes=['context:read', 'memory:write', 'memory:search']) for who, person in [('owner','contact-a'), ('other','contact-b')]]
     for principal in principals:
         principal['allow_unscoped_api'] = False
     _write_keyring(keyring, principals)
@@ -163,3 +163,30 @@ async def test_source_erasure_removes_estimate_from_full_context(contact_context
         assert forgotten.status_code == 200 and forgotten.json()['shared_facts_cleanup'] == 'complete'
         assert await context(client, 'hydrofoil departure') == ''
     assert runtime.facts.get_fact(row['id']) is None
+
+
+@pytest.mark.asyncio
+async def test_explicit_search_uses_same_current_contact_projection_and_selector(contact_context, monkeypatch):
+    runtime = contact_context
+    monkeypatch.setenv('COLONY_RECALL_RERANK', 'off')
+    own = runtime.add('The hydrofoil departure desk is amber.')
+    foreign = runtime.add('The hydrofoil departure private marker is copper.', person='contact-b')
+    unlinked = runtime.add('The hydrofoil departure marker is bronze.', enveloped=False)
+    async with AsyncClient(transport=ASGITransport(app=runtime.app), base_url='http://test') as client:
+        async def search(person='contact-a', credential='owner'):
+            response = await client.post('/v1/host/memory/search',
+                headers={'Authorization':'Bearer '+credential+'-key'}, json={
+                    'identity': {'host_id':'fixture'}, 'person_id':person,
+                    'session_id':'later', 'query':'hydrofoil departure'})
+            assert response.status_code == 200, response.text
+            return response.json()
+        result = await search()
+        assert result['content'] == await context(client, 'hydrofoil departure')
+        assert result['retrieval']['contact_facts'] == 'ready'
+        assert own['fact'] in result['content'] and foreign['fact'] not in result['content']
+        assert unlinked['fact'] not in result['content']
+        assert result['source_refs'] and result['annotation_checks']
+        other = await search('contact-b', 'other')
+        assert foreign['fact'] in other['content'] and own['fact'] not in other['content']
+        runtime.ledger.erase_sources(contact_id='contact-a', turn_ids=[own['source_lineage']['turn_id']])
+        assert (await search())['count'] == 0

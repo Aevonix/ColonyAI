@@ -208,12 +208,6 @@ async def test_safety_check_populates_gate_context(app, monkeypatch):
 @pytest.mark.asyncio
 async def test_memory_endpoints_distinguish_backend_down(app, dead_graph):
     async with _client(app) as client:
-        search = await client.post("/v1/host/memory/search", json={
-            "identity": {"host_id": "t"}, "query": "anything",
-        })
-        assert search.status_code == 503
-        assert search.json()["detail"]["code"] == "memory_backend_unavailable"
-
         read = await client.post("/v1/host/memory/read", json={
             "identity": {"host_id": "t"},
         })

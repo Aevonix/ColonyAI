@@ -146,13 +146,12 @@ async def test_memory_read_empty(client):
 
 
 @pytest.mark.asyncio
-async def test_memory_search_empty(client):
+async def test_memory_search_requires_scope(client):
     resp = await client.post("/v1/host/memory/search", json={
         "identity": {"host_id": "test"},
-        "query": "hello",
+        "query": "hello", "person_id": "person", "session_id": "session",
     })
-    assert resp.status_code == 200
-    assert resp.json()["entries"] == []
+    assert resp.status_code == 403
 
 
 @pytest.mark.asyncio

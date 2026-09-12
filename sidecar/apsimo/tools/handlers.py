@@ -33,50 +33,19 @@ def _as_int(value: Any, default: int) -> int:
 async def handle_memory_search(
     args: dict[str, Any],
     registry: SubsystemRegistry,
+    *,
+    search=None,
 ) -> str:
-    """Search Colony's memory graph."""
-    query = args.get("query", "")
-    person_id = args.get("person_id")
-    limit = _as_int(args.get("limit", 5), 5)
-
+    """Search through the current invocation's trusted canonical scope."""
+    if search is None:
+        return json.dumps({'error': 'Canonical memory search requires a bound participant and session',
+                           'status': 'unavailable'})
     try:
-        graph = registry.graph
-        if graph is None:
-            return json.dumps({"error": "Memory graph not wired", "status": "unavailable"})
-
-        # ColonyGraph exposes semantic memory retrieval as recall(); there is
-        # no search() method (the old name was API drift). recall does its own
-        # ANN + strength decay and returns dicts annotated with relevance.
-        results = await graph.recall(
-            query=query,
-            limit=limit,
-            person_id=person_id,
-        )
-
-        def _ts(v: Any) -> Any:
-            # Neo4j hydration returns neo4j.time.DateTime, which json can't
-            # serialise. Normalise any date-like value to an ISO string.
-            return v.isoformat() if hasattr(v, "isoformat") else v
-
-        memories = [
-            {
-                "content": (m.get("content") or "")[:200],
-                "timestamp": _ts(m.get("created_at") or m.get("timestamp")),
-                "relevance": m.get("relevance", m.get("score", 0)),
-            }
-            for m in results[:limit]
-        ]
-
-        # default=str is a belt-and-suspenders guard for any other non-JSON
-        # types (e.g. stray DateTime/Decimal) surfacing from the graph.
-        return json.dumps({
-            "query": query,
-            "count": len(memories),
-            "memories": memories,
-        }, default=str)
-    except Exception as e:
-        logger.error("colony_memory_search failed: %s", e)
-        return json.dumps({"error": str(e), "status": "error"})
+        return json.dumps(await search(args), ensure_ascii=False)
+    except Exception as exc:
+        logger.warning('Canonical reasoning memory search failed (%s)', type(exc).__name__)
+        return json.dumps({'error': 'Canonical memory search is unavailable for this invocation',
+                           'status': 'unavailable'})
 
 
 async def handle_get_relationship(
