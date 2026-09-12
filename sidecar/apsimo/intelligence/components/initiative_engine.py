@@ -942,16 +942,22 @@ class InitiativeEngine:
                     "observed_at": datetime.now(timezone.utc).isoformat(),
                 })
 
-        # Check log sizes
-        log_dir = Path(os.path.expanduser("~/.colony/logs"))
+        # Measure unrotated top-level logs; report retained archives separately.
+        from apsimo.runtime_logging import runtime_log_directory
+        log_dir = runtime_log_directory()
         if log_dir.exists():
             files = []
-            for path in log_dir.glob("*.log"):
+            archives = []
+            for path in log_dir.iterdir():
                 try:
-                    if path.is_file():
+                    if path.is_file() and not path.is_symlink():
                         stat = path.stat()
-                        files.append({"path": str(path), "size_bytes": stat.st_size,
-                                      "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()})
+                        item = {"path": str(path), "size_bytes": stat.st_size,
+                                "modified_at": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()}
+                        if path.name.endswith('.log'):
+                            files.append(item)
+                        elif '.log.' in path.name and (path.suffix[1:].isdigit() or path.suffix in {'.bak', '.gz'}):
+                            archives.append(item)
                 except FileNotFoundError:
                     continue  # An existing rotation may finish during observation.
             total_bytes = sum(item["size_bytes"] for item in files)
@@ -963,6 +969,10 @@ class InitiativeEngine:
                     "threshold_mb": 100,
                     "total_size_bytes": total_bytes,
                     "file_count": len(files),
+                    "volume_scope": "top_level_log_files_excluding_rotated_archives",
+                    "retained_archive_bytes": sum(item["size_bytes"] for item in archives),
+                    "retained_archive_count": len(archives),
+                    "archive_scope": "top_level_log_number_bak_or_gz_only; archive subdirectories not scanned",
                     "largest_files": sorted(files, key=lambda item: (-item["size_bytes"], item["path"]))[:5],
                     "evidence_scope": "local_log_directory_only",
                     "evidence_path": str(log_dir),

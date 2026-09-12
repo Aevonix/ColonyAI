@@ -4065,6 +4065,9 @@ async def lifespan(app: FastAPI):
 
 def create_app() -> FastAPI:
     """Build and return the FastAPI application."""
+    from apsimo.runtime_logging import RequestLogTiming, configure_runtime_logging
+    if os.environ.get('APSIMO_RUNTIME_LOGGING') == '1':
+        configure_runtime_logging(redirect_stdio=True)
     app = FastAPI(
         title="Apsimo",
         version="0.1.0",
@@ -4172,6 +4175,7 @@ def create_app() -> FastAPI:
     except Exception as exc:
         logger.warning("Could not mount MCP endpoint: %s", exc)
 
+    app.add_middleware(RequestLogTiming)
     return app
 
 

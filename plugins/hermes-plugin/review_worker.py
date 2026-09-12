@@ -82,6 +82,52 @@ def refresh_profile(config, home, owner):
     return PROFILE
 
 
+def _log_configuration(path):
+    """Read only the bounded process-start declaration beside a registered log."""
+    unavailable = {'available': False, 'reason': 'Bounded writer declaration is absent or invalid.'}
+    try:
+        source = path.with_name(path.name+'.runtime.json')
+        fd = os.open(source, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, 'rb') as stream:
+            if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+                raise ValueError('regular_configuration_required')
+            raw = stream.read(16385)
+        if len(raw) > 16384:
+            raise ValueError('bounded_configuration_required')
+        value = json.loads(raw)
+        if (value.get('schema') != 'ApsimoRuntimeLoggingV1' or value.get('path') != str(path)
+                or value.get('handler') != 'logging.handlers.RotatingFileHandler'
+                or type(value.get('max_bytes')) is not int or value['max_bytes'] < 1024
+                or type(value.get('backup_count')) is not int or not 1 <= value['backup_count'] <= 100
+                or type(value.get('writer_pid')) is not int or value['writer_pid'] < 1
+                or type(value.get('python_stdio')) is not bool
+                or not isinstance(value.get('configured_at'), str)):
+            raise ValueError('matching_writer_declaration_required')
+        datetime.fromisoformat(value['configured_at'])
+        retained = []
+        for index in range(1, value['backup_count']+1):
+            archive = path.with_name(path.name+'.'+str(index))
+            try:
+                metadata = archive.lstat()
+            except FileNotFoundError:
+                continue
+            if stat.S_ISREG(metadata.st_mode):
+                retained.append({'path': str(archive), 'size_bytes': metadata.st_size})
+        writer = {'available': True, 'source': str(source),
+                  **{key: value[key] for key in ('handler', 'path', 'writer_pid', 'configured_at', 'python_stdio')},
+                  'coverage': 'Process-start declaration, not a current process-liveness attestation. '
+                              'Python logging and declared stdio only; native OS descriptor writes are outside this handler.'}
+        retention = {'available': True, 'source': str(source), 'max_bytes': value['max_bytes'],
+                     'backup_count': value['backup_count'], 'retained_files': retained,
+                     'retained_bytes': sum(item['size_bytes'] for item in retained),
+                     'coverage': 'Rotation keeps at most this many numbered archives plus the current file. '
+                                 'A formatted record can exceed the size threshold. Historical or manually archived logs '
+                                 'are not managed by this policy; observations are not an atomic filesystem snapshot.'}
+        return writer, retention
+    except (OSError, ValueError, TypeError, AttributeError):
+        return dict(unavailable), dict(unavailable)
+
+
 class ReviewWorker:
     def __init__(self, lane):
         self.home = Path(lane['source_home']).resolve()
@@ -170,8 +216,7 @@ class ReviewWorker:
                                             'total_bytes': volume.f_blocks*volume.f_frsize}
                 except OSError:
                     result['filesystem'] = {'available': False, 'reason': 'filesystem_statistics_unavailable'}
-                result['writer_configuration'] = {'available': False, 'reason': 'No bounded writer configuration source is registered.'}
-                result['retention_configuration'] = {'available': False, 'reason': 'No bounded retention configuration source is registered.'}
+                result['writer_configuration'], result['retention_configuration'] = _log_configuration(path)
             from agent.redact import redact_sensitive_text
             def redact(value):
                 if isinstance(value, str):

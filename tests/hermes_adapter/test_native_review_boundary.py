@@ -93,6 +93,32 @@ try:
  assert 'does not establish whether its service is running' in observed['coverage']
  assert observed['filesystem']['available_bytes']>0 and observed['retention_configuration']['available'] is False
  assert len(observed['text'].encode())<=16384
+ # The same bounded reader now reports an actual process-owned rotating handler.
+ from apsimo.runtime_logging import configure_runtime_logging
+ handler=configure_runtime_logging(root/'logs/agent.log',max_bytes=32768,backups=2)
+ handler.doRollover()
+ import logging
+ logging.getLogger('fixture').warning('current bounded writer sample')
+ observed=json.loads(invoke('colony_read_work_source',{'source':1}))
+ assert 'current bounded writer sample' in observed['text'],observed
+ assert observed['writer_configuration']['available'] is True
+ assert observed['writer_configuration']['writer_pid']==os.getpid()
+ assert 'not a current process-liveness attestation' in observed['writer_configuration']['coverage']
+ assert observed['retention_configuration']['max_bytes']==32768
+ assert observed['retention_configuration']['backup_count']==2
+ assert observed['retention_configuration']['retained_bytes']>0
+ assert len(observed['retention_configuration']['retained_files'])==1
+ policy=root/'logs/agent.log.runtime.json';original_policy=policy.read_bytes()
+ for raw in (b'not-json',json.dumps({'schema':'ApsimoRuntimeLoggingV1','path':str(secret)}).encode(),b'x'*16385):
+  policy.write_bytes(raw)
+  observed=json.loads(invoke('colony_read_work_source',{'source':1}))
+  assert observed['writer_configuration']['available'] is False
+  assert 'current bounded writer sample' in observed['text']
+ policy.unlink();policy.symlink_to(secret)
+ observed=json.loads(invoke('colony_read_work_source',{'source':1}))
+ assert observed['writer_configuration']['available'] is False
+ assert 'private-canary-value' not in json.dumps(observed)
+ policy.unlink();policy.write_bytes(original_policy)
  assert 'sk-canary-not-for-the-review' not in result,result
  result=invoke('colony_read_work_source',{'source':0,'path':str(secret)})
  assert 'error' in result and 'private-canary-value' not in result,result

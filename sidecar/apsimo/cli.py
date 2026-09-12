@@ -376,11 +376,14 @@ def main() -> None:
                 )
             except ValueError:
                 ws_max_size = 1 * 1024 * 1024
+            from apsimo.runtime_logging import configure_runtime_logging
+            configure_runtime_logging(redirect_stdio=bool(os.environ.get('APSIMO_INSTANCE_SERVICE') or os.environ.get('COLONY_INSTANCE_SERVICE')))
             uvicorn.run(
                 "apsimo.server:app",
                 host=host,
                 port=port,
                 log_level=os.environ.get("LOG_LEVEL", "info").lower(),
+                log_config=None,
                 ws_max_size=ws_max_size,
             )
 
@@ -1696,7 +1699,11 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
     env["COLONY_SIDECAR_PORT"] = str(port)
 
     # Start uvicorn
-    log_path = Path(os.environ.get("COLONY_STATE_DIR", ".")) / "sidecar.log"
+    from apsimo.runtime_logging import runtime_log_directory
+    log_path = runtime_log_directory() / "sidecar.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    env['APSIMO_LOG_PATH'] = str(log_path)
+    env['APSIMO_RUNTIME_LOGGING'] = '1'
     print(f"  Starting Apsimo sidecar on {host}:{port}...")
     print(f"  Log: {log_path}")
 
@@ -1705,7 +1712,7 @@ def _cmd_start_daemon(host: str, port: int, force: bool) -> None:
          "apsimo.server:app",
          "--host", host,
          "--port", str(port)],
-        stdout=open(log_path, "w"),
+        stdout=open(log_path, "a"),
         stderr=subprocess.STDOUT,
         start_new_session=True,
         env=env,

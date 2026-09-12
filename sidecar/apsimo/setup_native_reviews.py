@@ -30,7 +30,7 @@ def worker_configuration(state, manifest, owner):
         'plugins': {'enabled': ['apsimo'], 'apsimo': {'native_reviews': {
             'worker': True, 'source_home': manifest['hermes_home'], 'owner_contact_id': owner,
             'log_directory': str(Path(manifest.get('operational_log_directory') or
-                                     Path.home()/'.colony/logs').resolve())}}},
+                                     Path(state)/'service').resolve())}}},
         'memory': {'memory_enabled': False, 'user_profile_enabled': False},
         'mcp_servers': {}, 'kanban': {'dispatch_in_gateway': False, 'auto_decompose': False}}
     _align_hermes_memory_spill(config)

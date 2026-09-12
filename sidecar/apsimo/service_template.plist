@@ -8,7 +8,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>{uvicorn_path}</string>
-        <string>colony_sidecar.server:app</string>
+        <string>apsimo.server:app</string>
         <string>--host</string>
         <string>{host}</string>
         <string>--port</string>
@@ -28,6 +28,10 @@
         <string>{path}</string>
         <key>COLONY_STATE_DIR</key>
         <string>{state_dir}</string>
+        <key>APSIMO_RUNTIME_LOGGING</key>
+        <string>1</string>
+        <key>APSIMO_LOG_PATH</key>
+        <string>{log_path}</string>
         <key>COLONY_SIDECAR_HOST</key>
         <string>{host}</string>
         <key>COLONY_SIDECAR_PORT</key>

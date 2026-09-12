@@ -41,6 +41,7 @@ async def test_actual_loader_replaces_legacy_check_and_keeps_other_operational_c
     publish(pointer, datetime.now(timezone.utc)-timedelta(hours=1))
     monkeypatch.setenv('COLONY_INITIATIVE_BACKUP_RECEIPT', str(pointer))
     log = tmp_path/'.colony/logs/large.log'
+    monkeypatch.setenv('APSIMO_LOG_PATH', str(log))
     log.parent.mkdir(parents=True)
     with log.open('wb') as stream:
         stream.truncate(101*1024*1024)
