@@ -36,8 +36,8 @@ from apsimo.vector.store import VectorStore
 from apsimo.vector.collections import Collection
 from apsimo.vector.query import VectorItem
 from apsimo.intelligence.graph.client import ColonyGraph
-from apsimo.intelligence.graph.selection import RecallSelector
-from apsimo.intelligence.graph.recall import calibration_fingerprint, provider_calibration_metadata
+from apsimo.memory.selection import RecallSelector
+from apsimo.memory.recall import calibration_fingerprint, provider_calibration_metadata
 from apsimo.beliefs.source_projection import SourceClaimProjection
 from apsimo.beliefs.source_time import interpret_time_query
 from apsimo.turns.source_annotations import expand, current_candidates
@@ -362,8 +362,8 @@ async def run(config, args):
         'fixture_sha256':hashlib.sha256(fixture_path.read_bytes()).hexdigest(),'calls':calls,
         'selection_sources': {str(path.relative_to(ROOT.parents[1])): hashlib.sha256(path.read_bytes()).hexdigest()
             for path in (Path(__file__).resolve(),
-                         ROOT.parents[1] / 'sidecar/apsimo/intelligence/graph/selection.py',
-                         ROOT.parents[1] / 'sidecar/apsimo/intelligence/graph/recall.py')},
+                         ROOT.parents[1] / 'sidecar/apsimo/memory/selection.py',
+                         ROOT.parents[1] / 'sidecar/apsimo/memory/recall.py')},
         'limits':['Default corpus: 120 frozen neutral sources, 96 queries, 24 holdout. A supplied smaller fixture is a smoke test.',
             'Actual local extraction/embeddings/reranker and canonical SQLite/Lance. Graph query reads are scoped SQLite fixture adapter, not Neo4j.',
             'Public/team fixture annotations do not invent shared authority: sources belong to fixture owner; six guest privacy queries expect abstention.',

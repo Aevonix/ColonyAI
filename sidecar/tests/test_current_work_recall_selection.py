@@ -11,7 +11,7 @@ from apsimo.api.authority import RequestAuthority
 from apsimo.api.routers import executions
 from apsimo.beliefs.source_projection import SourceClaimProjection
 from apsimo.beliefs.source_time import MemoryTimeQuery
-from apsimo.intelligence.graph.selection import RecallSelector, current_work_query
+from apsimo.memory.selection import RecallSelector, current_work_query
 from apsimo.turns import TurnIdempotencyLedger
 from apsimo.turns.idempotency import source_message_hash
 from apsimo.turns.source_annotations import expand

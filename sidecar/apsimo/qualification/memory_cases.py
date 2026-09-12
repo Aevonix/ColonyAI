@@ -13,7 +13,7 @@ from .records import CaseSpec
 
 def _recollect(projection, query, *, contact, session, now, max_chars):
     from apsimo.beliefs.source_time import interpret_time_query
-    from apsimo.intelligence.graph.recall import pack_memory_context
+    from apsimo.memory.recall import pack_memory_context
     from apsimo.turns.source_annotations import expand, current_candidates
     ledger = projection.ledger
     hits = ledger.search_sources(query, contact_id=contact, session_id=session, limit=10)

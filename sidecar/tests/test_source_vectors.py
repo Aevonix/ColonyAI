@@ -82,7 +82,7 @@ def test_semantic_hydration_marks_chunks_without_changing_source_or_projection(t
 async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_erasure(tmp_path, monkeypatch):
     from apsimo.beliefs.source_projection import SourceClaimProjection
     from apsimo.beliefs.source_time import MemoryTimeQuery
-    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.memory.selection import RecallSelector
     ledger, _, _, projection = await setup(tmp_path)
     query = 'Where is my office and how do I enter?'
     for i in range(5):
@@ -137,7 +137,7 @@ async def test_repeated_semantic_questions_leave_room_for_evidence_and_survive_e
 async def test_quote_dedup_preserves_author_role_scope_and_assertion_bundles(tmp_path):
     from apsimo.beliefs.source_projection import SourceClaimProjection
     from apsimo.beliefs.source_time import MemoryTimeQuery
-    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.memory.selection import RecallSelector
     ledger, _, _, projection = await setup(tmp_path)
     text = 'My office is beside the orchard.'
     for turn, contact, role, scope in [('a', 'a', 'user', 'person'), ('a-copy', 'a', 'user', 'person'),
@@ -165,7 +165,7 @@ async def test_quote_dedup_preserves_author_role_scope_and_assertion_bundles(tmp
 async def test_dated_repeated_quote_is_filtered_before_deduplication(tmp_path):
     from apsimo.beliefs.source_projection import SourceClaimProjection
     from apsimo.beliefs.source_time import MemoryTimeQuery
-    from apsimo.intelligence.graph.selection import RecallSelector
+    from apsimo.memory.selection import RecallSelector
     ledger, _, _, projection = await setup(tmp_path)
     for day in (1, 2):
         ledger.record_source(f'day-{day}', contact_id='c', session_id=f's-{day}',
@@ -386,8 +386,8 @@ async def test_semantic_candidates_still_use_temporal_conflict_and_correction_bu
         bundles = [json.loads(row['content']) for row in rows if row.get('atomic_evidence')]
         assert bundles[0]['status'] == 'unresolved_conflict'
         assert {row['value'] for row in bundles[0]['assertions']} == {'River', 'Lake'}
-        from apsimo.intelligence.graph.selection import RecallSelector
-        from apsimo.intelligence.graph.recall import provider_calibration_metadata
+        from apsimo.memory.selection import RecallSelector
+        from apsimo.memory.recall import provider_calibration_metadata
         reranker = Reranker(); calibrate(monkeypatch, reranker)
         selector = RecallSelector(reranker.rerank, calibration_metadata=lambda: provider_calibration_metadata(reranker))
         selected, context = await selector.select_context('workplace', [], rows)

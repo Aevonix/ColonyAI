@@ -8,7 +8,7 @@ from apsimo.turns import TurnIdempotencyLedger
 from apsimo.turns.idempotency import source_message_hash
 from apsimo.turns.source_vectors import merge_source_hits
 from apsimo.turns.source_read import read
-from apsimo.intelligence.graph.recall import source_candidates
+from apsimo.memory.recall import source_candidates
 from test_source_audio import message as audio_message
 from test_turn_source_evidence import source_app, recalled
 

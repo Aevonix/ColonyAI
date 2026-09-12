@@ -6,13 +6,55 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 
 from apsimo.api.routers import host
-from apsimo.intelligence.graph.recall import (
+from apsimo.memory.recall import (
     calibration_fingerprint, pack_memory_context, provider_calibration_metadata,
     source_candidates,
 )
-from apsimo.intelligence.graph.selection import RecallSelector
+from apsimo.memory.selection import RecallSelector
 from test_recall_ranking import RecallFixture, _Hit, _node
 from test_turn_source_evidence import source_app, envelope, recalled
+
+
+def test_source_selection_runs_without_graph_imports():
+    import os
+    from pathlib import Path
+    import subprocess
+    import sys
+    import textwrap
+
+    script = textwrap.dedent('''
+        import asyncio
+        import importlib.abc
+        import sys
+
+        class NoGraph(importlib.abc.MetaPathFinder):
+            def find_spec(self, fullname, path=None, target=None):
+                if fullname == 'neo4j' or fullname.startswith('neo4j.') or fullname.startswith('apsimo.intelligence.graph'):
+                    raise AssertionError('Source recall imported the graph: ' + fullname)
+
+        sys.meta_path.insert(0, NoGraph())
+        sys.path.insert(0, sys.argv[1])
+        from apsimo.memory.recall import source_candidates
+        from apsimo.memory.selection import RecallSelector
+
+        candidates = source_candidates([{
+            'turn_id': 'meeting-source', 'role': 'user',
+            'content': 'The meeting is on Tuesday.',
+            'contact_id': 'participant', 'scope': 'person',
+        }])
+        selected, rendered = asyncio.run(RecallSelector().select_context(
+            'meeting', [], candidates, max_chars=2000))
+        assert selected[0]['source_turn_id'] == 'meeting-source'
+        assert selected[0]['kind'] == 'source_quote'
+        assert 'The meeting is on Tuesday.' in rendered
+        print('GRAPH_FREE_RECALL_OK')
+    ''')
+    result = subprocess.run([sys.executable, '-I', '-c', script,
+        str(Path(__file__).resolve().parents[1])], capture_output=True, text=True,
+        env={**os.environ, 'COLONY_RECALL_RERANK': 'off', 'APSIMO_RECALL_RERANK': 'off'},
+        timeout=10)
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == 'GRAPH_FREE_RECALL_OK'
 
 
 class Reranker:

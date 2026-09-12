@@ -55,7 +55,7 @@ class AudioModel(Model):
 
 @pytest.mark.asyncio
 async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_lineage(tmp_path):
-    from apsimo.intelligence.graph.recall import pack_memory_context
+    from apsimo.memory.recall import pack_memory_context
     from apsimo.turns.source_read import read
     from test_procedure_source_context import candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db')
@@ -110,7 +110,7 @@ async def test_retained_audio_forms_reviewed_derived_claim_with_exact_original_l
 
 @pytest.mark.asyncio
 async def test_audio_procedure_keeps_unclaimed_condition_and_exact_segment_basis(tmp_path):
-    from apsimo.intelligence.graph.recall import pack_memory_context
+    from apsimo.memory.recall import pack_memory_context
     from test_procedure_source_context import candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db')
     step = 'For the pump inspection, record the inlet reading.'
@@ -226,7 +226,7 @@ async def test_asr_corrected_by_text_keeps_spans_and_does_not_revive_erased_corr
 @pytest.mark.asyncio
 async def test_asr_annotation_matches_original_revision_and_fences_recalled_claim(tmp_path):
     from apsimo.turns.source_annotations import expand, current_candidates
-    from apsimo.intelligence.graph.recall import source_candidates
+    from apsimo.memory.recall import source_candidates
     ledger = TurnIdempotencyLedger(tmp_path/'sources.db'); projection = SourceClaimProjection(ledger)
     text = 'My office is in River.'; _, rendered = record(ledger, text)
     await projection.process_one(AudioModel({rendered: claim(text, 'River', memory_kind='preference')}))

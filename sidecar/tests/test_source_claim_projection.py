@@ -128,7 +128,7 @@ async def test_newer_report_does_not_win_and_conflict_is_atomic(source_app, tmp_
     hits = projection.ledger.search_sources("workshop", contact_id="contact-a", session_id="s")
     _, rows = projection.prepare_context([], hits, contact_id="contact-a", session_id="s",
         time_query=interpret_time_query("workshop", now=datetime.now(timezone.utc)))
-    from apsimo.intelligence.graph.recall import pack_memory_context
+    from apsimo.memory.recall import pack_memory_context
     assert pack_memory_context(rows, max_chars=500) == ([], "")
 
 

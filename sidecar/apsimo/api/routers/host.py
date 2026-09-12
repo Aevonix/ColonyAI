@@ -2516,7 +2516,7 @@ async def context_assemble(
 
     # --- Memory: authorized candidates, one selection and one budget ---
     if _canonical_person_allowed and query_text:
-        from apsimo.intelligence.graph.recall import source_candidates
+        from apsimo.memory.recall import source_candidates
         beliefs, quotations, source_hits, semantic_media = [], [], [], []
         source_ledger = None
         if not _canonical_only and _graph is not None:
@@ -2581,7 +2581,7 @@ async def context_assemble(
                     contact_tz, body.context.timezone or ("UTC" if _canonical_only else None)))
             if source_ledger is not None:
                 from apsimo.beliefs.source_projection import SourceClaimProjection
-                from apsimo.intelligence.graph.selection import current_work_query
+                from apsimo.memory.selection import current_work_query
                 beliefs, quotations = SourceClaimProjection(source_ledger).prepare_context(
                     beliefs, source_hits, contact_id=body.context.contact_id,
                     session_id=body.context.session_id, time_query=time_query,
@@ -2598,7 +2598,7 @@ async def context_assemble(
                     # The projected view preserves envelope and current-source
                     # checks. A fact needs query overlap before any fail-open
                     # reranker path; confidence alone never makes it relevant.
-                    from apsimo.intelligence.graph.recall import contact_fact_candidates
+                    from apsimo.memory.recall import contact_fact_candidates
                     fact_result = _tom_context_facts.list_facts(
                         contact_id=body.context.contact_id, limit=512)
                     facts = fact_result if isinstance(fact_result, list) else fact_result.get('facts', [])
@@ -2623,7 +2623,7 @@ async def context_assemble(
                 from apsimo.turns.source_annotations import current_candidates
                 retained = current_candidates(source_ledger, selected, **annotation_scope)
                 if len(retained) != len(selected):
-                    from apsimo.intelligence.graph.recall import pack_memory_context
+                    from apsimo.memory.recall import pack_memory_context
                     selected, body_text = pack_memory_context(retained, limit=5,
                         max_chars=max(0, min(max_chars, 24000)))
             if body_text:
@@ -11284,7 +11284,7 @@ async def enriched_context(
             and (_p8_runtime is None or _enriched_p8_viewer is not None):
         async def _shared_facts():
             try:
-                from apsimo.intelligence.graph.recall import contact_fact_candidates, pack_memory_context
+                from apsimo.memory.recall import contact_fact_candidates, pack_memory_context
                 from apsimo.turns.source_annotations import expand, current_candidates
                 store = _p8_runtime.facts_store if _p8_runtime is not None else _facts_store
                 view = (_p8_runtime.projected_facts_view(_enriched_p8_viewer,
@@ -11725,8 +11725,8 @@ def _memory_context_selector():
     """Keep one selector per active reranker, also usable without graph storage."""
     global _context_recall_selector
     if _context_recall_selector is None or _context_recall_selector[0] is not _reranker:
-        from apsimo.intelligence.graph.selection import RecallSelector
-        from apsimo.intelligence.graph.recall import provider_calibration_metadata
+        from apsimo.memory.selection import RecallSelector
+        from apsimo.memory.recall import provider_calibration_metadata
         provider = _reranker
         selector = RecallSelector(
             provider.rerank if provider is not None else None,

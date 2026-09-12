@@ -1,4 +1,4 @@
-"""Small retrieval helpers shared by the existing graph/vector recall path."""
+"""Shared source candidates, rank fusion and bounded memory rendering."""
 from __future__ import annotations
 
 import re
@@ -7,7 +7,6 @@ import json
 import os
 from typing import Any
 
-FULLTEXT_INDEX = "memory_content_fulltext"
 _WORDS = re.compile(r"[^\W_]+(?:[-.][^\W_]+)*", re.UNICODE)
 _STOP = frozenset("a an and are as at be by do does for from how i in is it me of on or that the this to was what when where which who with you".split())
 
@@ -207,11 +206,6 @@ def lexical_terms(text: str, max_terms: int = 16) -> list[str]:
     words = dict.fromkeys(word.casefold() for word in _WORDS.findall(text[:4000])
                           if word.casefold() not in _STOP)
     return list(words)[:max_terms]
-
-
-def lexical_query(text: str, max_terms: int = 16) -> str:
-    """Literal words/identifiers, not caller-supplied Lucene operators."""
-    return " OR ".join(f'"{word}"' for word in lexical_terms(text, max_terms))
 
 
 def contact_fact_candidates(query: str, facts: list[dict[str, Any]], *, limit: int = 25) -> list[dict[str, Any]]:

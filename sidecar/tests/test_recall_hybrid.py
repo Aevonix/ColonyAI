@@ -3,9 +3,10 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from apsimo.intelligence.graph.recall import (
-    calibration_fingerprint, lexical_query, render_memory_context,
+from apsimo.memory.recall import (
+    calibration_fingerprint, render_memory_context,
 )
+from apsimo.intelligence.graph.queries import lexical_query
 from test_recall_ranking import RecallFixture, _Hit, _node
 from test_recall_rerank import _RecordingReranker
 

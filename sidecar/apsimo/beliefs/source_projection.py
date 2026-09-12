@@ -470,7 +470,7 @@ class SourceClaimProjection:
         Unknown, corrected, changed, multiple-input and cross-scope provenance
         remains recallable. This transient hint never changes stored history.
         """
-        from apsimo.intelligence.graph.selection import current_work_query
+        from apsimo.memory.selection import current_work_query
         from apsimo.turns.idempotency import canonical_turn_digest, source_message_hash
         if message.get('role') != 'assistant' or source['scope'] != 'person':
             return False
@@ -521,7 +521,7 @@ class SourceClaimProjection:
         """
         from apsimo.turns.idempotency import source_message_hash
         from apsimo.turns.audio import source_text
-        from apsimo.intelligence.graph.recall import source_candidates
+        from apsimo.memory.recall import source_candidates
         turn_ids = list(dict.fromkeys(
             [row["turn_id"] for row in source_hits] + [str(row["source_uri"])[5:] for row in beliefs
              if str(row.get("source_uri") or "").startswith("turn:")]))
