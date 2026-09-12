@@ -18,15 +18,15 @@ trusted=sys.argv[4]=='attested'
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import host
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import host
+from apsimo.turns import get_turn_idempotency_ledger
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 home.joinpath('config.yaml').write_text(json.dumps({
-    'plugins':{'enabled':['colony'],'colony':{'url':'http://fixture','owner_contact_id':'contact-a',
+    'plugins':{'enabled':['apsimo'],'apsimo':{'url':'http://fixture','owner_contact_id':'contact-a',
         'attested_system_platforms':['cli'] if trusted else [],'turn_writer_platforms':['cli']}},
-    'memory':{'provider':'colony-memory','config':{'url':'http://fixture','contact_id':'contact-a'}}}))
+    'memory':{'provider':'apsimo-memory','config':{'url':'http://fixture','contact_id':'contact-a'}}}))
 home.joinpath('SOUL.md').write_text('Neutral CLI fixture. Answer the current question.')
 fact='My neutral orchard badge is cobalt-716.'
 ledger=get_turn_idempotency_ledger(os.environ['COLONY_STATE_DIR'])
@@ -55,11 +55,11 @@ def no_network(*args,**kwargs):raise AssertionError('Controlled API and provider
 socket.socket.connect=no_network;socket.create_connection=no_network
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['colony'].enabled
+assert get_plugin_manager()._plugins['apsimo'].enabled
 from run_agent import AIAgent
 from agent import relay_runtime
-from colony_hermes.native_scope import attested_cli_contact
-import colony_hermes,run_agent
+from apsimo_hermes.native_scope import attested_cli_contact
+import apsimo_hermes,run_agent
 openai_target='run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
 tools_target='run_agent' if 'get_tool_definitions' in vars(run_agent) else 'model_tools'
 physical=[];binding=[];client=MagicMock()
@@ -96,7 +96,7 @@ with patch(openai_target,return_value=client),patch(tools_target+'.get_tool_defi
         assert recorded_turns[0]['context']['contact_id']=='contact-a'
     # The registry deliberately retains prior scopes. A finished native turn
     # cannot use one as ambient owner authority or replay its provider cache.
-    assert colony_hermes._TRANSPORT_SCOPES.for_session(agent.session_id) is not None
+    assert apsimo_hermes._TRANSPORT_SCOPES.for_session(agent.session_id) is not None
     assert relay_runtime.active_turn(agent.session_id) is None
     count=len(calls)
     assert attested_cli_contact(agent.session_id) is None

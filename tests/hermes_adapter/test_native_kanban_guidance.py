@@ -18,16 +18,16 @@ kind,pathway=sys.argv[3:5]
 home=Path(os.environ['HERMES_HOME']);home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 (home/'config.yaml').write_text(json.dumps({'toolsets':['kanban'],
-    'plugins':{'enabled':['colony'],'colony':{'owner_contact_id':'fixture-owner',
+    'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':'fixture-owner',
         'attested_system_platforms':['cli','voice'],'turn_writer_platforms':[]}}}))
 def no_network(*args,**kwargs):raise AssertionError('No external requests in native fixture')
 socket.socket.connect=no_network;socket.create_connection=no_network
-import colony_hermes
+import apsimo_hermes
 def unavailable(*args,**kwargs):raise RuntimeError('No central fixture service')
-colony_hermes.ColonyClient.get=unavailable;colony_hermes.ColonyClient.post=unavailable
+apsimo_hermes.ColonyClient.get=unavailable;apsimo_hermes.ColonyClient.post=unavailable
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['colony'].enabled
+assert get_plugin_manager()._plugins['apsimo'].enabled
 from agent.delegation_context import delegated_child_context,non_dispatcher_owned_context
 from agent.prompt_builder import KANBAN_GUIDANCE
 from run_agent import AIAgent
@@ -132,7 +132,7 @@ def no_network(*args,**kwargs):raise AssertionError('No external requests in nat
 socket.socket.connect=no_network;socket.create_connection=no_network
 from agent.message_sanitization import _sanitize_structure_non_ascii
 from agent.prompt_builder import KANBAN_GUIDANCE
-from colony_hermes.request_capabilities import describe
+from apsimo_hermes.request_capabilities import describe
 if worker=='worker':
     os.environ['HERMES_KANBAN_TASK']='fixture-bound-task'
 instructions='Stable identity.\n'+KANBAN_GUIDANCE+'\nOther evidence rules.'

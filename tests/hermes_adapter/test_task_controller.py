@@ -16,10 +16,10 @@ def no_network(*a, **kw): raise AssertionError('Hook ownership has no network de
 socket.socket.connect = no_network
 socket.create_connection = no_network
 from gateway.config import PlatformConfig
-from colony_hermes.client import TurnOutbox
-from colony_hermes.task_controller import NativeTasks
-from colony_hermes.task_handoffs import TaskHandoffs, TaskHandoffError
-from colony_hermes.native_task_platform import ACTIVE, NativeTaskAdapter, bind_native_turn, finish_native_turn
+from apsimo_hermes.client import TurnOutbox
+from apsimo_hermes.task_controller import NativeTasks
+from apsimo_hermes.task_handoffs import TaskHandoffs, TaskHandoffError
+from apsimo_hermes.native_task_platform import ACTIVE, NativeTaskAdapter, bind_native_turn, finish_native_turn
 
 outbox = TurnOutbox(Path('outbox.sqlite3').absolute())
 outbox.prepare()

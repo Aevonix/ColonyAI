@@ -18,7 +18,7 @@ sys.path.insert(0, sys.argv[1])
 def no_network(*a, **kw): raise AssertionError('Task store qualification cannot contact a service')
 socket.socket.connect = no_network
 socket.create_connection = no_network
-from colony_hermes.task_handoffs import TaskHandoffs, TaskHandoffError, erase_task_handoffs
+from apsimo_hermes.task_handoffs import TaskHandoffs, TaskHandoffError, erase_task_handoffs
 
 path = Path('existing-state.sqlite3')
 @contextmanager

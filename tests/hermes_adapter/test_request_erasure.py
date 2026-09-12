@@ -16,8 +16,8 @@ if sys.argv[3]: sys.path.append(sys.argv[3])
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.routers import host
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.routers import host
+from apsimo.turns import get_turn_idempotency_ledger
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 identity='Neutral identity documents <memory-context> as the name of a recalled block. Preserve the full identity tail.'
@@ -25,8 +25,8 @@ ephemeral='Preserve this native deployment instruction after the identity.'
 home.joinpath('SOUL.md').write_text(identity)
 home.joinpath('config.yaml').write_text(json.dumps({
     'context': {'engine': 'compressor'},
-    'plugins': {'enabled': ['colony'], 'colony': {'owner_contact_id': 'contact-a', 'url': 'http://fixture'}},
-    'memory': {'provider': 'colony-memory', 'config': {'contact_id': 'contact-a', 'url': 'http://fixture'}}}))
+    'plugins': {'enabled': ['apsimo'], 'apsimo': {'owner_contact_id': 'contact-a', 'url': 'http://fixture'}},
+    'memory': {'provider': 'apsimo-memory', 'config': {'contact_id': 'contact-a', 'url': 'http://fixture'}}}))
 app=FastAPI(); app.include_router(host.router); app.include_router(host.v2_router)
 api=TestClient(app)
 fact='My neutral orchard badge is cobalt-716.'
@@ -37,7 +37,7 @@ original_ref=ledger.source_references(['native-erasure-source'],contact_id='cont
 wire=[]
 summary_mode = len(sys.argv) > 4 and sys.argv[4] == 'summary'
 memory_checks=[]
-from colony_hermes.request_memory import RequestMemory
+from apsimo_hermes.request_memory import RequestMemory
 original_memory_check=RequestMemory.__call__
 def record_memory_check(self,*args,**kwargs):
     memory_checks.append(True)
@@ -56,12 +56,12 @@ def no_network(*a, **kw): raise AssertionError('Native erasure qualification is 
 socket.socket.connect=no_network; socket.create_connection=no_network
 from hermes_cli.plugins import get_plugin_manager
 plugins=get_plugin_manager(); plugins.discover_and_load()
-assert plugins._plugins['colony'].enabled
+assert plugins._plugins['apsimo'].enabled
 from plugins.memory import load_memory_provider
 from agent.memory_manager import MemoryManager
 from agent.turn_context import compose_user_api_content, append_notes_to_multimodal_content
 from hermes_state import SessionDB
-provider=load_memory_provider('colony-memory'); manager=MemoryManager(); manager.add_provider(provider)
+provider=load_memory_provider('apsimo-memory'); manager=MemoryManager(); manager.add_provider(provider)
 manager.initialize_all('original', hermes_home=str(home))
 recalled=provider.prefetch('orchard badge', session_id='original')
 assert fact in recalled and 'native-erasure-source' in recalled and 'colony-recall-v1' in recalled, recalled
@@ -146,7 +146,7 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     from model_tools import handle_function_call
     invoke_hook('pre_llm_call', session_id='forget-request', task_id='forget-task', turn_id='forget-turn',
         platform='cli', sender_id='', user_message='Forget the retained orchard badge source and its answer copies.')
-    forgotten=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
+    forgotten=json.loads(handle_function_call('apsimo_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
     assert forgotten['source_erased'], forgotten
     assert forgotten['source_ids'] == ['native-erasure-source']
@@ -157,7 +157,7 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
     retained=json.loads(survivor['messages_json'])
     assert any(row.get('role')=='user' and row.get('content')==question for row in retained),retained
     assert all(row.get('role')!='assistant' for row in retained),retained
-    repeat=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
+    repeat=json.loads(handle_function_call('apsimo_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='forget-request',task_id='forget-task',turn_id='forget-turn'))
     assert repeat['source_erased'], repeat
     prior_calls=sum(path.endswith('/memory/sources/forget') for path,code in wire)
@@ -165,11 +165,11 @@ with patch(OPENAI_TARGET,return_value=client), patch(TOOLS_TARGET + '.get_tool_d
         ({'source_ids':['native-erasure-source'],'contact_id':'someone-else'}, 'forget-request','forget-task','forget-turn'),
         ({'source_ids':['native-erasure-source']}, 'missing','missing','missing'),
     ]:
-        denied=json.loads(handle_function_call('colony_memory_forget',args,session_id=session,task_id=task,turn_id=turn))
+        denied=json.loads(handle_function_call('apsimo_memory_forget',args,session_id=session,task_id=task,turn_id=turn))
         assert 'error' in denied, denied
     invoke_hook('pre_llm_call',session_id='cron-forget',task_id='cron-forget',turn_id='cron-forget',
         platform='cron',sender_id='',user_message='Forget the badge')
-    denied=json.loads(handle_function_call('colony_memory_forget', {'source_ids':['native-erasure-source']},
+    denied=json.loads(handle_function_call('apsimo_memory_forget', {'source_ids':['native-erasure-source']},
         session_id='cron-forget',task_id='cron-forget',turn_id='cron-forget'))
     assert 'error' in denied and sum(path.endswith('/memory/sources/forget') for path,code in wire)==prior_calls
     # Reopen native durable history, exactly as a later process resumes it.

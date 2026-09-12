@@ -20,16 +20,16 @@ if sys.argv[3]:sys.path.append(sys.argv[3])
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import host
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.turns import get_turn_idempotency_ledger
-from colony_hermes import _TransportScope, _TransportScopeRegistry
-from colony_hermes.client import ColonyClient, TurnOutbox, source_message_hash
-from colony_hermes.input_provenance import supplied_input
-from colony_hermes.task_handoffs import TaskHandoffs, TaskHandoffError, erase_task_handoffs
-from colony_hermes.task_sources import NativeTaskSources
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import host
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.turns import get_turn_idempotency_ledger
+from apsimo_hermes import _TransportScope, _TransportScopeRegistry
+from apsimo_hermes.client import ColonyClient, TurnOutbox, source_message_hash
+from apsimo_hermes.input_provenance import supplied_input
+from apsimo_hermes.task_handoffs import TaskHandoffs, TaskHandoffError, erase_task_handoffs
+from apsimo_hermes.task_sources import NativeTaskSources
 
 def no_network(*args,**kwargs):raise AssertionError('Native task source qualification has no network access')
 socket.socket.connect=no_network;socket.create_connection=no_network

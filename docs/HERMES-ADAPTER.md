@@ -44,9 +44,8 @@ python -m pip install dist/apsimo_hermes-1.4.0-py3-none-any.whl
 ```
 
 The wheel exposes `apsimo` through `hermes_agent.plugins` and `apsimo-memory`
-through `hermes_agent.memory_providers`. Exact legacy aliases `colony` and
-`colony-memory` target the same canonical modules; only the selected general
-adapter registers tools and hooks. It maps the canonical source files in
+through `hermes_agent.memory_providers`. Only the canonical `apsimo_hermes` and
+`apsimo_memory` packages are shipped. It maps the source files in
 `plugins/hermes-plugin/` and `plugins/apsimo-memory/` to importable packages.
 Only `catalog.py` and `contract.py` from `hostworker/apsimo_hostworker/` are
 included in the adapter's private catalog package. The legacy source installer forwards to the guided, profile-aware installer.

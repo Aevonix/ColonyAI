@@ -18,7 +18,7 @@ from urllib.request import urlopen
 sys.path.insert(0, sys.argv[1])
 home = Path(os.environ['HERMES_HOME']); home.mkdir(mode=0o700)
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home / 'config.yaml').write_text(json.dumps({'plugins': {'enabled': ['colony'], 'colony': {
+(home / 'config.yaml').write_text(json.dumps({'plugins': {'enabled': ['apsimo'], 'apsimo': {
     'url': sys.argv[2], 'owner_contact_id': 'owner', 'attested_system_platforms': ['cli'],
     'turn_outbox_path': str(home / 'turns.sqlite3')}}}))
 from hermes_cli.plugins import get_plugin_manager
@@ -26,13 +26,13 @@ from hermes_cli.lifecycle import invoke_hook
 from hermes_cli.middleware import run_tool_execution_middleware
 from model_tools import handle_function_call
 manager = get_plugin_manager(); manager.discover_and_load()
-assert manager._plugins['colony'].enabled, manager._plugins['colony'].error
-assert 'colony_commitment_work' in manager._plugins['colony'].tools_registered
+assert manager._plugins['apsimo'].enabled, manager._plugins['apsimo'].error
+assert 'apsimo_commitment_work' in manager._plugins['apsimo'].tools_registered
 def start(session):
     invoke_hook('pre_llm_call', session_id=session, task_id=session, turn_id=session,
                 platform='cli', sender_id='', user_message='Inspect the same obligation')
 def work(session, operation):
-    return json.loads(handle_function_call('colony_commitment_work', {'commitment_id': sys.argv[3], 'operation': operation},
+    return json.loads(handle_function_call('apsimo_commitment_work', {'commitment_id': sys.argv[3], 'operation': operation},
         session_id=session, task_id=session, turn_id=session, tool_call_id='call-' + session))
 for session in ('chat', 'voice'): start(session)
 with ThreadPoolExecutor(max_workers=2) as pool:
@@ -64,7 +64,7 @@ child_result = run_tool_execution_middleware('read_file', {}, lambda args: 'must
     session_id='child-rotated', task_id='child-task', turn_id='child-turn')
 assert json.loads(child_result)['effect_performed'] is False
 # Explicit stop is local after an authoritative stale response, including child rotation.
-stopped = json.loads(handle_function_call('colony_commitment_work', {'commitment_id': sys.argv[3], 'operation': 'release'},
+stopped = json.loads(handle_function_call('apsimo_commitment_work', {'commitment_id': sys.argv[3], 'operation': 'release'},
     session_id='child-rotated', task_id='child-task', turn_id='child-turn'))
 assert stopped['detached']
 assert run_tool_execution_middleware('read_file', {}, lambda args: 'executed',

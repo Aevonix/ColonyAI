@@ -35,7 +35,7 @@ import json,os,socket,sys,types,time,ast,inspect,logging
 from pathlib import Path
 from unittest.mock import patch
 sys.path.insert(0,sys.argv[1])
-package=types.ModuleType('colony_hermes');package.__path__=[sys.argv[2]];sys.modules['colony_hermes']=package
+package=types.ModuleType('apsimo_hermes');package.__path__=[sys.argv[2]];sys.modules['apsimo_hermes']=package
 def no_network(*a,**kw): raise AssertionError('No network in execution qualification')
 socket.socket.connect=no_network
 from hermes_cli import lifecycle
@@ -46,17 +46,17 @@ from agent.turn_api_request import _fire_pre_api_request_hook
 from agent.turn_response_intake import _fire_post_api_request_hook
 from agent.api_request_hooks import ApiRequestHooksMixin
 from agent import turn_finalizer
-from colony_hermes.executions import ExecutionObserver
-from colony_sidecar.api.routers.executions import ExecutionObservation
-from colony_sidecar.api.routers import host
-from colony_sidecar.turns import TurnIdempotencyLedger
-from colony_sidecar.turns.executions import ExecutionRegistry
-from colony_sidecar.self_model.expectations import ExpectationStore,ExpectationEngine
-from colony_sidecar.self_model import execution_forecasts as forecasts
+from apsimo_hermes.executions import ExecutionObserver
+from apsimo.api.routers.executions import ExecutionObservation
+from apsimo.api.routers import host
+from apsimo.turns import TurnIdempotencyLedger
+from apsimo.turns.executions import ExecutionRegistry
+from apsimo.self_model.expectations import ExpectationStore,ExpectationEngine
+from apsimo.self_model import execution_forecasts as forecasts
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
 profile=Path(os.environ['HERMES_HOME']);profile.mkdir(exist_ok=True);(profile/'config.yaml').write_text('plugins: {enabled: []}\n')
 registry=ExecutionRegistry(TurnIdempotencyLedger(state/'turns.db'))

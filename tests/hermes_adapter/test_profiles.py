@@ -27,7 +27,7 @@ import httpx
 from hermes_constants import set_hermes_home_override, reset_hermes_home_override
 from plugins.memory import load_memory_provider, discover_plugin_cli_commands
 from agent.memory_manager import MemoryManager
-from colony_memory.provider import ColonyMemoryProvider
+from apsimo_memory.provider import ColonyMemoryProvider
 
 root = Path(os.environ["HERMES_HOME"])
 root.mkdir(mode=0o700, exist_ok=True)
@@ -40,7 +40,7 @@ for index in range(2):
     homes.append(home)
     (home / "config.yaml").write_text(json.dumps({
         "plugins": {"enabled": []},
-        "memory": {"provider": "colony-memory", "config": {
+        "memory": {"provider": "apsimo-memory", "config": {
             "url": "http://old-instance.test", "contact_id": "old-contact",
             "turn_writer": "disabled", "api_key": "${COLONY_API_KEY}",
         }},
@@ -52,7 +52,7 @@ for index in range(2):
         setup = ColonyMemoryProvider()
         setup.save_config({"url": f"http://instance-{index}.test", "contact_id": f"person-{index}"}, str(home))
         # Native registration constructs a new provider as a fresh agent would.
-        provider = load_memory_provider("colony-memory")
+        provider = load_memory_provider("apsimo-memory")
         assert provider is not None
         assert provider.is_available()
         manager = MemoryManager()

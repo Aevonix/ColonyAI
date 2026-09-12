@@ -17,7 +17,7 @@ from agent.memory_manager import MemoryManager
 from agent.turn_context import (
  _memory_turn_start_and_prefetch, compose_user_api_content, substitute_api_content)
 from hermes_cli.cli_commands_mixin import _sync_agent_to_session
-import colony_memory.provider as provider_module
+import apsimo_memory.provider as provider_module
 home=Path(os.environ['HERMES_HOME']);home.mkdir(exist_ok=True)
 (home/'config.yaml').write_text('plugins: {enabled: []}\n')
 now=[100.0];requests=[]

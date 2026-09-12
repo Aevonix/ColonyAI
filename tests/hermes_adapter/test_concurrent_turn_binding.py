@@ -19,11 +19,11 @@ native=sys.argv[5]
 if native: sys.path.insert(2,native)
 import uvicorn
 from fastapi import FastAPI, Response
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions,host
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions,host
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.turns import get_turn_idempotency_ledger
 
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
@@ -74,26 +74,26 @@ def local_only(self,address):
     assert isinstance(address,tuple) and address[:2]==('127.0.0.1',port),address
     return connect(self,address)
 socket.socket.connect=local_only
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
     'owner_contact_id':owner,'url':base,'turn_writer_platforms':[],'execution_registry_enabled':True}},
-    'memory':{'provider':'colony-memory','config':{'contact_id':owner,'url':base}}}))
-import colony_hermes
+    'memory':{'provider':'apsimo-memory','config':{'contact_id':owner,'url':base}}}))
+import apsimo_hermes
 first_hook=threading.Event(); second_queued=threading.Event(); release=threading.Event()
-original_get=colony_hermes.ColonyClient.get
+original_get=apsimo_hermes.ColonyClient.get
 def get(self,path,**kwargs):
     if (path=='/v1/host/contacts/resolve' and kwargs.get('params',{}).get('address')=='+15550007160'
             and threading.current_thread().name.startswith('hermes-hook-pre_llm_call')):
         first_hook.set()
         assert release.wait(15), 'second native turn failed to overlap first callback'
     return original_get(self,path,**kwargs)
-colony_hermes.ColonyClient.get=get
+apsimo_hermes.ColonyClient.get=get
 from hermes_cli.plugins import get_plugin_manager
 if native:
     import hermes_cli.plugins
     assert Path(hermes_cli.plugins.__file__).resolve().is_relative_to(Path(native).resolve())
 plugin_manager=get_plugin_manager()
 plugin_manager.discover_and_load()
-assert plugin_manager._plugins['colony'].enabled
+assert plugin_manager._plugins['apsimo'].enabled
 # Observe real admission behind the running callback, then let both turns
 # proceed. Waiting for the second whole turn here would make a circular wait
 # under Hermes's healthy-overlap serialization.
@@ -139,7 +139,7 @@ try:
             agent._user_id='+1555000716'+str(index)
             agent._cached_system_prompt='Neutral identity.'; agent._use_prompt_caching=False
             agent.compression_enabled=False; agent.save_trajectories=False
-            manager=MemoryManager(); manager.add_provider(load_memory_provider('colony-memory'))
+            manager=MemoryManager(); manager.add_provider(load_memory_provider('apsimo-memory'))
             manager.initialize_all(agent.session_id,hermes_home=str(home),platform='sms')
             agent._memory_manager=manager; agents.append(agent)
         first=threading.Thread(target=run,args=(0,)); first.start()
@@ -153,7 +153,7 @@ try:
     for index in range(2):
         first_request=json.dumps(requests[index][0])
         tools=[row['content'] for row in results[index]['messages'] if row.get('role')=='tool']
-        scope=colony_hermes._TRANSPORT_SCOPES.for_session(agents[index].session_id)
+        scope=apsimo_hermes._TRANSPORT_SCOPES.for_session(agents[index].session_id)
         with ledger._connect() as db:
             observed=db.execute('SELECT contact_id FROM execution_observations WHERE session_id=?',
                                 (agents[index].session_id,)).fetchall()

@@ -9,9 +9,9 @@ PROBE = r'''
 import json,sys
 from dataclasses import replace
 sys.path.insert(0,sys.argv[1])
-from colony_hermes import _TransportScope
-from colony_hermes.request_memory import RequestMemory
-from colony_hermes.client import source_message_hash
+from apsimo_hermes import _TransportScope
+from apsimo_hermes.request_memory import RequestMemory
+from apsimo_hermes.client import source_message_hash
 
 class Reply:
     def json(self): return {'head':0,'through':0,'complete':True,'sources_current':True}

@@ -19,19 +19,19 @@ if sys.argv[3]: sys.path.append(sys.argv[3])
 import httpx
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from colony_sidecar.api.middleware import ApiKeyMiddleware
-from colony_sidecar.api.routers import host, executions
-from colony_sidecar.turns import get_turn_idempotency_ledger
-from colony_hermes.client import source_message_hash
+from apsimo.api.middleware import ApiKeyMiddleware
+from apsimo.api.routers import host, executions
+from apsimo.turns import get_turn_idempotency_ledger
+from apsimo_hermes.client import source_message_hash
 # This fixture qualifies source admission and native recall, not the latency
 # of cold in-process ASGI/SQLite work on a shared CI runner. Keep only the
 # adapter's local deadline clocks deterministic; native scheduling, wall
 # timestamps, and the dedicated deadline tests retain their real clocks.
 import time
 from types import SimpleNamespace
-import colony_hermes.client as client_module
-import colony_hermes.request_memory as request_memory_module
-import colony_hermes.request_work as request_work_module
+import apsimo_hermes.client as client_module
+import apsimo_hermes.request_memory as request_memory_module
+import apsimo_hermes.request_work as request_work_module
 clock=SimpleNamespace(monotonic=lambda:1000.0,time=time.time,sleep=time.sleep)
 client_module.time=request_memory_module.time=request_work_module.time=clock
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
@@ -49,9 +49,9 @@ keyring.write_text(json.dumps({'version':1,'principals':[{
 (home/'config.yaml').write_text(json.dumps({
  'model':{'provider':'custom','default':'fixture-model','base_url':'http://model.fixture/v1'},
  'auxiliary':{'title_generation':{'enabled':False}},
- 'agent':{'max_turns':5},'toolsets':['colony','delegation'],
- 'memory':{'provider':'colony-memory','config':{'contact_id':'owner','url':'http://fixture','api_key':secret}},
- 'plugins':{'enabled':['colony'],'colony':{'owner_contact_id':'owner','url':'http://fixture',
+ 'agent':{'max_turns':5},'toolsets':['apsimo','delegation'],
+ 'memory':{'provider':'apsimo-memory','config':{'contact_id':'owner','url':'http://fixture','api_key':secret}},
+ 'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':'owner','url':'http://fixture',
   'api_key':secret,'attested_system_platforms':['cli'],
   'turn_outbox_path':str(home/'outbox.db'),'execution_registry_enabled':True}}}))
 app=FastAPI();app.add_middleware(ApiKeyMiddleware,keyring_path=str(keyring))
@@ -97,7 +97,7 @@ def respond(request):
  text=json.dumps(body['messages']);step=len(generation)
  if mode=='supplied':
   assert step<=4, 'Unexpected native generation request'
-  from colony_hermes.input_provenance import current
+  from apsimo_hermes.input_provenance import current
   supplied=current();assert supplied is not None
   if step==1:
    current_user=next(row for row in reversed(body['messages']) if row['role']=='user')
@@ -117,13 +117,13 @@ def respond(request):
    message={'role':'assistant','content':None,'tool_calls':[{'id':'delegate-one','type':'function',
     'function':{'name':'delegate_task','arguments':json.dumps({'tasks':[{
      'goal':'Read the supplied lamp maintenance record and report the exception.',
-     'context':'Exact source handle: '+json.dumps(ref),'toolsets':['colony']}]})}}]};finish='tool_calls'
+     'context':'Exact source handle: '+json.dumps(ref),'toolsets':['apsimo']}]})}}]};finish='tool_calls'
    if scenario=='erase_during':
     ledger.erase_sources(contact_id='owner',turn_ids=['automatic-record'])
     mode='erased'
     message={'role':'assistant','content':None,'tool_calls':[{'id':'read-erased','type':'function',
      'function':{'name':'tool_call','arguments':json.dumps({
-      'name':'colony_memory_read_source','arguments':ref})}}]};finish='tool_calls'
+      'name':'apsimo_memory_read_source','arguments':ref})}}]};finish='tool_calls'
   elif step==2:
    assert ref['source_version'] in text,body
    # The real native child inherits the checked source scope across its worker
@@ -133,7 +133,7 @@ def respond(request):
    assert len(child_sessions)==1,child_sessions
    assert supplied.memory_contact(child_sessions[0])=='owner'
    assert supplied.memory_contact('unrelated-child')==''
-   from colony_sidecar.turns.executions import registry
+   from apsimo.turns.executions import registry
    observed=registry().view(contact_id='owner',owner=True,session_id=child_sessions[0])['items']
    child=next(row for row in observed if row['session_id']==child_sessions[0])
    parent_row=next(row for row in observed if row['execution_id']==child['parent_execution_id'])
@@ -141,7 +141,7 @@ def respond(request):
    assert parent_row['request_input']['excerpt']==original,parent_row
    message={'role':'assistant','content':None,'tool_calls':[{'id':'read-one','type':'function',
     'function':{'name':'tool_call','arguments':json.dumps({
-     'name':'colony_memory_read_source','arguments':ref})}}]};finish='tool_calls'
+     'name':'apsimo_memory_read_source','arguments':ref})}}]};finish='tool_calls'
   else:
    tool_rows=[row for row in body['messages'] if row['role']=='tool']
    assert len(tool_rows)==1,tool_rows
@@ -200,12 +200,12 @@ assert 'COLONY_MEMORY_DEFAULT_CONTEXT_AUTHORITY' not in os.environ
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
 from run_agent import AIAgent
-from colony_hermes.input_provenance import supplied_input, transport_input
-from colony_hermes import TurnOutbox
+from apsimo_hermes.input_provenance import supplied_input, transport_input
+from apsimo_hermes import TurnOutbox
 def agent(platform='cli'):
  value=AIAgent(api_key='fixture',base_url='http://model.fixture/v1',provider='custom',
   model='fixture-model',quiet_mode=True,skip_context_files=True,skip_memory=False,
-  platform=platform,max_iterations=5,enabled_toolsets=['colony','delegation'])
+  platform=platform,max_iterations=5,enabled_toolsets=['apsimo','delegation'])
  value.save_trajectories=False
  return value
 if scenario in ('initial_timeout','initial_remote_protocol','initial_http_503'):

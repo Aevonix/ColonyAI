@@ -124,7 +124,7 @@ class NativeDrafts:
             HERMES_HOME=str(self.home),
             PYTHONPATH=os.pathsep.join(filter(None, (manifest['sidecar_module_root'], environment.get('PYTHONPATH', '')))))
         child = subprocess.run([manifest['sidecar_python'], '-B', '-m',
-            'colony_sidecar.setup_local_work', '--refresh-role', str(state)],
+            'apsimo.setup_local_work', '--refresh-role', str(state)],
             capture_output=True, text=True, timeout=30, env=environment)
         if child.returncode:
             raise RuntimeError('planning_role_refresh_failed')

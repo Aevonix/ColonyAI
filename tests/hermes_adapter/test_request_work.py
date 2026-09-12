@@ -22,12 +22,12 @@ platform=sys.argv[4]
 import httpx
 import uvicorn
 from fastapi import FastAPI, Response
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import executions, host
-from colony_sidecar.contacts.config import ContactsConfig
-from colony_sidecar.contacts.store import SQLiteContactStore
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.turns import get_turn_idempotency_ledger
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import executions, host
+from apsimo.contacts.config import ContactsConfig
+from apsimo.contacts.store import SQLiteContactStore
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.turns import get_turn_idempotency_ledger
 
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
@@ -81,16 +81,16 @@ def local_only(self,address):
     return original_connect(self,address)
 socket.socket.connect=local_only
 (home/'config.yaml').write_text(json.dumps({
-    'plugins':{'enabled':['colony'],'colony':{'owner_contact_id':owner,'url':base,
+    'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':owner,'url':base,
         'attested_system_platforms':['cli'],'turn_writer_platforms':[]}},
-    'memory':{'provider':'colony-memory','config':{'contact_id':owner,'url':base}}}))
+    'memory':{'provider':'apsimo-memory','config':{'contact_id':owner,'url':base}}}))
 
 from hermes_cli.plugins import get_plugin_manager
 get_plugin_manager().discover_and_load()
-assert get_plugin_manager()._plugins['colony'].enabled
+assert get_plugin_manager()._plugins['apsimo'].enabled
 from plugins.memory import load_memory_provider
 from agent.memory_manager import MemoryManager
-provider=load_memory_provider('colony-memory')
+provider=load_memory_provider('apsimo-memory')
 manager=MemoryManager(); manager.add_provider(provider)
 manager.initialize_all('neutral-owner-session', hermes_home=str(home), platform=platform)
 from gateway.session_context import set_session_vars, clear_session_vars

@@ -114,7 +114,7 @@ def _parameters(
     }
 
 
-# Governed action schemas come directly from colony_hostworker.catalog, the
+# Governed action schemas come directly from apsimo_hostworker.catalog, the
 # authoritative catalog.  Reads and owner-message intents remain local because
 # they are not part of that governed-action execution boundary.  The merged
 # model catalog is sorted before its exact JSON shape is hashed for preflight.

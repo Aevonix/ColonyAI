@@ -19,7 +19,7 @@ dev = ["pytest>=8.0"]
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo_hostworker*", "colony_hostworker*"]
+include = ["apsimo_hostworker*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

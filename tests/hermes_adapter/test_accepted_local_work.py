@@ -18,7 +18,7 @@ from run_agent import AIAgent
 import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.
 OPENAI_TARGET = 'run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
-from colony_hermes.local_work_runner import main
+from apsimo_hermes.local_work_runner import main
 home=Path(os.environ['HERMES_HOME'])
 job=next(j for j in json.loads((home/'cron/jobs.json').read_text())['jobs'] if j['script']=='accepted-work.py')
 counter=home/'requests.jsonl'
@@ -34,7 +34,7 @@ def response(**kwargs):
     if not rows:
         if MODE=='cancel':
             urlopen(Request(BASE+'/fixture/cancel',data=b'{}',headers={'Content-Type':'application/json'})).close()
-            calls=[call('tool_call',{'name':'colony_read_work_source','arguments':{'source':0}})]
+            calls=[call('tool_call',{'name':'apsimo_read_work_source','arguments':{'source':0}})]
         else:
             observed=json.load(urlopen(BASE+'/v1/host/executions?contact_id=owner'))
             assert observed['local_work']['items'][0]['status']=='assigned',observed
@@ -42,15 +42,15 @@ def response(**kwargs):
             calls=[call('tool_search',{'queries':['read selected local work source']})]
     elif MODE!='cancel' and 'tools' in json.loads(rows[-1]['content']):
         search=json.loads(rows[-1]['content'])
-        if 'colony_read_work_source' not in search['tools']:
+        if 'apsimo_read_work_source' not in search['tools']:
             # Native search can decline a weak query. Follow its connected-source
             # hint once; still require real discovery before invoking the tool.
             assert len(rows)==1 and not search['tools'],rows
             sources=search['results'][0]['available_sources']
-            assert any(source['name']=='colony_local_work' for source in sources),search
-            calls=[call('tool_search',{'queries':['colony_local_work read source']})]
+            assert any(source['name']=='apsimo_local_work' for source in sources),search
+            calls=[call('tool_search',{'queries':['apsimo_local_work read source']})]
         else:
-            calls=[call('tool_call',{'name':'colony_read_work_source','arguments':{'source':0}})]
+            calls=[call('tool_call',{'name':'apsimo_read_work_source','arguments':{'source':0}})]
     else:
         if MODE!='cancel':
             assert json.loads(rows[-1]['content'])['native_read']['content'].find('neutral fixture source')>=0,rows
@@ -69,7 +69,7 @@ def initialize(self,*args,**kwargs):
     conversation=self.run_conversation
     def observed_conversation(*a,**k):
         outcome=conversation(*a,**k)
-        from colony_hermes.local_work import ACTIVE
+        from apsimo_hermes.local_work import ACTIVE
         work=ACTIVE.get()
         # Synthetic fixture diagnostics retain the actual completion contract.
         # No retry or change to the native return value is introduced.
@@ -97,11 +97,11 @@ mode=sys.argv[4];worker=sys.argv[5]
 from fastapi import FastAPI,Response
 from fastapi.testclient import TestClient
 import uvicorn
-from colony_sidecar.api.authority import RequestAuthority
-from colony_sidecar.api.routers import commitment_work,host,executions
-from colony_sidecar.commitments.store import CommitmentStore
-from colony_sidecar.initiatives.store import InitiativeStore
-from colony_sidecar.turns.local_work import local_work_view
+from apsimo.api.authority import RequestAuthority
+from apsimo.api.routers import commitment_work,host,executions
+from apsimo.commitments.store import CommitmentStore
+from apsimo.initiatives.store import InitiativeStore
+from apsimo.turns.local_work import local_work_view
 home=Path(os.environ['HERMES_HOME']);home.mkdir(mode=0o700)
 (home/'scripts').mkdir();Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
 state=Path(os.environ['COLONY_STATE_DIR']);state.mkdir()
@@ -127,7 +127,7 @@ listener=socket.socket();listener.bind(('127.0.0.1',0));base='http://127.0.0.1:'
 server=uvicorn.Server(uvicorn.Config(app,log_level='error',lifespan='off'))
 thread=threading.Thread(target=server.run,kwargs={'sockets':[listener]},daemon=True);thread.start()
 while not server.started:time.sleep(.01)
-config={'plugins':{'enabled':['colony'],'colony':{'owner_contact_id':'owner','url':base,'attested_system_platforms':['cli'],'turn_writer_platforms':[]}},
+config={'plugins':{'enabled':['apsimo'],'apsimo':{'owner_contact_id':'owner','url':base,'attested_system_platforms':['cli'],'turn_writer_platforms':[]}},
         'providers':{'fixture':{'base_url':'http://127.0.0.1:1/v1','api_key':'fixture','default_model':'fixture/local'}},
         'model':{'default':'fixture/local'},'tools':{'tool_search':{'enabled':'on'}}}
 (home/'config.yaml').write_text(json.dumps(config))
@@ -145,7 +145,7 @@ get_plugin_manager().discover_and_load()
 invoke_hook('pre_llm_call',session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',platform='cli',sender_id='',user_message='Please summarize this selected neutral file for my obligation.')
 accept_args={'question':'Summarize the selected note','sources':[str(source)]}
 if mode!='standalone':accept_args['commitment_id']=obligation['id']
-accepted=json.loads(handle_function_call('colony_accept_local_draft',accept_args,session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',tool_call_id='accept'))
+accepted=json.loads(handle_function_call('apsimo_accept_local_draft',accept_args,session_id='owner-chat',task_id='owner-task',turn_id='owner-turn',tool_call_id='accept'))
 assert accepted.get('status')=='pending',accepted
 assert accepted['context']['commitment_id']==(None if mode=='standalone' else obligation['id'])
 assert local_work_view()['items'][0]['liveness']=='not_started'
@@ -206,7 +206,7 @@ def test_packaged_draft_json_format_boundary(artifacts, tmp_path):
     script = r'''
 import json,sys
 sys.path.insert(0,sys.argv[1])
-from colony_hermes.model_response import decode_json_response
+from apsimo_hermes.model_response import decode_json_response
 value={'draft':'Neutral source [source:0].','sources':[0]}
 raw=json.dumps(value)
 for body in [raw, '\n '+raw+' \n', '```json\n'+raw+'\n```', '```\r\n'+raw+'\r\n```']:

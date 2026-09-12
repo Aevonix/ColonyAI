@@ -1921,7 +1921,7 @@ def test_copied_profile_ownership_and_explicit_deselection(monkeypatch, tmp_path
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(content)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    # The copied layout need not have an installed colony_memory wheel, and
+    # The copied layout need not have an installed apsimo_memory wheel, and
     # cannot accidentally read one instead of its own sibling implementation.
     monkeypatch.setattr(sys.modules[__name__], "PLUGIN_DIR", home / "plugins" / "apsimo")
     for name in ("COLONY_GENERAL_PLUGIN_ACTIVE", "COLONY_MEMORY_WORKER_TOOLS", "COLONY_MEMORY_TURN_WRITER"):

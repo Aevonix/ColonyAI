@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Back-compat wrapper (v0.20.0) — logic lives in the installed package.
 
-The skills-sync logic moved to ``colony_sidecar.workers.skills_sync``
+The skills-sync logic moved to ``apsimo.workers.skills_sync``
 so pip installs ship it as the ``colony-skills-sync`` console script
 (see sidecar/pyproject.toml [project.scripts]). This file remains so
 existing cron / hermes-cron entries that invoke it by path keep working.
 
 Resolution order:
-  1. import colony_sidecar (installed in this interpreter's environment)
+  1. import apsimo (installed in this interpreter's environment)
   2. sys.path fallback to the repo-relative ``sidecar/`` tree, for the
      common case where this script still runs from a ColonyAI checkout
      without the package installed
@@ -42,7 +42,7 @@ def _resolve_main():
             except ImportError:
                 pass
         sys.stderr.write(
-            "colony-skills-sync: colony_sidecar is not importable from this "
+            "colony-skills-sync: apsimo is not importable from this "
             "interpreter and no repo-relative sidecar/ tree was found.\n"
             "Install the package (pip install colonyai) and either re-run this "
             "script or switch your cron entry to the `colony-skills-sync` "

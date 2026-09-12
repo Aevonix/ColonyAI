@@ -105,7 +105,7 @@ def test_existing_scoped_credentials_reach_only_owner_review_routes(local_api):
 
 
 def test_tick_discovery_is_bounded_and_leaves_other_initiatives_untouched(local_api):
-    from colony_sidecar.api.routers import initiative_work
+    from apsimo.api.routers import initiative_work
     api, _, initiatives, _, _ = local_api
     api.app.include_router(initiative_work.router)
     defaults = dict(type='operational', source_type='operational', created_by='autonomy_loop',

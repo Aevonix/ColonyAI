@@ -6,8 +6,8 @@ def test_native_source_reader_pages_and_reconciles_actual_tool_outputs(artifacts
     probe = annotation.PROBE
     old = "def dispatch(args,*,session='later',task='review-task',turn='review-turn',call='operator-call'):"
     assert probe.count(old) == 1
-    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='colony_memory_annotate'"))
-    old = "name='colony_memory_annotate',arguments=json.dumps(args)"
+    probe = probe.replace(old, old.replace("call='operator-call'", "call='operator-call',tool='apsimo_memory_annotate'"))
+    old = "name='apsimo_memory_annotate',arguments=json.dumps(args)"
     assert probe.count(old) == 1
     probe = probe.replace(old, "name=tool,arguments=json.dumps(args)")
     old = "return json.JSONDecoder().raw_decode(results[0]['content'])[0]"
@@ -28,7 +28,7 @@ messages=[{'role':'user','content':compose_user_api_content('',recalled,'')}]
 args=dict(long_ref); pages=[]; count=0
 while True:
     opened=dispatch(args,session='reader',task='reader-task',turn='reader-turn',
-                    call='source-read-'+str(count),tool='colony_memory_read_source')
+                    call='source-read-'+str(count),tool='apsimo_memory_read_source')
     assert 'error' not in opened,opened
     result=dict(dispatch.last_result)
     messages.append(result)

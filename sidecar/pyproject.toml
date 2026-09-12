@@ -55,15 +55,10 @@ apsimo-agent-bridge = "apsimo.workers.agent_bridge:main"
 apsimo-queue-worker = "apsimo.workers.queue_worker:main"
 apsimo-skills-sync = "apsimo.workers.skills_sync:main"
 apsimo-worker = "apsimo.workers.colony_worker:main"
-colony = "apsimo.cli:main"
-colony-agent-bridge = "apsimo.workers.agent_bridge:main"
-colony-queue-worker = "apsimo.workers.queue_worker:main"
-colony-skills-sync = "apsimo.workers.skills_sync:main"
-colony-worker = "apsimo.workers.colony_worker:main"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["apsimo*", "colony_sidecar*"]
+include = ["apsimo*"]
 exclude = ["*.tests", "*.tests.*", "*.test_*", "*.conftest"]
 
 [tool.setuptools.package-data]

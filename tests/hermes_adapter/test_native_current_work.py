@@ -41,8 +41,8 @@ try:
     while not (home/'scripts'/'started').exists() and thread.is_alive() and time.monotonic()<deadline:
         time.sleep(.02)
     assert (home/'scripts'/'started').exists(), errors
-    from colony_sidecar.turns.hermes_work import cron_view
-    from colony_sidecar.turns.executions import registry, format_view
+    from apsimo.turns.hermes_work import cron_view
+    from apsimo.turns.executions import registry, format_view
     view=registry().view(contact_id='fixture-owner', owner=True)
     view['native_cron']=cron_view()
     active=view['native_cron']['items']
@@ -77,14 +77,14 @@ native=sys.argv[3]
 if native: sys.path.insert(2,native)
 home=Path(os.environ['HERMES_HOME']); home.mkdir()
 Path(os.environ['HERMES_BUNDLED_PLUGINS']).mkdir()
-(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['colony'],'colony':{
+(home/'config.yaml').write_text(json.dumps({'plugins':{'enabled':['apsimo'],'apsimo':{
     'owner_contact_id':'fixture-owner','attested_system_platforms':['cli'],
     'execution_registry_enabled':True,'turn_outbox_path':str(home/'outbox.db')}}}))
 fixture=home/'neutral.txt'; fixture.write_text('NEUTRAL_CHILD_FILE')
 def no_network(*a, **kw): raise AssertionError('No network in controlled native qualification')
 socket.socket.connect=no_network; socket.create_connection=no_network
-from colony_sidecar.turns.executions import registry
-import colony_hermes
+from apsimo.turns.executions import registry
+import apsimo_hermes
 calls=[]
 parent_ending=threading.Event(); child_queued=threading.Event(); child_ended=threading.Event()
 class Reply:
@@ -108,21 +108,21 @@ def post(self,path,**kw):
 def get(self,path,**kw):
     if path=='/v1/host/contacts/resolve': return Reply({'contact_id':'fixture-guest'})
     raise RuntimeError('No central service configured')
-colony_hermes.ColonyClient.post=post; colony_hermes.ColonyClient.get=get
+apsimo_hermes.ColonyClient.post=post; apsimo_hermes.ColonyClient.get=get
 from hermes_cli.plugins import get_plugin_manager
 if native:
     import hermes_cli.plugins
     assert Path(hermes_cli.plugins.__file__).resolve().is_relative_to(Path(native).resolve())
 plugin_manager=get_plugin_manager()
 plugin_manager.discover_and_load()
-assert plugin_manager._plugins['colony'].enabled
+assert plugin_manager._plugins['apsimo'].enabled
 condition=plugin_manager._hook_timeout_running_cond
 original_wait=condition.wait
 def observe_wait(timeout=None):
     if parent_ending.is_set() and not child_ended.is_set():
         child_queued.set()
     return original_wait(timeout)
-assert Path(colony_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
+assert Path(apsimo_hermes.__file__).resolve().is_relative_to(Path(sys.argv[1]))
 from run_agent import AIAgent
 import run_agent
 # 0.21.0 binds eager aliases; 0.21.1 calls the defining modules directly.

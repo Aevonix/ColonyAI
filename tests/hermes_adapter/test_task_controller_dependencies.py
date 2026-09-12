@@ -18,10 +18,10 @@ socket.socket.connect = no_network
 socket.create_connection = no_network
 from gateway.config import GatewayConfig, PlatformConfig
 from gateway.session import SessionStore
-from colony_hermes.client import TurnOutbox
-from colony_hermes.task_controller import NativeTasks, configured_tasks
-from colony_hermes.task_handoffs import TaskHandoffs, TaskHandoffError
-from colony_hermes.native_task_platform import NativeTaskAdapter
+from apsimo_hermes.client import TurnOutbox
+from apsimo_hermes.task_controller import NativeTasks, configured_tasks
+from apsimo_hermes.task_handoffs import TaskHandoffs, TaskHandoffError
+from apsimo_hermes.native_task_platform import NativeTaskAdapter
 
 class DeploymentError(ValueError): pass
 @contextmanager

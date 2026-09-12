@@ -854,13 +854,13 @@ def test_legacy_state_directory_keeps_global_dotenv_and_launch_precedence(tmp_pa
     assert 'WRONG_STATE_ENV' not in os.environ
 
 
-def test_explicit_rename_keeps_old_state_forwarders_credentials_and_work(args, monkeypatch):
-    """Exercise the mixed old/new layout, including a retained worker and retry."""
+def test_canonical_refresh_keeps_bound_paths_credentials_and_work(args, monkeypatch):
+    """Refresh canonical packages through existing directory and worker bindings."""
     home = Path(args.hermes_home)
     state = home/'colony'
     adapter = state/'adapter'
     old_resources = {}
-    for module, name in [('colony_hermes', 'colony'), ('colony_memory', 'colony-memory')]:
+    for module, name in [('apsimo_hermes', 'apsimo'), ('apsimo_memory', 'apsimo-memory')]:
         old_resources[module+'/__init__.py'] = b'# retained historical implementation\n'
         old_resources[module+'/plugin.yaml'] = ('name: '+name+'\n').encode()
     for name, content in old_resources.items():
@@ -888,21 +888,16 @@ def test_explicit_rename_keeps_old_state_forwarders_credentials_and_work(args, m
     (worker/'config.yaml').write_text(yaml.safe_dump({'plugins':{'enabled':['colony'],
         'colony':{'instance_dir':str(state)}}, 'toolsets':['colony','kanban'], 'model':{'default':'keep-worker'}}))
     forwarders = []
-    for profile, directories in [(home, [('colony','colony_hermes'),('colony-memory','colony_memory')]),
-                                 (worker, [('colony','colony_hermes')])]:
+    for profile, directories in [(home, [('colony','apsimo_hermes'),('colony-memory','apsimo_memory')]),
+                                 (worker, [('colony','apsimo_hermes')])]:
         for directory, module in directories:
             target = profile/'plugins'/directory
             target.mkdir(parents=True)
             forwarder = target/'__init__.py'
-            forwarder.write_text(setup_hermes._forwarder(adapter, module, module=='colony_memory'))
+            forwarder.write_text(setup_hermes._forwarder(adapter, module, module=='apsimo_memory'))
             forwarders.append(forwarder)
             (target/'plugin.yaml').write_bytes(old_resources[module+'/plugin.yaml'])
     candidate = setup_hermes._adapter_resources(args.adapter_wheel)
-    for old, new, name in [('colony_hermes','apsimo_hermes','apsimo'),
-                            ('colony_memory','apsimo_memory','apsimo-memory')]:
-        candidate[new+'/plugin.yaml'] = ('name: '+name+'\n').encode()
-        candidate[old+'/__init__.py'] = ('# compatibility import resource for '+new+'\n').encode()
-        candidate[old+'/plugin.yaml'] = candidate[new+'/plugin.yaml']
     monkeypatch.setattr(setup_hermes, '_adapter_resources', lambda *a: candidate)
     monkeypatch.setattr(httpx, 'post', lambda *a, **k: pytest.fail('Rename must not call a model'))
     retained = [home/'.env', home/'SOUL.md', state/'.env', state/'retained-memory.db', *forwarders]
@@ -935,7 +930,7 @@ def test_explicit_rename_keeps_old_state_forwarders_credentials_and_work(args, m
     assert 'APSIMO_API_KEY' not in os.environ
 
 
-def test_installed_probe_checks_actual_metadata_aliases_and_module_bytes(tmp_path):
+def test_installed_probe_checks_canonical_metadata_and_module_bytes(tmp_path):
     import subprocess
     import sys
     import venv
@@ -956,16 +951,16 @@ def test_installed_probe_checks_actual_metadata_aliases_and_module_bytes(tmp_pat
     dist.mkdir()
     (dist/'METADATA').write_text('Metadata-Version: 2.1\nName: apsimo-hermes\nVersion: 1.3.0\n')
     (dist/'entry_points.txt').write_text(
-        '[hermes_agent.plugins]\napsimo = apsimo_hermes\ncolony = apsimo_hermes\n'
-        '[hermes_agent.memory_providers]\napsimo-memory = apsimo_memory\ncolony-memory = apsimo_memory\n')
+        '[hermes_agent.plugins]\napsimo = apsimo_hermes\n'
+        '[hermes_agent.memory_providers]\napsimo-memory = apsimo_memory\n')
     result = setup_hermes._adapter_binding(python, resources)
     assert result['mode'] == 'native-installed' and result['version'] == '1.3.0'
     assert set(result['sources']) == {'apsimo_hermes','apsimo_memory'}
-    # A second old distribution must not be hidden by a directory fallback.
-    old = site/'colony_hermes-1.2.1.dist-info'
+    # Conflicting canonical discovery must not be hidden by a directory fallback.
+    old = site/'unrelated_adapter-1.0.0.dist-info'
     old.mkdir()
-    (old/'METADATA').write_text('Metadata-Version: 2.1\nName: colony-hermes\nVersion: 1.2.1\n')
-    (old/'entry_points.txt').write_text('[hermes_agent.plugins]\ncolony = colony_hermes\n')
+    (old/'METADATA').write_text('Metadata-Version: 2.1\nName: unrelated-adapter\nVersion: 1.0.0\n')
+    (old/'entry_points.txt').write_text('[hermes_agent.plugins]\napsimo = unrelated_adapter\n')
     with pytest.raises(ValueError, match='incomplete or different'):
         setup_hermes._adapter_binding(python, resources)
     (old/'entry_points.txt').unlink()

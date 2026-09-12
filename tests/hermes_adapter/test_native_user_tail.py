@@ -8,7 +8,7 @@ def test_mismatched_or_unenriched_native_tail_cannot_restore_context(artifacts,t
     run_python('-I','-c',r'''
 import sys
 sys.path.insert(0,sys.argv[1])
-from colony_hermes.request_memory import _restore_current_suffix
+from apsimo_hermes.request_memory import _restore_current_suffix
 current={'role':'user','content':'Continue the accepted task.',
  'api_content':'Continue the accepted task.\n\n<memory-context>current native suffix</memory-context>'}
 tail=['Earlier instruction.','Continue the accepted task.']
