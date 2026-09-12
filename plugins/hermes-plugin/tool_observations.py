@@ -19,6 +19,15 @@ _HINT_MARKER = 'apsimo-observation-candidates-v1'
 _CATALOG_HEADER = 'Deferred tool catalog (call schemas via `tool_describe`, invoke via `tool_call`):'
 
 
+def argument_preview(arguments):
+    """A display label from execution arguments, never a replacement for evidence."""
+    try:
+        text = json.dumps(arguments, sort_keys=True, ensure_ascii=True, separators=(',', ':'))
+    except (TypeError, ValueError):
+        return {'arguments_preview': None, 'arguments_truncated': False}
+    return {'arguments_preview': text[:128], 'arguments_truncated': len(text) > 128}
+
+
 def _available_retention(request):
     if (request.get('tool_choice') in ('none', {'type': 'none'})
             or request.get('function_call') == 'none'):
@@ -115,7 +124,7 @@ class ToolObservations:
         self.client, self.outbox, self.request_memory = client, outbox, request_memory
         self._lock, self._turns = threading.RLock(), OrderedDict()
 
-    def completed(self, scope, context, value):
+    def completed(self, scope, context, value, *, arguments=None):
         key, call_id, name = _key(scope), context.get('tool_call_id'), context.get('tool_name')
         request_id = context.get('api_request_id')
         if (key is None or not isinstance(request_id, str) or not 1 <= len(request_id) <= 256
@@ -128,6 +137,7 @@ class ToolObservations:
             # Retrying the same observed call cannot replace its bytes.
             turn.setdefault(call_id, {'name': name, 'sha256': hashlib.sha256(value.encode()).hexdigest(),
                                        'visible': {}, 'api_request_id': request_id,
+                'arguments': argument_preview(arguments),
                 'input_sha256': hashlib.sha256(scope.user_message.encode()).hexdigest(), 'sources': self.request_memory.supplied_snapshot(scope)})
             while len(turn) > 16:
                 turn.popitem(last=False)
@@ -154,7 +164,7 @@ class ToolObservations:
                     record['visible'][request_id] = name
                     if (record['sources'] is not None
                             and record['input_sha256'] == hashlib.sha256(scope.user_message.encode()).hexdigest()):
-                        eligible.append({'call_id': call_id, 'tool_name': name})
+                        eligible.append({'call_id': call_id, 'tool_name': name, **record['arguments']})
                 while len(record['visible']) > 8:
                     record['visible'].pop(next(iter(record['visible'])))
         available = _available_retention(request)
@@ -163,14 +173,16 @@ class ToolObservations:
         name, deferred = available
         guidance = (f'For durable findings or meaningful outcomes with likely future use, you may retain '
             f'an original tool result using {name}(call_id, reason). Skip incidental output, duplicate '
-            'status, transient noise and secrets. These are candidates, not saved memories. ')
+            'status, transient noise and secrets. These are candidates, not saved memories. '
+            'Match the call ID to its execution arguments; truncated previews require checking the original call. ')
         if deferred:
             guidance += f'Load {name} with tool_describe, then invoke it with tool_call. '
         guidance += '\nEligible completed calls in this request: '
         listed = []
+        wrapper_chars = len(f'[{_HINT_MARKER}]\n\n[/{_HINT_MARKER}]')
         for item in reversed(eligible):
             encoded = json.dumps([*listed, item], ensure_ascii=True).replace('[/', r'\u005b/')
-            if len(guidance) + len(encoded) > 2048 or len(listed) == 8:
+            if wrapper_chars + len(guidance) + len(encoded) > 2048 or len(listed) == 8:
                 break
             listed.append(item)
         if not listed:
@@ -238,7 +250,9 @@ class ToolObservations:
                 receipt = self.outbox.enqueue(payload['turn_id'], payload)
             return json.dumps({'accepted': receipt['state'] == 'delivered', 'state': receipt['state'],
                 'source_id': payload['turn_id'], 'source_recorded': receipt['state'] == 'delivered',
-                'kind': 'original_tool_quotation', 'selection_author': 'model'})
+                'kind': 'original_tool_quotation', 'selection_author': 'model',
+                'selected_call': {**{key: payload['observation']['native'][key] for key in
+                    ('tool_call_id', 'tool_name', 'message_id', 'result_sha256')}, **record['arguments']}})
         except ValueError as exc:
             return json.dumps({'accepted': False, 'source_recorded': False, 'error': str(exc)})
         except Exception:

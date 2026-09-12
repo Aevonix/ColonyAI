@@ -2703,6 +2703,7 @@ def register(ctx: Any) -> None:
                 if denial is not None:
                     return denial
             def dispatch(selected_args):
+                observed_arguments = copy.deepcopy(selected_args)
                 value = next_call(selected_args)
                 context = _TOOL_EXECUTION_CONTEXT.get() or {}
                 if context.get('tool_name') == 'session_search':
@@ -2713,7 +2714,7 @@ def register(ctx: Any) -> None:
                     return reconcile(selected_args,value,scope,context,request_memory)
                 scope = _TRANSPORT_SCOPES.for_execution(session_id=context.get('session_id',''),
                     task_id=context.get('task_id',''), turn_id=context.get('turn_id',''))
-                tool_observations.completed(scope, context, value)
+                tool_observations.completed(scope, context, value, arguments=observed_arguments)
                 return value
             if execution_observer is not None:
                 return execution_observer.tool(dispatch, args, **{
