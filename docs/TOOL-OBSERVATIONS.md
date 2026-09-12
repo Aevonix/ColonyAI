@@ -8,11 +8,15 @@ memory tool by name. The reason explains why the result is useful; it is not a
 replacement for its contents.
 
 After eligible completed calls appear in the current request, the adapter adds
-a short request-only hint with their exact call IDs and tool names. It appears
+a short request-only hint with their exact call IDs, tool names and bounded
+execution-argument previews. Calls using the same tool can be distinguished by
+what they actually requested. A truncated preview is explicitly marked; check
+the original call when the preview is insufficient. It appears
 only when the retention tool is directly available or explicitly listed in the
 native deferred catalog with its describe/call bridge. This also makes IDs
 readable when a model's chat template omits API call metadata. The hint lists at
-most eight candidates within 2,048 characters of guidance; it contains no tool
+most eight candidates, newest first, within 2,048 characters including the hint
+wrapper; it contains no tool
 result text and does not say anything was saved. It asks the agent to select
 durable findings and skip incidental output. With no eligible calls or no
 available retention tool, the hint is removed. Tool choice remains unchanged.
@@ -36,6 +40,11 @@ dependent observation and queued retries. The existing outbox handles delivery
 recovery. `state=pending` or an unconfirmed result does not mean that canonical
 memory has saved the observation. A repeated nomination uses the same source
 and the first nomination's reason.
+
+The receipt identifies the selected original by its tool name, call ID, native
+message ID and result hash, alongside the same execution-argument preview. It
+does not claim that the model's reason accurately describes that result. These
+display labels do not change the stored original or its source identity.
 
 Later recall uses the same scoped lexical and semantic source retrieval and
 the same five-item context packet. Retention does not guarantee relevance or

@@ -95,12 +95,13 @@ def native(source_app, monkeypatch, tmp_path):
             **call_context, api_request_id=request_id,
             api_mode='anthropic_messages' if anthropic else 'chat_completions')
     request('api-1')
-    def complete(call_id='call-1', result=RESULT, name='fixture_observe'):
-        call = {'id':call_id,'type':'function','function':{'name':name,'arguments':'{}'}}
+    def complete(call_id='call-1', result=RESULT, name='fixture_observe', arguments=None):
+        arguments = {} if arguments is None else copy.deepcopy(arguments)
+        call = {'id':call_id,'type':'function','function':{'name':name,'arguments':json.dumps(arguments)}}
         messages.append({'role':'assistant','content':None,'tool_calls':[call]})
         db.append_message('native-session','assistant',tool_calls=[call])
         value = native_middleware.run_tool_execution_middleware(**call_context, api_request_id='api-1',
-            tool_name=name, tool_call_id=call_id, args={}, next_call=lambda args: subprocess.run(
+            tool_name=name, tool_call_id=call_id, args=arguments, next_call=lambda args: subprocess.run(
                 [sys.executable, '-c', 'import sys; sys.stdout.write(sys.argv[1])', result],
                 check=True, capture_output=True, text=True, timeout=5).stdout)
         assert value == result
@@ -195,7 +196,7 @@ def test_actual_native_deferred_catalog_and_completed_call_offer_bounded_hint(na
     assert '- apsimo_memory_retain_observation: Retain a useful original tool result in persistent memory.' in schemas['tool_search']['description']
     hints = [row['content'] for row in request['messages'] if row.get('role') == 'system'
              and str(row.get('content', '')).startswith('[apsimo-observation-candidates-v1]')]
-    assert len(hints) == 1 and len(hints[0]) < 2150
+    assert len(hints) == 1 and len(hints[0]) <= 2048
     assert '"call_id": "call-1"' in hints[0] and '"tool_name": "fixture_observe"' in hints[0]
     assert 'tool_describe' in hints[0] and 'tool_call' in hints[0]
     assert 'not saved memories' in hints[0] and RESULT not in hints[0]
@@ -211,6 +212,61 @@ def test_actual_native_responses_conversion_places_hint_in_instructions(native):
     assert '"call_id": "call-1"' in request['instructions']
     assert any(row.get('type') == 'function_call_output' and row.get('output') == RESULT for row in request['input'])
     assert n.retain()['source_recorded']
+
+
+@pytest.mark.parametrize('format', ['chat', 'anthropic', 'responses'])
+def test_same_tool_calls_show_executed_arguments_and_exact_selected_receipt(native, format):
+    n = native
+    earlier = {'command': 'printf first-status'}
+    later = {'command': 'printf detailed-inspection'}
+    message_id = n.complete('earlier-call', 'first-status', 'terminal', earlier)
+    n.complete('later-call', RESULT, 'terminal', later)
+    # A request-side retelling does not replace the actual execution label.
+    n.messages[1]['tool_calls'][0]['function']['arguments'] = json.dumps(later)
+    request = n.request(anthropic=format == 'anthropic', responses=format == 'responses').payload
+    if format == 'chat':
+        hint = next(row['content'] for row in request['messages'] if str(row.get('content', '')).startswith(
+            '[apsimo-observation-candidates-v1]'))
+    else:
+        hint = request['system' if format == 'anthropic' else 'instructions']
+    candidates = json.loads(hint.split('Eligible completed calls in this request: ', 1)[1].split('\n[/', 1)[0])
+    assert [row['call_id'] for row in candidates] == ['later-call', 'earlier-call']
+    assert [json.loads(row['arguments_preview']) for row in candidates] == [later, earlier]
+    assert all(row['tool_name'] == 'terminal' and row['arguments_truncated'] is False for row in candidates)
+
+    # A wrong nomination remains the exact selected original, visibly identified.
+    receipt = n.retain('earlier-call', reason='Retain the detailed inspection outcome.')
+    assert receipt['source_recorded'], receipt
+    selected = receipt['selected_call']
+    assert selected == {'tool_call_id': 'earlier-call', 'tool_name': 'terminal',
+        'message_id': message_id, 'result_sha256': hashlib.sha256(b'first-status').hexdigest(),
+        'arguments_preview': json.dumps(earlier, sort_keys=True, separators=(',', ':')),
+        'arguments_truncated': False}
+    row = next(row for row in n.outbox.snapshot() if row['turn_id'] == receipt['source_id'])
+    observation = row['payload']['observation']
+    assert observation['content'] == 'first-status'
+    assert observation['native']['tool_call_id'] == 'earlier-call'
+    assert 'arguments_preview' not in observation['native']  # Persisted source contract is unchanged.
+    assert n.retain('earlier-call', reason='Another retelling')['selected_call'] == selected
+
+
+def test_argument_previews_are_explicitly_truncated_inside_total_hint_budget(native):
+    n = native
+    arguments = {'command': 'inspect ' + 'z' * 200}
+    for number in range(10):
+        n.complete(f'call-{number}', f'original-{number}', 'terminal', arguments)
+    request = n.request(deferred=True).payload
+    hint = next(row['content'] for row in request['messages'] if str(row.get('content', '')).startswith(
+        '[apsimo-observation-candidates-v1]'))
+    assert len(hint) <= 2048
+    candidates = json.loads(hint.split('Eligible completed calls in this request: ', 1)[1].split('\n[/', 1)[0])
+    assert 1 <= len(candidates) <= 8
+    assert [row['call_id'] for row in candidates] == [f'call-{number}' for number in range(9, 9-len(candidates), -1)]
+    assert all(row['arguments_truncated'] and len(row['arguments_preview']) == 128 for row in candidates)
+    assert all(f'original-{number}' not in hint for number in range(10))
+    receipt = n.retain('call-9')
+    assert receipt['source_recorded'] and receipt['selected_call']['arguments_truncated']
+    assert receipt['selected_call']['arguments_preview'] == candidates[0]['arguments_preview']
 
 
 def test_hint_omits_invented_stale_calls_and_disappears_without_available_tool(native):
