@@ -245,8 +245,12 @@ def test_deadline_during_process_creation_keeps_ownership(tmp_path, monkeypatch)
         assert row['cleanup'] == 'state_directory_removed'
 
 
-@pytest.mark.asyncio
-async def test_native_cancellation_records_real_interruption_and_exit(tmp_path):
+def test_native_cancellation_records_real_interruption_and_exit(tmp_path):
+    import asyncio
+    asyncio.run(_native_cancellation_records_real_interruption_and_exit(tmp_path))
+
+
+async def _native_cancellation_records_real_interruption_and_exit(tmp_path):
     import asyncio
     from pacomind.qualification.native import cases
     from pacomind.qualification.cases import EVALUATORS
@@ -268,8 +272,12 @@ async def test_native_cancellation_records_real_interruption_and_exit(tmp_path):
         assert row['cleanup'] == 'state_directory_removed'
 
 
-@pytest.mark.asyncio
-async def test_incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch):
+def test_incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch):
+    import asyncio
+    asyncio.run(_incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch))
+
+
+async def _incomplete_native_stop_retains_state_and_does_not_start_later_case(tmp_path, monkeypatch):
     """A real owned child ignores TERM; only it is killed, and uncertainty is retained."""
     import asyncio
     import sys
