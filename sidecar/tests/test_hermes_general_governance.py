@@ -1426,6 +1426,7 @@ def test_read_subset_preserves_default_catalog_and_other_capabilities(
         "colony_memory_annotate",
         "colony_memory_forget",
         "colony_memory_read_source",
+        "colony_memory_retain_observation",
         "colony_create_commitment",
         "colony_list_goals",
         "colony_queue_stats",
