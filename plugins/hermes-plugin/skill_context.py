@@ -90,8 +90,10 @@ def _loaded_skills(request, files):
             continue  # The earlier complete result remains the comparison.
         source = files.get(str(row.get('_source_path') or ''))
         if isinstance(row.get('content'), str):
-            loaded[row['name']] = bool(source and source['name'] == row['name']
-                and source['sha256'] == hashlib.sha256(row['content'].encode()).hexdigest())
+            digest = hashlib.sha256(row['content'].encode()).hexdigest()
+            source_matches = bool(source and source['name'] == row['name'])
+            loaded[row['name']] = {'identity': (call_id, digest), 'source_matches': source_matches,
+                'exact': bool(source_matches and source['sha256'] == digest)}
     return loaded
 
 
@@ -190,9 +192,22 @@ class SkillContext:
             if seen is not None and seen['fingerprint'] == fingerprint:
                 updated.update(seen['updated'])
             loaded = _loaded_skills(request, files)
-            updated.update(name for name, fresh in loaded.items() if name in current and not fresh)
-            updated.difference_update(name for name, fresh in loaded.items() if fresh)
-            self._sessions[session] = {'fingerprint': fingerprint, 'updated': updated}
+            stable = seen is not None and seen['fingerprint'] == fingerprint
+            accepted = {}
+            for name, read in loaded.items():
+                identity = read['identity']
+                # Native preprocessing can expand templates or add org headers.
+                # A new actual load after observing this unchanged source version
+                # clears its notice without re-executing preprocessing ourselves.
+                observed_load = stable and read['source_matches'] and (
+                    identity not in seen['reads'] or seen['accepted'].get(name) == identity)
+                if read['exact'] or observed_load:
+                    updated.discard(name)
+                    accepted[name] = identity
+                elif name in current:
+                    updated.add(name)
+            self._sessions[session] = {'fingerprint': fingerprint, 'updated': updated,
+                'reads': {read['identity'] for read in loaded.values()}, 'accepted': accepted}
             self._sessions.move_to_end(session)
             while len(self._sessions) > 128:
                 self._sessions.popitem(last=False)
