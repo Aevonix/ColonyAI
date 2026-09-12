@@ -59,6 +59,9 @@ still need improvement and testing. Models still make unsupported claims.
 Complete forgetting across old transcripts, unlinked copies and backups remains
 unfinished.
 
+[Runtime logs](docs/RUNTIME-LOGGING.md) have size and retention limits, with
+routine successful polling omitted to keep operational failures readable.
+
 Automatic persistent opinions are experimental and disabled by default. Trust
 and relationship estimates are separate from permissions. Useful autonomous
 self-improvement still needs an end-to-end demonstration.
