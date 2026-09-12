@@ -184,6 +184,27 @@ unrelated messages remain. New graph summaries carry `source_uri=turn:<id>` and
 is pending. The response separates source erasure from graph cleanup and host
 reconciliation. A repeated request retries the same derived cleanup targets.
 
+New ordinary communication summaries retain the canonical contact, turn, session
+and exact message hashes through the existing source-lineage reader. Erasure
+removes their incoming and outgoing summary rows; startup and summary reads
+reconcile missed cleanup, and writes check their source before and after insertion.
+Transport receipt metadata and unrelated contact history remain. The additive
+`communications_cleanup` field reports only `source_linked_summaries_only` scope.
+`communications_unlinked_rows` counts same-contact non-receipt summaries without
+lineage. Those rows remain: matching their prose, session or time is insufficient
+to establish a source. Summary-only turns without a canonical source no longer
+add unlinked prose to this ledger. Older readers ignore the new column and do not
+provide this cleanup behavior; retain a reader with this change when rolling back
+if communication-summary erasure must remain active.
+
+Cleanup status is separate from canonical erasure. `complete` means the named
+cleanup ran successfully, `pending` means it failed, and `unavailable` means its
+store was not available. An explicitly disabled graph or embedding store reports
+`disabled_not_checked`, which makes no claim about bytes retained on disk. The
+existing `host_reconciliation` field reports `not_observed`: this response exposes
+an erasure-feed watermark but does not measure which hosts have applied it.
+Host outboxes and request middleware still reconcile their own copies on contact.
+
 New native answers retain the authorized canonical source revisions supplied in
 their recalled context. Removing one revision also removes recorded dependent
 assistant messages, including chains recalled in later sessions. This records

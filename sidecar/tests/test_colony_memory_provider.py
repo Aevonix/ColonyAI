@@ -131,6 +131,29 @@ def _make_provider(provider_mod, fake_httpx, monkeypatch):
     return p
 
 
+@pytest.mark.parametrize("reported", ["not_observed", "pending_until_each_host_connects", None])
+def test_source_remove_preserves_server_reconciliation_receipt(provider_mod, monkeypatch, reported):
+    payload = {"source_erased": True, "watermark": 7}
+    if reported is not None:
+        payload["host_reconciliation"] = reported
+    fake = _FakeHttpx({("POST", "/v1/host/memory/sources/forget"): payload})
+    monkeypatch.setattr(_FakeResponse, "is_success", property(lambda response: response.status_code < 300), raising=False)
+    provider = _make_provider(provider_mod, fake, monkeypatch)
+    provider._session_id = "source-session"
+    monkeypatch.setattr(provider, "_prefetch_contact", lambda: "cid-base")
+    provider._cached_context = "A recalled source."
+    provider._temporal_cache = (1.0, "Prior context.")
+    provider.on_memory_write("remove", "MEMORY.md", "", metadata={"old_text": "A recalled source."})
+    assert provider._last_erasure == {
+        "state": "source_erased", "scope": "canonical_turn_sources", "watermark": 7,
+        "host_reconciliation": reported or "not_observed",
+    }
+    assert provider._cached_context == "" and provider._temporal_cache == (0.0, "")
+    assert fake.requests[0]["json"] == {
+        "contact_id": "cid-base", "session_id": "source-session", "old_text": "A recalled source.",
+    }
+
+
 def test_native_setup_settings_survive_restart_and_profiles_stay_separate(
         provider_mod, monkeypatch, tmp_path):
     homes = [tmp_path / "profile-one", tmp_path / "profile-two"]

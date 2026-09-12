@@ -2069,7 +2069,8 @@ async def lifespan(app: FastAPI):
         logger.info("EngagementStore initialized (db=%s)", engagement_db)
 
         from apsimo.contacts.comms import CommsLog
-        comms_log = CommsLog(db_path=state_dir / "colony-comms.db")
+        comms_log = CommsLog(db_path=state_dir / "colony-comms.db", source_ledger=source_ledger)
+        comms_log.purge_erased_sources()
         set_comms_log(comms_log)
         logger.info("CommsLog initialized")
 

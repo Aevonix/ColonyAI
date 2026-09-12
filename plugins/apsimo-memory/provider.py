@@ -2491,7 +2491,12 @@ class ApsimoMemoryProvider(_MemoryProviderABC):
                         json={"contact_id": contact, "session_id": self._session_id, "old_text": old_text},
                     )
                 if response.is_success and response.json().get("source_erased") is True:
-                    self._last_erasure = {"state": "source_erased", "scope": "canonical_turn_sources", "watermark": response.json()["watermark"], "host_reconciliation": "pending"}
+                    receipt = response.json()
+                    self._last_erasure = {
+                        "state": "source_erased", "scope": "canonical_turn_sources",
+                        "watermark": receipt["watermark"],
+                        "host_reconciliation": receipt.get("host_reconciliation", "not_observed"),
+                    }
                     with self._cache_lock:
                         self._cached_context = ""
                     self._temporal_cache = (0.0, "")

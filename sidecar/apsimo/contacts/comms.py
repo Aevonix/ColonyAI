@@ -16,6 +16,7 @@ import sqlite3
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
+from apsimo.tom.source_lineage import SourceLinkedStore
 
 logger = logging.getLogger(__name__)
 
@@ -34,11 +35,12 @@ def _parse(ts: Optional[str]) -> Optional[datetime]:
         return None
 
 
-class CommsLog:
+class CommsLog(SourceLinkedStore):
     """SQLite ledger of communications with each contact, across all channels."""
 
-    def __init__(self, db_path: str) -> None:
+    def __init__(self, db_path: str, *, source_ledger=None) -> None:
         self._db_path = str(db_path)
+        self._source_ledger = source_ledger
         self._conn = sqlite3.connect(str(db_path))
         self._conn.row_factory = sqlite3.Row
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -64,6 +66,7 @@ class CommsLog:
             "reaction": "TEXT",
             "receipt_ref": "TEXT",
             "outbound_ref": "TEXT",
+            "source_lineage_json": "TEXT",
         }.items():
             if name not in existing:
                 self._conn.execute(
@@ -74,6 +77,22 @@ class CommsLog:
         self._conn.commit()
         from .transport_ingress import ensure_schema
         ensure_schema(self._conn)
+
+    def purge_erased_sources(self, turn_ids=None, *, contact_id=None) -> int:
+        sql = ('SELECT id,contact_id,source_lineage_json FROM communications '
+               'WHERE source_lineage_json IS NOT NULL')
+        rows = self._conn.execute(sql + (' AND contact_id=?' if contact_id else ''),
+                                  (contact_id,) if contact_id else ()).fetchall()
+        invalid = self._invalid_sources(rows, turn_ids)
+        with self._conn:
+            self._conn.executemany('DELETE FROM communications WHERE id=?', [(row['id'],) for row in invalid])
+        return len(invalid)
+
+    def unlinked_summary_count(self, contact_id: str) -> int:
+        """Historical/unattributed prose cannot be erased by guessing its source."""
+        return self._conn.execute('''SELECT count(*) FROM communications WHERE contact_id=?
+            AND source_lineage_json IS NULL AND coalesce(summary,'')!=''
+            AND coalesce(receipt_ref,'')='' ''', (contact_id,)).fetchone()[0]
 
     def read_connection(self):
         """An independent read connection for projections running on a worker thread.
@@ -117,9 +136,12 @@ class CommsLog:
             summary: str = "", session_id: str = "",
             external_ref: str = "", reply_to_ref: str = "",
             reaction: str = "", receipt_ref: str = "",
-            ts: Optional[str] = None) -> None:
+            ts: Optional[str] = None, source_lineage=None) -> None:
         if not contact_id or direction not in ("in", "out"):
             return
+        if source_lineage is not None and not self._source_visible(contact_id, source_lineage):
+            from apsimo.turns.idempotency import SourceErased
+            raise SourceErased('source_erased')
         normalized_reaction = (reaction or "").strip().lower()
         if normalized_reaction not in {
                 "", "accepted", "acknowledged", "actioned", "negative",
@@ -128,24 +150,32 @@ class CommsLog:
         self._conn.execute(
             "INSERT INTO communications "
             "(id,contact_id,channel,direction,summary,session_id,ts,"
-            "external_ref,reply_to_ref,reaction,receipt_ref) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            "external_ref,reply_to_ref,reaction,receipt_ref,source_lineage_json) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
             (uuid.uuid4().hex, contact_id, channel or "unknown", direction,
              (summary or "")[:500], session_id or "", ts or _now().isoformat(),
              (external_ref or "")[:512] or None,
              (reply_to_ref or "")[:512] or None,
              normalized_reaction or None,
-             (receipt_ref or "")[:512] or None),
+             (receipt_ref or "")[:512] or None,
+             json.dumps(source_lineage) if source_lineage is not None else None),
         )
         self._conn.commit()
+        # A source erasure can finish while this separate projection is written.
+        if source_lineage is not None and not self._source_visible(contact_id, source_lineage):
+            self.purge_erased_sources(contact_id=contact_id)
+            from apsimo.turns.idempotency import SourceErased
+            raise SourceErased('source_erased')
 
     def history(self, contact_id: str, limit: int = 15) -> List[Dict[str, Any]]:
+        self.purge_erased_sources(contact_id=contact_id)
         rows = self._conn.execute(
             "SELECT channel, direction, summary, ts FROM communications WHERE contact_id=?"
             " ORDER BY ts DESC LIMIT ?", (contact_id, limit)).fetchall()
         return [dict(r) for r in rows]
 
     def last_per_channel(self, contact_id: str) -> Dict[str, Dict[str, Any]]:
+        self.purge_erased_sources(contact_id=contact_id)
         rows = self._conn.execute(
             "SELECT channel, direction, summary, MAX(ts) AS ts FROM communications"
             " WHERE contact_id=? GROUP BY channel", (contact_id,)).fetchall()
@@ -153,6 +183,7 @@ class CommsLog:
                 for r in rows}
 
     def last_outbound(self, contact_id: str) -> Optional[Dict[str, Any]]:
+        self.purge_erased_sources(contact_id=contact_id)
         r = self._conn.execute(
             "SELECT channel, summary, ts FROM communications WHERE contact_id=? AND direction='out'"
             " ORDER BY ts DESC LIMIT 1", (contact_id,)).fetchone()
@@ -161,6 +192,7 @@ class CommsLog:
     def inbound_since(self, contact_id: str, since_iso: str) -> List[str]:
         """Timestamps of inbound rows from a contact since an ISO instant
         (selfhood benchmark: did the owner respond after a delivery)."""
+        self.purge_erased_sources(contact_id=contact_id)
         rows = self._conn.execute(
             "SELECT ts FROM communications WHERE contact_id=? AND"
             " direction='in' AND ts >= ? ORDER BY ts ASC LIMIT 5000",
@@ -176,7 +208,7 @@ class CommsLog:
         until_iso: str,
     ) -> List[Dict[str, Any]]:
         """Explicit inbound reactions tied to exact outbound references."""
-
+        self.purge_erased_sources(contact_id=contact_id)
         bounded = sorted({str(ref) for ref in refs if str(ref).strip()})[:5000]
         if not bounded:
             return []
@@ -226,7 +258,7 @@ class CommsLog:
         require_receipt: bool = False,
     ) -> List[Dict[str, Any]]:
         """One auditable outbound cohort for benchmark denominators."""
-
+        self.purge_erased_sources(contact_id=contact_id)
         query = (
             "SELECT id,channel,summary,ts,external_ref,receipt_ref "
             "FROM communications WHERE contact_id=? AND direction='out' "
@@ -239,6 +271,7 @@ class CommsLog:
         return [dict(row) for row in rows]
 
     def counts(self, contact_id: str) -> Dict[str, Any]:
+        self.purge_erased_sources(contact_id=contact_id)
         r = self._conn.execute(
             "SELECT SUM(direction='in') AS inbound, SUM(direction='out') AS outbound,"
             " COUNT(DISTINCT channel) AS channels FROM communications WHERE contact_id=?",
@@ -251,6 +284,7 @@ class CommsLog:
         the consumer shifts into the contact's timezone). Feeds the
         relationship profiler's approach guidance (preferred channel,
         best time to reach)."""
+        self.purge_erased_sources(contact_id=contact_id)
         rows = self._conn.execute(
             "SELECT channel, ts FROM communications"
             " WHERE contact_id=? AND ts >= datetime('now', ?)",
@@ -269,6 +303,7 @@ class CommsLog:
         """The newest exchanges across ALL contacts and channels, most recent
         first. The per-contact reads above answer 'how do I stand with X';
         this answers 'what has been flowing lately' for an ops ledger view."""
+        self.purge_erased_sources()
         limit = max(1, min(500, int(limit)))
         rows = self._conn.execute(
             "SELECT contact_id, channel, direction, summary, ts FROM communications"
@@ -278,6 +313,7 @@ class CommsLog:
     def rollup(self, *, since_days: int = 30) -> Dict[str, Dict[str, int]]:
         """Inbound/outbound counts per channel over a window: the ledger's
         flow summary. ``{channel: {"in": n, "out": n}}``."""
+        self.purge_erased_sources()
         rows = self._conn.execute(
             "SELECT channel, direction, COUNT(*) AS n FROM communications"
             " WHERE ts >= datetime('now', ?) GROUP BY channel, direction",

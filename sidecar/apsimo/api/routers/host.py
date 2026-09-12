@@ -3884,7 +3884,8 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
                 tom_cleanup[name + '_cleanup'] = 'complete'
             except Exception:
                 logger.warning('source erasure %s cleanup is pending', name, exc_info=True)
-    vector_cleanup = 'unavailable'
+    vector_cleanup = ('disabled_not_checked' if os.environ.get('COLONY_EMBED_PROVIDER') == 'skip'
+                      else 'unavailable')
     from apsimo.vector import get_store
     vector_store = get_store()
     if vector_store is not None and getattr(vector_store, 'catalog', None) is not None:
@@ -3894,7 +3895,8 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
             vector_cleanup = 'complete'
         except Exception:
             logger.warning('source erasure vector generation cleanup is pending', exc_info=True)
-    graph_cleanup = "unavailable" if _graph is None else "pending"
+    graph_cleanup = ('disabled_not_checked' if os.environ.get('COLONY_GRAPH_ENABLED', 'true').lower()
+                     in {'0', 'false', 'off'} else 'unavailable') if _graph is None else 'pending'
     if _graph is not None:
         try:
             await _graph.delete_source_memories(list(dict.fromkeys(result["source_ids"] + result["affected_source_ids"])))
@@ -3919,11 +3921,25 @@ async def forget_turn_sources(body: SourceForgetRequest, request: Request = None
         transport_cleanup = forget_sources(list(dict.fromkeys(result['source_ids'] + result['affected_source_ids'])))
     except Exception:
         logger.warning('Source erasure transport cleanup remains pending', exc_info=True)
+    communications_cleanup, communications_unlinked_rows = 'unavailable', None
+    if _comms_log is not None:
+        communications_cleanup = 'pending'
+        try:
+            _comms_log.purge_erased_sources(list(dict.fromkeys(result['source_ids'] + result['affected_source_ids'])),
+                                           contact_id=person)
+            communications_unlinked_rows = _comms_log.unlinked_summary_count(person)
+            communications_cleanup = 'complete'
+        except Exception:
+            logger.warning('Source erasure communication summary cleanup remains pending', exc_info=True)
     return {"source_erased": True, **result, "graph_cleanup": graph_cleanup,
             "shared_facts_cleanup": fact_cleanup, "vector_cleanup": vector_cleanup,
             "world_cleanup": world_cleanup, "transport_cleanup": transport_cleanup, **tom_cleanup,
+            "communications_cleanup": communications_cleanup,
+            "communications_scope": "source_linked_summaries_only",
+            "communications_unlinked_rows": communications_unlinked_rows,
             "scope": "canonical_turn_sources_and_linked_projections",
-            "host_reconciliation": "pending_until_each_host_connects"}
+            "host_reconciliation": "not_observed",
+            "host_reconciliation_detail": "The erasure feed is available at this watermark; this response does not measure which hosts have applied it."}
 
 
 async def _resolve_scoped_sender_contact(authority, gateway: str, address: str):
@@ -4667,16 +4683,17 @@ async def _process_turn_sync(
         # Cross-channel communication ledger: record this exchange under the
         # CONVERSATION's channel (group vs DM vs voice provenance), never the
         # contact's primary-handle gateway (which collapsed everything to one
-        # channel). System turns are recorded too, for ops visibility; they
-        # are excluded from every relationship surface.
+        # channel). New prose requires a canonical person source; transport
+        # receipts retain their separate metadata-only ingestion path.
         try:
-            if _comms_log is not None and body.context.contact_id:
+            if _comms_log is not None and body.context.contact_id and source_recorded:
                 _ch = body.context.channel_id or "direct"
                 _sess = body.context.session_id or ""
+                _lineage, _ = _comms_log.source_input(source_id, body.context.contact_id)
                 _comms_log.log(body.context.contact_id, channel=_ch,
                                direction="in",
                                summary=(body.summary or "")[:300],
-                               session_id=_sess)
+                               session_id=_sess, source_lineage=_lineage)
                 # Record the assistant's reply as an OUTBOUND exchange on the
                 # SAME resolved contact + conversation channel. Without this
                 # the ledger sees only half of every conversation, so
@@ -4687,7 +4704,7 @@ async def _process_turn_sync(
                 if _asst.strip():
                     _comms_log.log(body.context.contact_id, channel=_ch,
                                    direction="out",
-                                   summary=_asst[:300], session_id=_sess)
+                                   summary=_asst[:300], session_id=_sess, source_lineage=_lineage)
         except Exception:
             logger.debug("comms ledger log failed", exc_info=True)
     except Exception:
