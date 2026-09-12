@@ -37,12 +37,14 @@ import run_agent
 from tools.skills_tool import skills_list
 from agent.prompt_builder import build_skills_system_prompt
 
-name='apsimo-cache-fixture';removed='apsimo-retired-fixture'
-def skill_text(version):
-    return ('---\nname: '+name+'\ndescription: Index manuals using revision '+version+'.\n---\n'
+name='apsimo-cache-fixture';removed='apsimo-retired-fixture';local='manual-index-local'
+def skill_text(version,target=name):
+    return ('---\nname: '+target+'\ndescription: Index manuals using revision '+version+'.\n---\n'
         'Use the '+version+' tab for each manual.\n')
 current=home/'skills'/name/'SKILL.md';current.parent.mkdir(parents=True)
 current.write_text(skill_text('amber'))
+ordinary=home/'skills'/local/'SKILL.md';ordinary.parent.mkdir()
+ordinary.write_text(skill_text('amber',local))
 retired=home/'skills'/removed/'SKILL.md';retired.parent.mkdir()
 retired.write_text('---\nname: '+removed+'\ndescription: Index obsolete manuals with paper tabs.\n---\n'
     'Use the retired paper-tab procedure.\n')
@@ -50,17 +52,18 @@ for path in (current,retired):
     (path.parent/'.apsimo-owned.json').write_text(json.dumps({'owner':'apsimo-hermes',
         'version':1,'sha256':hashlib.sha256(path.read_bytes()).hexdigest()}))
 def change(version):
-    before=current.stat()
-    current.write_text(skill_text(version))
-    # Exercise in-place updates without relying on sleeps or directory mtimes.
-    os.utime(current,ns=(before.st_atime_ns,before.st_mtime_ns+1_000_000))
+    for path,target in ((current,name),(ordinary,local)):
+        before=path.stat()
+        path.write_text(skill_text(version,target))
+        # Exercise in-place updates without relying on sleeps or directory mtimes.
+        os.utime(path,ns=(before.st_atime_ns,before.st_mtime_ns+1_000_000))
 
 # Warm the exact native discovery and prompt caches before the first turn.
 assert name in json.dumps(json.loads(skills_list()))
 assert name in build_skills_system_prompt(available_tools={'skills_list','skill_view'},
     skills_dir_override=home/'skills')
 db=SessionDB(home/'fixture-state.db');session='fixture-saved-skills'
-requests=[];phase='initial';phase_requests=[]
+requests=[];phase='initial';phase_requests=[];saved_prompt=''
 expected_version='amber';expect_removed=False
 target='run_agent.OpenAI' if 'OpenAI' in vars(run_agent) else 'agent.process_bootstrap.OpenAI'
 def tool(tool_name,args,identifier):
@@ -69,14 +72,16 @@ def completion(**kwargs):
     messages=copy.deepcopy(kwargs['messages'])
     requests.append(messages);phase_requests.append(messages)
     if len(phase_requests)==1:
-        # Only inspect the current user-turn tail: historical tool results and
-        # the saved system prompt must remain historical, not be rewritten.
+        # Current middleware may add system context adjacent to the initial
+        # system prompt. Exclude the frozen prompt and historical tool results.
         last_user=max(i for i,row in enumerate(messages) if row['role']=='user')
-        fresh=json.dumps(messages[last_user:])
+        fresh=json.dumps(messages[last_user:]+[row for row in messages[:last_user]
+            if row['role']=='system' and row.get('content')!=saved_prompt])
         if phase!='initial':
             assert 'Index manuals using revision '+expected_version+'.' in fresh,(phase,fresh)
         assert 'Use the '+expected_version+' tab for each manual.' not in fresh,(phase,fresh)
-        calls=[tool('skills_list',{},phase+'-list'),tool('skill_view',{'name':name},phase+'-view')]
+        calls=[tool('skills_list',{},phase+'-list'),tool('skill_view',{'name':local},phase+'-local')]
+        if phase!='disabled':calls.append(tool('skill_view',{'name':name},phase+'-view'))
         if phase in {'initial','resumed'}:
             calls.append(tool('skill_view',{'name':removed},phase+'-removed'))
         message=NS(content=None,tool_calls=calls);reason='tool_calls'
@@ -84,11 +89,20 @@ def completion(**kwargs):
         assert len(phase_requests)==2,'Unexpected extra provider request'
         by_id={row.get('tool_call_id'):json.loads(row['content']) for row in messages
             if row.get('role')=='tool' and row.get('tool_call_id','').startswith(phase+'-')}
-        listed=by_id[phase+'-list'];viewed=by_id[phase+'-view']
+        listed=by_id[phase+'-list']
         assert any(row['name']==name and row['description']=='Index manuals using revision '+expected_version+'.'
             for row in listed['skills']),(phase,listed)
-        assert viewed.get('success') and viewed.get('content')==skill_text(expected_version),(phase,viewed)
-        if expect_removed:
+        local_result=by_id[phase+'-local']
+        if phase=='disabled':
+            assert not any(row['name']==local for row in listed['skills']),listed
+            assert not local_result.get('success') and not local_result.get('content'),local_result
+        else:
+            viewed=by_id[phase+'-view']
+            assert viewed.get('success') and viewed.get('content')==skill_text(expected_version),(phase,viewed)
+            assert any(row['name']==local and row['description']=='Index manuals using revision '+expected_version+'.'
+                for row in listed['skills']),(phase,listed)
+            assert local_result.get('success') and local_result.get('content')==skill_text(expected_version,local),(phase,local_result)
+        if expect_removed and phase=='resumed':
             assert not any(row['name']==removed for row in listed['skills']),listed
             missing=by_id[phase+'-removed']
             assert not missing.get('success') and not missing.get('content'),missing
@@ -128,13 +142,20 @@ with patch(target,return_value=client):
     phase='resumed';phase_requests=[];expected_version='silver';expect_removed=True
     restored=db.get_messages_as_conversation(session)
     assert restored and 'revision amber' in db.get_session(session)['system_prompt']
-    agent=make_agent();run(agent,restored)
+    agent=make_agent();resumed=run(agent,restored)
     old_rows_unchanged(rows)
     assert db.get_session(session)['system_prompt']==saved_prompt
+    rows=saved_rows()
+    config=json.loads((home/'config.yaml').read_text());config['skills']={'disabled':[local]}
+    (home/'config.yaml').write_text(json.dumps(config))
+    phase='disabled';phase_requests=[]
+    run(agent,resumed['messages'])
+    old_rows_unchanged(rows)
     agent.close()
 db.close()
 print(json.dumps({'same_process_skill_edit':True,'saved_conversation_skill_edit':True,
-    'removed_skill_unavailable':True,'current_description_visible':True,
+    'removed_skill_unavailable':True,'disabled_skill_unavailable':True,
+    'ordinary_unowned_skill_updated':True,'current_description_visible':True,
     'current_body_loaded_on_use':True,'historical_rows_unchanged':True,
     'full_body_not_preloaded':True,'controlled_sdk_requests':len(requests),'model_calls':0,'network':0}))
 '''
