@@ -17,6 +17,27 @@ from .hermes_work import selected_home
 
 _BOARD = re.compile(r'[a-z0-9][a-z0-9_-]{0,63}')
 _TERMINAL = ('done', 'cancelled', 'archived')
+_SUMMARY_CHARS = 1200
+
+
+def _completed_result(db, task, board):
+    """Quote only the latest attempt that actually completed this task."""
+    if task['status'] != 'done' or task['current_run_id'] is not None:
+        return None
+    run = db.execute('SELECT id,status,outcome,ended_at,substr(summary,1,?) AS summary,'
+                     'length(summary) AS summary_chars FROM task_runs WHERE task_id=? '
+                     'ORDER BY id DESC LIMIT 1', (_SUMMARY_CHARS, task['id'])).fetchone()
+    if (not run or run['status'] != 'done' or run['outcome'] != 'completed'
+            or run['ended_at'] is None or task['completed_at'] is None):
+        return None
+    summary = run['summary'] or ''
+    return {'run_id': run['id'], 'status': run['status'], 'outcome': run['outcome'],
+            'ended_at': run['ended_at'], 'source': 'task_runs.summary',
+            'attribution': 'worker report; external effects not verified',
+            'summary': summary, 'summary_chars': run['summary_chars'] or 0,
+            'truncated': len(summary) < (run['summary_chars'] or 0),
+            'reader': {'tool': 'kanban_show', 'arguments': {
+                'task_id': task['id'], 'board': board}, 'run_id': run['id']}}
 
 
 def _board_path(home, board):
@@ -114,7 +135,7 @@ def kanban_view(*, limit=8, now=None, read_budget=.2):
                     run = db.execute('SELECT status FROM task_runs WHERE id=? AND task_id=?',
                                      (row['current_run_id'], row['id'])).fetchone()
                     heartbeat = row['last_heartbeat_at']
-                    return {'native_board': board, 'native_task_id': row['id'],
+                    item = {'native_board': board, 'native_task_id': row['id'],
                             'label': str(row['title'] or '')[:128], 'status': row['status'],
                             'assignee': str(row['assignee'] or '')[:128],
                             'goal_mode': bool(row['goal_mode']), 'goal_max_turns': row['goal_max_turns'],
@@ -124,6 +145,10 @@ def kanban_view(*, limit=8, now=None, read_budget=.2):
                             'terminal_record_at': row['terminal_record_at'],
                             'heartbeat_age_seconds': round(max(0., now-heartbeat), 1) if heartbeat else None,
                             'liveness': 'native_terminal_record' if row['status'] in _TERMINAL else 'unknown'}
+                    result = _completed_result(db, row, board)
+                    if result is not None:
+                        item['terminal_result'] = result
+                    return item
                 projected, projected_done = [project(r) for r in rows], [project(r) for r in done]
             active.extend(projected); recent.extend(projected_done)
             total += active_count; recent_total += recent_count

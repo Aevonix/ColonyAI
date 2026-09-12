@@ -509,10 +509,21 @@ home/database overrides are unavailable.
 
 Each task includes a title capped at 128 characters, quoted as operational
 data, native task/run IDs and states, configured goal mode/turn budget and
-record timestamps. Bodies, arbitrary result prose, claim tokens and worker
-PIDs are excluded. The per-request native work refresh includes these titles
+record timestamps. Bodies, claim tokens and worker PIDs are excluded. For a
+done task, the latest attempt's completed result is quoted from Hermes'
+`task_runs.summary`, with its exact board/task/run reference and a 1,200-character
+limit. It is a worker report, not verified evidence of external effects.
+The summary's original character count and `truncated` flag distinguish a
+complete report from a prefix; `kanban_show` with the supplied board and task
+opens the native run history. The owner profile must enable Hermes' `kanban`
+toolset; deferred tools remain available through native tool discovery.
+The per-request native work refresh includes these titles
 and states, so another owner session can identify an undertaking and observe
-its later terminal record. Goal budgets describe configured limits, not
+its later terminal record and reported result. The same request budget may
+shorten the quoted result further, preserving the explicit truncation flag
+and native reader reference. Current-run IDs remain separate from completed-run
+IDs; running, cancelled and archived tasks do not present an earlier attempt's
+summary as their current completion. Goal budgets describe configured limits, not
 remaining turns or evidence of completion. Running rows retain unknown
 process liveness; terminal rows do not prove an external effect. Missing
 selected boards, partial board coverage and omitted rows remain visible.

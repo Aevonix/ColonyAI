@@ -45,10 +45,15 @@ roles reject the configuration. Supported task names are declared in
 `pacomind/router/functions.py` as `TASK_ROLES`. Routing status reports
 the overrides as `task_roles`; each active request keeps its selected snapshot.
 
-`source_appraisal` and `self_judgment` can also be assigned independently. Their
-defaults remain extraction and reasoning, respectively. Each background operator
-uses its task selection for dispatch and its existing job deadline and lease.
-Assigning a role does not enable a disabled operator or automatic opinions.
+Appraisal formation uses `source_appraisal`, which defaults to extraction. When
+the existing source worker must compare a retained appraisal, integrate an owner
+correction or resolve an open incident, it selects `source_appraisal_revision`,
+which defaults to reasoning. `self_judgment` also defaults to reasoning. All three
+can be assigned independently through `taskRoles`; each selected function supplies
+both the background request budget and its owned job lease. Ordinary recollection
+does not wait for these background updates. Assigning a role does not enable a
+disabled operator or automatic self-judgments. The recorded processor metadata
+names the task, model and configuration that actually produced each new appraisal.
 
 ```json
 {

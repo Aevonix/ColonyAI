@@ -636,10 +636,9 @@ class AppraisalStore:
     async def process_one(self, router):
         if not self.owner_id or getattr(router, 'supports_function_routing', False) is not True:
             return False
-        deadline = router.function_deadline_seconds(context={'task': 'source_appraisal'})
-        if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or not 0 < deadline <= 600:
-            return False
-        job = self._claim(deadline + 5)
+        # Claim briefly before reading the retained state that selects the
+        # function. No model work starts under this preparation-only lease.
+        job = self._claim(0)
         if job is None:
             return False
         try:
@@ -649,6 +648,19 @@ class AppraisalStore:
                     self._finish(conn, job, 'unsupported_source')
                 return True
             source, payload, heads = prepared
+            # Integrating a retained view, an owner's correction or an open
+            # incident is revision work. The state chooses a named function,
+            # never a model, confidence score or model-generated rationale.
+            task = 'source_appraisal_revision' if payload['previous'] else 'source_appraisal'
+            deadline = router.function_deadline_seconds(context={'task': task})
+            if isinstance(deadline, bool) or not isinstance(deadline, (int, float)) or not math.isfinite(deadline) or not 0 < deadline <= 600:
+                raise ValueError('invalid_appraisal_function_deadline')
+            with closing(self.ledger._connect()) as conn, conn:
+                owned = conn.execute('''UPDATE appraisal_runs SET lease_until=?
+                    WHERE turn_id=? AND status='running' AND lease_token=? AND lease_until>?''',
+                    (self.clock() + deadline + 35, job['turn_id'], job['lease_token'], self.clock()))
+                if not owned.rowcount:
+                    return True
             # The processor needs one unambiguous citation key. Canonical
             # contact/source/version IDs stay server-side for exact validation;
             # exposing several competing IDs caused otherwise correct output
@@ -657,12 +669,13 @@ class AppraisalStore:
                 {k: evidence[k] for k in ('handle', 'text', 'quotes', 'current', 'occurred_at', 'attribution')
                  if k in evidence} for evidence in payload['evidence']]}
             response = await asyncio.wait_for(router.complete(messages=[{'role': 'system', 'content': SYSTEM},
-                {'role': 'user', 'content': _json(prompt_payload)}], context={'task': 'source_appraisal',
+                {'role': 'user', 'content': _json(prompt_payload)}], context={'task': task,
                 'allow_fallback': True, 'max_output_tokens': 2200,
                 'response_schema': RESPONSE_SCHEMA}), deadline + 5)
             items = self._validate(final_text(response), payload)
             processor = {k: str(getattr(response, attr, '') or 'unknown') for k, attr in (
                 ('model_id', 'model_id'), ('binding', 'binding'), ('config_revision', 'config_revision'), ('weight_revision', 'model_revision'))}
+            processor['task'] = task
             self._commit(job, source, items, heads, processor)
         except asyncio.CancelledError:
             raise
