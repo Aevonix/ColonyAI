@@ -91,6 +91,16 @@ def _lexical_chunks(messages):
             yield message, content, content[start:start + 2000]
 
 
+def source_dependencies(message):
+    """The same recorded source relations govern erasure and current evidence."""
+    if message.get('role') == 'assistant':
+        return message.get('_supplied_sources', [])
+    if (message.get('role') == 'tool'
+            and message.get('_native_tool_observation') == 'native-tool-observation-v1'):
+        return message.get('_observation_sources', [])
+    return []
+
+
 class TurnIdempotencyLedger:
     """SQLite reservation ledger safe across threads and sidecar processes."""
 
@@ -190,6 +200,8 @@ class TurnIdempotencyLedger:
                 initialize_attribution(conn)
                 from apsimo.turns.source_annotations import initialize as initialize_annotations
                 initialize_annotations(conn)
+                from apsimo.turns.tool_observations import initialize as initialize_observations
+                initialize_observations(conn)
             self._initialized = True
 
     def append_source_annotation(self, **kwargs):
@@ -325,9 +337,7 @@ class TurnIdempotencyLedger:
     def _erasure_causes(messages, session_id, rules):
         causes = set()
         for message in messages:
-            refs = (message.get('_supplied_sources', []) if message.get('role') == 'assistant' else
-                    message.get('_observation_sources', []) if message.get('role') == 'tool' and
-                    message.get('_native_tool_observation') == 'native-tool-observation-v1' else [])
+            refs = source_dependencies(message)
             for rule in rules:
                 exact = (rule['session_id'] == session_id and source_message_hash(session_id, message)
                          in json.loads(rule['message_hashes_json']))

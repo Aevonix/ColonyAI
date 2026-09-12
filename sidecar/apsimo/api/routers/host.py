@@ -2624,6 +2624,12 @@ async def context_assemble(
                 current_work_available=current_work_available,
                 max_chars=max(0, min(max_chars, 24000)))
             if source_ledger is not None:
+                from apsimo.turns.tool_observations import expand_selected
+                try:
+                    selected, body_text = expand_selected(source_ledger, selected, **annotation_scope,
+                        limit=5, max_chars=max(0, min(max_chars, 24000)))
+                except Exception as exc:
+                    logger.warning('linked observation context unavailable (%s); retaining ranked evidence', type(exc).__name__)
                 from apsimo.turns.source_annotations import current_candidates
                 retained = current_candidates(source_ledger, selected, **annotation_scope)
                 if len(retained) != len(selected):

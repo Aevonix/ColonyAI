@@ -103,7 +103,7 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
     the same rule as direct lexical/semantic excerpts. All discovered notes
     remain attributed evidence; the newest note does not automatically win.
     """
-    from .idempotency import canonical_turn_digest, source_message_hash
+    from .idempotency import canonical_turn_digest, source_message_hash, source_dependencies
     from .audio import source_text
     result = []
     with closing(ledger._connect()) as conn:
@@ -173,9 +173,8 @@ def expand(ledger, candidates, *, contact_id, session_id, covered=()):
                 own_annotation = conn.execute('SELECT * FROM source_annotations WHERE annotation_source_id=?',
                                               (identifier,)).fetchone()
                 for message in row['messages']:
-                    if (message.get('role') == 'assistant'
-                            and source_message_hash(row['session_id'], message) in selected_hashes):
-                        for ref in message.get('_supplied_sources', []):
+                    if source_message_hash(row['session_id'], message) in selected_hashes:
+                        for ref in source_dependencies(message):
                             parent = source(ref['source_id'])
                             if parent and canonical_turn_digest(parent['messages']) == ref['source_version']:
                                 # Dedicated annotations have exact target message
