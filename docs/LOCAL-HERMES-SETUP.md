@@ -426,5 +426,5 @@ adapters only if this setup created them in private-directory mode. Keep the pri
 state and Hermes transcripts. No database rollback is part of installation or
 recovery. Compare files before restoring if you have edited them since setup.
 
-Setup does not seed a built-in self-knowledge catalog. Private identity comes
-from the guided setup and the agent's retained experience.
+Private identity comes from the guided setup and the agent's retained experience.
+The obsolete `apsimo seed` command and `/v1/host/seed` endpoint have been removed.

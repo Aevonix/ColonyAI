@@ -967,3 +967,50 @@ def test_installed_probe_checks_canonical_metadata_and_module_bytes(tmp_path):
     (site/'apsimo_hermes/client.py').write_bytes(b'# Different installed implementation\n')
     with pytest.raises(ValueError, match='incomplete or different'):
         setup_hermes._adapter_binding(python, resources)
+
+
+def test_legacy_init_preserves_world_history(tmp_path, monkeypatch):
+    from apsimo.world_model.store import WorldModelStore
+    from apsimo.world_model.entities import BaseEntity
+
+    monkeypatch.setattr(os, 'environ', dict(os.environ))
+    monkeypatch.setenv('LITELLM_LOCAL_MODEL_COST_MAP', 'True')
+    monkeypatch.setattr(Path, 'home', classmethod(lambda cls: tmp_path))
+    monkeypatch.setenv('COLONY_STATE_DIR', str(tmp_path))
+    database = tmp_path/'world.db'
+    monkeypatch.setenv('WORLD_MODEL_SQLITE_PATH', str(database))
+    async def existing_history():
+        world = WorldModelStore()
+        await world.connect()
+        try:
+            await world.upsert_entity(BaseEntity(id='retained-project', name='Existing project',
+                entity_type='project', properties={'record': 'retained observation'}))
+        finally:
+            await world.close()
+    asyncio.run(existing_history())
+    before = database.read_bytes()
+    (tmp_path/'.env').write_text('COLONY_EMBED_PROVIDER=skip\nCOLONY_EMBED_MODEL=unused\n')
+    monkeypatch.setattr(setup, '_check_python', lambda: (True, '3.12'))
+    monkeypatch.setattr(setup, '_check_docker', lambda: (None, 'unavailable'))
+    monkeypatch.setattr(setup, '_handle_docker_setup', lambda *args: False)
+    monkeypatch.setattr(setup, '_check_neo4j', lambda: (False, 'unavailable'))
+    monkeypatch.setattr(setup, '_check_port', lambda *args: False)
+    monkeypatch.setattr(setup, '_prompt', lambda prompt, default, *args: '' if 'password' in prompt.lower() else default)
+    monkeypatch.setattr(setup, 'run_autonomy_step', lambda *args: {})
+    monkeypatch.setattr(setup, 'run_workers_step', lambda *args: None)
+    monkeypatch.setattr(setup, '_offer_doctor_run', lambda *args, **kwargs: None)
+    monkeypatch.setattr(setup.time, 'sleep', lambda *args: None)
+    commands = []
+    def run(command, **kwargs):
+        assert command[1:4] in (['-m', 'pip', 'install'], ['-m', 'apsimo', 'start'], ['-m', 'apsimo', 'doctor'])
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout='', stderr='')
+    monkeypatch.setattr(setup.subprocess, 'run', run)
+    monkeypatch.setattr(httpx, 'post', lambda *args, **kwargs: httpx.Response(400, json={}))
+    monkeypatch.setattr(httpx, 'get', lambda *args, **kwargs: httpx.Response(200, json={'capabilities': []}))
+    args = SimpleNamespace(no_harness=True, non_interactive=True, mcp_harnesses=None,
+        agent_harness=None, host_framework=None, contact_name=None, tier=None,
+        bind='127.0.0.1', port=7777)
+    assert setup.run_init(str(tmp_path), args) == 0
+    assert any(command[3] == 'start' for command in commands)
+    assert database.read_bytes() == before

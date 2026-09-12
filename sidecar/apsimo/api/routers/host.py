@@ -12029,20 +12029,6 @@ async def executor_status() -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Self-Knowledge Seeding
-# ---------------------------------------------------------------------------
-
-
-class SeedResponse(BaseModel):
-    memories: int = 0
-    entities: int = 0
-    skills: int = 0
-    insights: int = 0
-    errors: list[str] = []
-    skipped: list[str] = []  # Machine-readable dispositions, including retirement
-
-
-# ---------------------------------------------------------------------------
 # Commitment Tracking
 # ---------------------------------------------------------------------------
 
@@ -13037,14 +13023,6 @@ async def extract_tom(
         facts=facts_result,
         throttled=throttled,
     )
-
-
-@router.post("/seed", response_model=SeedResponse)
-async def seed_self_knowledge_endpoint(force: bool = Query(False, description="Compatibility flag; built-in seeding remains retired")) -> SeedResponse:
-    """Return the retired built-in seeding disposition without opening stores."""
-    from apsimo.seed import seed_self_knowledge
-
-    return SeedResponse(**await seed_self_knowledge(force=force))
 
 
 # ============================================================================

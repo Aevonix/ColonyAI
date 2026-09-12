@@ -9,7 +9,6 @@ Guides the user through first-time configuration:
 6. Write .env
 7. Database setup
 8. Autonomy & approvals (owner contact, approval policy, gates, home channel)
-9. Self-knowledge seeding
 10. Start sidecar + verify (10e: schedule agent workers via crontab)
 11. Summary
 12. Health check (colony doctor)
