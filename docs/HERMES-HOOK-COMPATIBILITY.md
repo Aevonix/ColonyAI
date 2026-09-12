@@ -8,10 +8,10 @@ installer does not patch an existing Hermes checkout or change its selection.
 ## Published qualification target
 
 **SHIPPED source:** [Kurcide/hermes-agent at
-`09fbad8e4e4e3e15d9b459110403494f377b434f`](https://github.com/Kurcide/hermes-agent/commit/09fbad8e4e4e3e15d9b459110403494f377b434f),
+`37fc68b45c2351957a7fa262978b0f1174b1bd44`](https://github.com/Kurcide/hermes-agent/commit/37fc68b45c2351957a7fa262978b0f1174b1bd44),
 based on [Hermes v0.21.2,
 `939e45c91d751fadd94dcd1b873ac3cb44846213`](https://github.com/NousResearch/hermes-agent/commit/939e45c91d751fadd94dcd1b873ac3cb44846213),
-under the [MIT license](https://github.com/Kurcide/hermes-agent/blob/09fbad8e4e4e3e15d9b459110403494f377b434f/LICENSE).
+under the [MIT license](https://github.com/Kurcide/hermes-agent/blob/37fc68b45c2351957a7fa262978b0f1174b1bd44/LICENSE).
 This is a published compatibility fork, not a claim that the change shipped in
 an upstream Hermes release.
 
@@ -52,6 +52,13 @@ This small interface replaces reliance on user-turn hooks for detached work;
 it does not add a scheduler, review service or alternative memory store.
 Unmodified upstream 0.21.2 does not provide this completion observer.
 
+The build also limits the Kanban completion stop gate to the existing
+dispatcher-owned worker context. A delegated child inherits the task
+environment but owns no Kanban card and cannot call the parent completion
+tools. It can now return its findings to the parent. The actual claimed
+worker still must complete or block its own card before ending. The change
+reuses Hermes' existing delegation ContextVar; it adds no setting or hook.
+
 ## What is qualified
 
 The two existing compatibility changes were reapplied to the 0.21.2 release
@@ -60,6 +67,12 @@ environment. The detached observer then passed 24 focused checks, including
 successful, failed and interrupted endings, retained persistence-hook skips and
 unchanged ordinary turn endings. These are separate run scopes, not a claim that
 the entire upstream test suite ran.
+
+The delegated-stop correction passed 52 focused checks using controlled
+responses and the actual native Kanban store and completion tools. The
+unmodified qualified base fails both delegated-return cases; the correction
+passes them while retaining actual worker completion and blocking. These
+checks establish the runtime stop boundary, not useful model completion.
 
 The following callback and timeout counts describe their earlier qualification;
 the retained behavior is rechecked on the current native candidate above.
@@ -123,6 +136,10 @@ Also retain or verify the named-provider timeout behavior before removing that
 part of the compatibility build. Replace the detached observer when upstream
 provides an equivalent exact execution-end contract. Provider response hooks and
 final output transforms alone do not establish failed or interrupted completion.
+
+Also retain the delegated-return and actual-worker completion regressions.
+Remove the stop-gate adjustment when an upstream release satisfies both
+using its own dispatcher/delegation ownership boundary.
 
 Keep the regression tests and upstream attribution after removing the fork
 selection. Do not carry an old dispatcher diff over a newer implementation
