@@ -1,5 +1,34 @@
 # Changelog
 
+## v1.5.2 - native model checks and explicit setup roles
+
+The model validation suite can run an isolated Hermes chat conversation with a
+declared elapsed deadline and separate cleanup allowance. It uses the recorded
+Hermes interpreter, retains first failures and records whether its owned process
+stopped. An incomplete cleanup prevents later cases from running. This suite
+tests a grounded chat case; it does not qualify channels, tools or recollection.
+The isolated profile preserves native timeout inheritance, and runtime identity
+covers the selected Hermes package sources used to construct and route the run.
+
+`pacomind init --model-config PATH` preserves a supplied private model pool,
+function and task roles, capabilities, credentials, request settings and limits.
+Existing Hermes chat configuration stays separate. Local drafts and reviews use
+the supplied planning role instead of replacing the pool with wizard defaults.
+Invalid input fails before instance writes; existing instances reject replacement.
+
+Source dates now recognize literal full English month names and explicit UTC
+clocks. Calendar days remain distinct from instants, and ambiguous or nonexistent
+local clock times remain unresolved. This fixes date interpretation after source
+extraction; it does not fix model extraction timeouts or establish answer quality.
+
+Initial recollection uses the existing bounded work summary, prioritizing the
+current conversation and linked work. It retains source references and unknown
+states while excluding full diagnostic reports and task-input excerpts. Detailed
+work remains available through the existing readers.
+
+Phase 1 validation remains open. These changes do not establish improved model
+performance or complete installation and ordinary-use acceptance.
+
 ## v1.5.1 - shared task results and ordinary memory eligibility
 
 Completed Hermes tasks now expose their retained run summary to other owner

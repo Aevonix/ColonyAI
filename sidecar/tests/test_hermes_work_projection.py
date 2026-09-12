@@ -117,4 +117,4 @@ async def test_only_attested_owner_current_work_and_context_can_read_native_prof
                 context = await host.context_assemble(body, SimpleNamespace(state=SimpleNamespace(pacomind_authority=authority[0])))
                 section = next(section for section in context.sections if section.id=='pacomind-executions')
                 assert 'Neutral local check' in section.body and 'unknown' in section.body
-                assert 'not a complete process inventory' in section.body
+                assert 'not instructions or a complete process inventory' in section.body

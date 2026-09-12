@@ -4,7 +4,7 @@ import json
 import pytest
 
 from pacomind.beliefs.source_claims import validated_claims
-from pacomind.beliefs.source_time import source_event_time
+from pacomind.beliefs.source_time import parse_source_date, source_event_time
 from pacomind.memory.recall import pack_memory_context, source_candidates
 from test_source_claim_projection import claim
 
@@ -62,3 +62,39 @@ def test_plain_source_packet_labels_report_clock_without_creating_event_time():
     assert '"event_time": "unprojected"' in packet
     assert "Report time is not event time." in packet
     assert '"occurred_at"' not in packet
+
+
+@pytest.mark.parametrize("expression,zone,expected", [
+    ("18 September 2026", "UTC", "2026-09-18T00:00:00+00:00"),
+    ("September 18, 2026", "UTC", "2026-09-18T00:00:00+00:00"),
+    ("16:30 UTC on 18 September 2026", "America/New_York", "2026-09-18T16:30:00+00:00"),
+    ("17:15:30 utc on September 18, 2026", "Asia/Tokyo", "2026-09-18T17:15:30+00:00"),
+    ("00:30 on 18 September 2026", "Asia/Tokyo", "2026-09-17T15:30:00+00:00"),
+    ("01:30 UTC on 1 November 2026", "America/New_York", "2026-11-01T01:30:00+00:00"),
+])
+def test_literal_english_dates_and_clocks_keep_the_source_timezone(expression, zone, expected):
+    # These are literal source-format controls, not captured extractor output.
+    assert parse_source_date(expression, observed_at=None, timezone_name=zone) == expected
+    result = source_event_time(expression, observed_at=None, timezone_name=zone)
+    if " on " in expression:
+        assert result == {"expression": expression, "status": "resolved",
+                          "precision": "instant", "at": expected}
+    else:
+        assert result["precision"] == "calendar_day" and result["start"] == expected
+
+
+@pytest.mark.parametrize("expression", [
+    "31 September 2026", "29 February 2026", "18 September", "09/10/2026",
+    "24:00 UTC on 18 September 2026", "17:60 UTC on 18 September 2026",
+    "17:15 EST on 18 September 2026", "1:30 PM on 18 September 2026",
+    "01:30 on 1 November 2026", "02:30 on 8 March 2026",
+])
+def test_unresolved_or_ambiguous_source_clocks_stay_unresolved(expression):
+    assert parse_source_date(expression, observed_at=STAMP, timezone_name="America/New_York") is None
+    assert source_event_time(expression, observed_at=STAMP, timezone_name="America/New_York")["status"] == "unresolved"
+
+
+def test_day_first_source_date_keeps_calendar_precision_across_dst():
+    assert source_event_time("8 March 2026", observed_at=None, timezone_name="America/New_York") == {
+        "expression": "8 March 2026", "status": "resolved", "precision": "calendar_day",
+        "start": "2026-03-08T05:00:00+00:00", "end_exclusive": "2026-03-09T04:00:00+00:00"}

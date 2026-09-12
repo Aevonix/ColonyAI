@@ -46,6 +46,7 @@ def main() -> None:
     init_p.add_argument("--preview", action="store_true", help="With --preferences-only, show changed preference paths without writing")
     init_p.add_argument("--model-url", help="One local OpenAI-compatible API root")
     init_p.add_argument("--model", help="Model identifier at that endpoint")
+    init_p.add_argument("--model-config", metavar="PATH", help="Private JSON host-model configuration for a new PacoMind instance; preserve its roles and request settings separately from Hermes chat")
     init_p.add_argument("--adapter-wheel", help="Use this canonical pacomind-hermes wheel instead of the installed distribution")
     init_p.add_argument("--refresh-adapter", action="store_true", help="Refresh an existing stopped instance's adapter from the selected package; retain private state")
     init_p.add_argument("--replace-memory-provider", action="store_true", help="Explicitly replace selection of another memory provider; retain its files and a config backup")

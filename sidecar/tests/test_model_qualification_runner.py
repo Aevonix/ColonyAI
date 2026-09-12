@@ -152,15 +152,11 @@ def test_result_writer_never_overwrites(tmp_path):
 @pytest.mark.asyncio
 async def test_cleanup_failure_is_not_reported_as_complete(tmp_path,monkeypatch):
     from pacomind.qualification import runner
-    original = runner.tempfile.TemporaryDirectory
-    class CleanupFailure:
-        def __init__(self,*args,**kwargs):
-            self.actual = original(*args,**kwargs)
-            self.name = self.actual.name
-        def cleanup(self):
-            self.actual.cleanup()
-            raise OSError('Controlled incomplete cleanup receipt')
-    monkeypatch.setattr(runner.tempfile,'TemporaryDirectory',CleanupFailure)
+    original = runner.shutil.rmtree
+    def cleanup_failure(path):
+        original(path)
+        raise OSError('Controlled incomplete cleanup receipt')
+    monkeypatch.setattr(runner.shutil,'rmtree',cleanup_failure)
     await run(tmp_path/'run')
     row=result(tmp_path/'run')
     assert row['cleanup'] == 'failed'

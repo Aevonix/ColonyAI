@@ -27,6 +27,7 @@ REPORT = ('The quartz archive comparison is recorded in this report: '
     'Inspect this report: "The camera recorded a visit at ' + STAMP + '."',
     'Inspect this report: “The camera recorded a visit at ' + STAMP + '.”',
     "Inspect this report: 'The camera recorded a visit at " + STAMP + ".'",
+    'Inspect this report: "The camera recorded a visit on 18 September 2026."',
 ])
 def test_supplied_report_dates_do_not_filter_observation_time(evidence):
     query = interpret_time_query(evidence, now=NOW)
@@ -42,6 +43,10 @@ def test_supplied_report_dates_do_not_filter_observation_time(evidence):
     ('What did the camera record in the last 2 hours?', 'observed_range', '2026-03-12T10:00:00+00:00'),
     ('What was recorded in the "last 2 hours"?', 'observed_range', '2026-03-12T10:00:00+00:00'),
     ('Where was my office as of March 5, 2026?', 'valid_range', '2026-03-05T00:00:00+00:00'),
+    ('Where was my office as of 18 September 2026?', 'valid_range', '2026-09-18T00:00:00+00:00'),
+    ('Where was my office as of "18 September 2026"?', 'valid_range', '2026-09-18T00:00:00+00:00'),
+    ('What was recorded on 5 March 2026?', 'observed_range', '2026-03-05T00:00:00+00:00'),
+    ('What was recorded since "5 March 2026"?', 'observed_range', '2026-03-05T00:00:00+00:00'),
     ('What tea should I bring later today?', 'current', NOW.isoformat()),
     ('What was recorded on 2026-03-11? Inspect this report: ' + REPORT,
      'observed_range', '2026-03-11T00:00:00+00:00'),
@@ -53,16 +58,50 @@ def test_explicit_temporal_requests_keep_their_existing_window(query_text, mode,
     assert (query.mode, query.start) == (mode, start)
     if query_text == 'What was recorded at ' + STAMP + '?':
         assert query.end == '2026-03-12T09:14:30.000001+00:00'
+    if query_text == 'What was recorded since "5 March 2026"?':
+        assert query.end == NOW.isoformat()
 
 
 @pytest.mark.parametrize('query_text', [
     'office before 2026-03-12',
     'office between March 1, 2026 and March 5, 2026',
+    'office on 1 March 2026 or 5 March 2026',
+    'office on "1 March 2026" or "March 5, 2026"',
+    'office between 1 March 2026 and 5 March 2026',
     'office last month',
     'office "last month"',
 ])
 def test_unsupported_request_time_remains_unresolved(query_text):
     assert interpret_time_query(query_text, now=NOW).mode == 'unresolved_time'
+
+
+@pytest.mark.parametrize('operand,zone,expected', [
+    ('16:45 UTC on 18 September 2026', 'America/New_York', '2026-09-18T16:45:00+00:00'),
+    ('"16:45 UTC on 18 September 2026"', 'America/New_York', '2026-09-18T16:45:00+00:00'),
+    ('12:45 on September 18, 2026', 'America/New_York', '2026-09-18T16:45:00+00:00'),
+    ('16:45:30 UTC on September 18, 2026', 'UTC', '2026-09-18T16:45:30+00:00'),
+])
+def test_clock_query_selects_one_side_of_same_day_correction(operand, zone, expected):
+    now = datetime(2026, 9, 20, tzinfo=timezone.utc)
+    earlier = {'value': 'River', 'valid_from': '2026-09-18T12:00:00+00:00',
+               'valid_to': '2026-09-18T18:00:00+00:00'}
+    later = {'value': 'Lake', 'valid_from': '2026-09-18T18:00:00+00:00'}
+    query = interpret_time_query('Where was the probe as of ' + operand + '?',
+                                 now=now, timezone_name=zone)
+    assert query.mode == 'valid_range'
+    assert query.start == expected
+    assert (datetime.fromisoformat(query.end) - datetime.fromisoformat(query.start)).total_seconds() == 0.000001
+    assert [row['value'] for row in [earlier, later] if query.accepts_claim(row)] == ['River']
+    day = interpret_time_query('Where was the probe on 18 September 2026?',
+                               now=now, timezone_name=zone)
+    assert [row['value'] for row in [earlier, later] if day.accepts_claim(row)] == ['River', 'Lake']
+
+
+def test_ambiguous_clock_query_does_not_fall_back_to_current_memory():
+    query = interpret_time_query('Where was the probe as of 1:30 on 1 November 2026?',
+        now=NOW, timezone_name='America/New_York')
+    assert query.mode == 'unresolved_time'
+    assert not query.accepts_claim({'valid_from': '2026-01-01T00:00:00+00:00'})
 
 
 @pytest.mark.asyncio
