@@ -11,10 +11,11 @@ An unavailable backend is reported separately from a search with no matches.
 
 Original source reads now expose their report and storage times. The observation
 directory exposes the native observation time separately. Five first native
-model conversations opened the original evidence and retained its lineage;
-four answered as expected. The current-policy case still answered from an
-attributed old policy without making current applicability clear. This remains
-a measured weakness. These trials do not establish reliable ordinary recall.
+model conversations opened the original evidence and retained its lineage.
+Four matched the frozen expectations; the fifth had an ambiguous expected
+answer. Its policy's older edition date did not establish that the policy was
+outdated. That case is inconclusive, and these trials do not establish reliable
+ordinary recall.
 
 Shared contact facts now use their canonical store without graph mirroring,
 backfill or fallback listing. Unused graph memory write, flush, reconcile and
