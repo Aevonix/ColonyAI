@@ -46,6 +46,7 @@ jobs:
           for module, name, expected in (
               ('test_native_task_channels', 'test_native_task_channels', 1),
               ('test_native_review_boundary', 'test_native_executor_read_only_review', 2),
+              ('test_native_skill_catalog', 'test_native_skill_index_and_view_remain_authoritative', 1),
           ):
               cases = [case for case in collected
                        if case.get('classname', '').endswith('.' + module)

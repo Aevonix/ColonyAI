@@ -1,5 +1,18 @@
 # Changelog
 
+## v1.4.2 - accurate host skill availability
+
+Automatic context no longer advertises internal initiative executors, such as
+`behavioral_correction`, as installed host skills. Hermes's existing skill index
+and discovery tools remain responsible for the actual installed catalog. The
+internal executor registry and its explicit API remain available.
+
+The native skill regression checks the real prompt index, skill listing and
+skill loading beside formatted Apsimo context. CI requires it to run and pass
+against the pinned Hermes qualification build. The original-memory observation
+fixture also completes its setup before requests begin, preserving its existing
+runtime deadlines and behavioral assertions.
+
 ## v1.4.1 - deferred tool observations and source-admission diagnostics
 
 Selected observations now recognize a single local tool invoked through Hermes'
