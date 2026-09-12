@@ -14,6 +14,8 @@ from httpx import ASGITransport, AsyncClient
 import pytest
 
 from apsimo.api.routers import host
+from apsimo.contacts.comms import CommsLog
+from apsimo.turns import TurnIdempotencyLedger
 
 
 class _CountingGraph:
@@ -63,7 +65,11 @@ def graph(monkeypatch, tmp_path):
     monkeypatch.setattr(host, "_contacts_store", None)
     monkeypatch.setattr(host, "_context_provenance", None)
     monkeypatch.setattr(host, "_telemetry", None)
-    return value
+    value.ledger = TurnIdempotencyLedger(tmp_path / "turn-idempotency.db")
+    value.comms = CommsLog(str(tmp_path / "comms.db"), source_ledger=value.ledger)
+    monkeypatch.setattr(host, "_comms_log", value.comms)
+    yield value
+    value.comms._conn.close()
 
 
 @pytest.fixture
@@ -88,6 +94,10 @@ async def test_v1_identical_turn_retry_has_one_downstream_effect(app, graph):
     assert retry.json() == first.json()
     assert graph.calls == []
     assert first.json()["source_recorded"] and first.json()["continuity_updated"]
+    assert [row[0] for row in graph.comms._conn.execute(
+        "SELECT direction FROM communications ORDER BY direction")] == ["in", "out"]
+    assert len(graph.ledger.source_references(["turn-001"],
+        contact_id="contact-1", session_id="session-1")) == 1
 
 
 @pytest.mark.asyncio
@@ -122,6 +132,9 @@ async def test_v2_put_returns_created_replayed_and_conflict(app, graph):
     assert (retry.status_code, retry.headers["Idempotency-Status"]) == (200, "replayed")
     assert conflict.status_code == 409
     assert graph.calls == []
+    assert graph.comms._conn.execute("SELECT count(*) FROM communications").fetchone()[0] == 2
+    assert len(graph.ledger.source_references(["turn-002"],
+        contact_id="contact-1", session_id="session-1")) == 1
 
 
 @pytest.mark.asyncio

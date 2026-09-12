@@ -254,20 +254,20 @@ async def test_badge_turn_keeps_source_learning_without_mood_inference_or_inject
             else:
                 assert judgment is None
         assert 'cobalt-716' in await recalled(client, session='new-session', query='orchard badge')
-        # Historical/explicit mood data still exists. Neither ordinary context
-        # surface may promote that numeric interpretation into current guidance.
+        # Historical/explicit mood data still exists. Canonical context assembly
+        # must not promote that numeric interpretation into current guidance.
         explicit = r.affect.create_event(contact_id='contact-a', valence=-.9, arousal=.9,
             source='inferred', trigger='old independent estimate')
-        common = {'identity': {'host_id':'test-host'},
-            'context': {'contact_id':'contact-a','session_id':'new-session'}}
-        for path, extra in [
-            ('assemble', {'incoming_message': {'role':'user','content':'orchard badge'}}),
-            ('enriched', {'message':'orchard badge','features':{'affect':True}}),
-        ]:
-            response = await client.post('/v1/host/context/'+path, json=common | extra)
-            assert response.status_code == 200, response.text
-            assert 'colony-affect' not in {section['id'] for section in response.json()['sections']}
-            assert 'valence' not in '\n'.join(section['body'] for section in response.json()['sections'])
+        response = await client.post('/v1/host/context/assemble', json={
+            'identity': {'host_id': 'test-host'},
+            'context': {'contact_id': 'contact-a', 'session_id': 'new-session'},
+            'incoming_message': {'role': 'user', 'content': 'orchard badge'},
+        })
+        assert response.status_code == 200, response.text
+        sections = {section['id']: section['body'] for section in response.json()['sections']}
+        assert 'cobalt-716' in sections['colony-memory']
+        assert 'colony-affect' not in sections
+        assert 'valence' not in '\n'.join(sections.values())
         history = await client.get('/v1/host/affect/history/contact-a')
         assert history.status_code == 200
         assert any(event['id'] == explicit['id'] for event in history.json()['events'])

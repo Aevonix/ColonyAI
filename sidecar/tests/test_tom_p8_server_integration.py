@@ -128,6 +128,9 @@ def _restore_host_globals(monkeypatch, tmp_path):
     )
     originals = {name: getattr(host, name, None) for name in names}
     yield
+    # Tests mix direct spy wiring with monkeypatch replacements. Undo those
+    # replacements first, so their captured spies cannot overwrite this restore.
+    monkeypatch.undo()
     for name, value in originals.items():
         setattr(host, name, value)
 

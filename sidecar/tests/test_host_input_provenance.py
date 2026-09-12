@@ -5,6 +5,7 @@ import importlib
 import json
 import sqlite3
 import sys
+import time
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -20,6 +21,17 @@ from test_turn_source_evidence import source_app
 @pytest.fixture
 def handoff(source_app, tmp_path, monkeypatch):
     module = _load_plugin('colony_supplied_input_test')
+    # These tests exercise source ownership and typed transport failures, not
+    # the ASGI fixture's wall-clock latency. Keep one logical deadline clock
+    # across request validation and its SQLite outbox; dedicated socket tests
+    # exercise the real elapsed-time deadline separately.
+    instant = [time.monotonic()]
+    def advance(seconds):
+        instant[0] += seconds
+    clock = SimpleNamespace(monotonic=lambda: instant[0], advance=advance,
+                            time=time.time, sleep=time.sleep)
+    monkeypatch.setattr(importlib.import_module(module.__name__+'.request_memory'), 'time', clock)
+    monkeypatch.setattr(importlib.import_module(module.__name__+'.client'), 'time', clock)
     from apsimo.api.middleware import ApiKeyMiddleware
     keyring = tmp_path/'principals.json'
     keyring.write_text(json.dumps({'version':1, 'principals':[{
@@ -77,7 +89,7 @@ def handoff(source_app, tmp_path, monkeypatch):
                 user_message='Read the maintenance record, then summarize the task.',
                 assistant_response='The controlled fixture result cites the supplied maintenance record.',
                 platform='cli', model='controlled')
-        yield SimpleNamespace(module=module, ctx=ctx, api=api, ledger=ledger, parents=parents,
+        yield SimpleNamespace(module=module, ctx=ctx, api=api, ledger=ledger, parents=parents, clock=clock,
                                refs=refs, start=start, finish=finish, outbox=module.TurnOutbox(outbox))
 
 
@@ -206,7 +218,6 @@ def test_failure_after_any_admission_never_permits_replay(handoff, monkeypatch, 
 
 
 def test_expired_initial_budget_after_local_read_stays_transient(handoff, monkeypatch):
-    import time
     h = handoff
     erasure_state = h.module.TurnOutbox.erasure_state
     delayed = []
@@ -216,7 +227,7 @@ def test_expired_initial_budget_after_local_read_stays_transient(handoff, monkey
             delayed.append(True)
             # The read completed, but scheduling consumed the remaining
             # initial verification budget before the next request can start.
-            time.sleep(.35)
+            h.clock.advance(.35)
         return result
     monkeypatch.setattr(h.module.TurnOutbox, 'erasure_state', checked_then_delayed)
     with h.module.input_provenance.supplied_input(contact_id='owner', session_id='native',
