@@ -8,6 +8,7 @@ import inspect
 import hashlib
 from pathlib import Path
 import re
+import shutil
 import tempfile
 import time
 import uuid
@@ -137,6 +138,7 @@ class RunContext:
             qualification_role=qualification_role, completion_budget_bytes=completion_budget_bytes)
         self.state_dir = Path(state_dir)
         self.observations = observations
+        self.state_cleanup_safe = True
 
     def observe(self, observation):
         """Native/media adapters can add their own explicitly labelled evidence."""
@@ -231,13 +233,16 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                 previous = read(terminal)
                 if previous.get('run_id') != manifest['id'] or previous.get('case_sha256') != record['sha256']:
                     raise ValueError('Stored attempt does not belong to this run')
+                if previous.get('cleanup') == 'state_directory_retained':
+                    break
                 continue
             started_path = target / 'started.json'
             result = {'schema': SCHEMA, 'run_id': manifest['id'], 'case_id': case.id,
                       'case_sha256': record['sha256'], 'attempt': 1, 'evidence_mode': evidence_mode,
                       'outcome': 'interrupted', 'primary_outcome': 'unverified', 'checks': {},
                       'observations': [], 'output': None, 'effects': {}, 'elapsed_ms': None,
-                      'qualification_routing': {'scope': 'isolated_router_copy',
+                      'qualification_routing': {'scope': ('isolated_hermes_profile' if case.boundary == 'native_hermes'
+                                                         else 'isolated_router_copy'),
                           'role': case.role, 'binding': recipe['binding'],
                           'target_task_role_overrides': {task: case.role for task in case.target_tasks}},
                       'cleanup': 'not_started', 'failure_category': None}
@@ -251,7 +256,7 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                 continue
             result['started_at'] = now()
             write_once(started_path, {k: result[k] for k in ('run_id', 'case_id', 'case_sha256', 'started_at')})
-            began, phase, temporary = time.monotonic(), 'setup', None
+            began, phase, temporary, context = time.monotonic(), 'setup', None, None
             try:
                 missing = [name for name in case.required_capabilities
                            if recipe.get('declared', {}).get(name) is not True]
@@ -259,8 +264,8 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                     result.update(outcome='unsupported', failure_category='capability_unavailable', missing_capabilities=missing)
                 else:
                     async with asyncio.timeout(case.timeout_seconds):
-                        temporary = tempfile.TemporaryDirectory(prefix='state-', dir=target)
-                        state = temporary.name
+                        temporary = tempfile.mkdtemp(prefix='state-', dir=target)
+                        state = temporary
                         router = router_factory(case)
                         consumer, evaluator = consumers[case.consumer], evaluators[case.evaluator]
                         context = RunContext(router, state, result['observations'], recipe['binding'],
@@ -297,9 +302,14 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                 result.update(outcome='setup_error' if phase == 'setup' else 'error',
                               failure_category=phase + ':' + type(exc).__name__)
             finally:
-                if temporary is not None:
+                if temporary is not None and context is not None and not context.state_cleanup_safe:
+                    result.update(cleanup='state_directory_retained', retained_state_dir=temporary,
+                                  primary_outcome='unverified')
+                    if result['outcome'] == 'pass':
+                        result.update(outcome='error', failure_category='native_cleanup_unconfirmed')
+                elif temporary is not None:
                     try:
-                        temporary.cleanup()
+                        shutil.rmtree(temporary)
                     except Exception as exc:
                         result.update(cleanup='failed', cleanup_error_type=type(exc).__name__,
                                       outcome='error', primary_outcome='unverified', failure_category='state_cleanup')
@@ -308,4 +318,6 @@ async def evaluate(directory, recipe, cases, consumers, evaluators, router_facto
                 result['consumer_resource_cleanup'] = 'not_observed_by_runner'
                 result.update(ended_at=now(), elapsed_ms=round((time.monotonic() - began) * 1000, 3))
                 write_once(terminal, result)
+            if context is not None and not context.state_cleanup_safe:
+                break  # Preserve the first incomplete cleanup; do not start more native work.
         return manifest
