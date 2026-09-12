@@ -1,5 +1,22 @@
 # Changelog
 
+## v1.4.3 - recall evidence and quality measurement
+
+Recalled evidence no longer includes the reranker's weight-verification stamp.
+That stamp describes the retrieval processor, not the source's authenticity.
+It remains available in structured diagnostics. Source attribution, uncertainty,
+corrections and unavailable-reranker notices remain visible to the agent.
+
+The recall benchmark can import exact user, assistant and tool records with
+source corrections, and run development and held-out queries separately without
+extraction or generative calls. It reports evidence coverage, irrelevant context
+and missing conditions. A separate source-utility score permits relevant request
+or progress context when no completed outcome is known; the existing strict
+empty-packet abstention metric remains unchanged. Neither grades the final answer.
+
+Native observation tests now include HTTP status and outbox diagnostics when a
+retention assertion fails. Runtime deadlines and delivery behavior are unchanged.
+
 ## v1.4.2 - accurate host skill availability
 
 Automatic context no longer advertises internal initiative executors, such as
