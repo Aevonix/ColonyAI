@@ -325,7 +325,9 @@ class TurnIdempotencyLedger:
     def _erasure_causes(messages, session_id, rules):
         causes = set()
         for message in messages:
-            refs = message.get('_supplied_sources', []) if message.get('role') == 'assistant' else []
+            refs = (message.get('_supplied_sources', []) if message.get('role') == 'assistant' else
+                    message.get('_observation_sources', []) if message.get('role') == 'tool' and
+                    message.get('_native_tool_observation') == 'native-tool-observation-v1' else [])
             for rule in rules:
                 exact = (rule['session_id'] == session_id and source_message_hash(session_id, message)
                          in json.loads(rule['message_hashes_json']))
@@ -383,10 +385,16 @@ class TurnIdempotencyLedger:
     def _validate_dependencies(conn, turn_id, contact_id, session_id, messages):
         for message in messages:
             refs = message.get('_supplied_sources', [])
+            observation = message.get('_observation_sources', [])
+            if observation:
+                if (message.get('role') != 'tool' or refs
+                        or message.get('_native_tool_observation') != 'native-tool-observation-v1'):
+                    raise ValueError('invalid_source_dependency')
+                refs = observation
             # The complete source envelope already has an 8 MiB bound. A
             # separate count cap would reject valid long native histories only
             # after generation, or tempt callers to silently drop dependencies.
-            if not isinstance(refs, list) or (refs and message.get('role') != 'assistant'):
+            if not isinstance(refs, list) or (refs and message.get('role') != 'assistant' and not observation):
                 raise ValueError('invalid_source_dependency')
             for ref in refs:
                 if (not isinstance(ref, dict) or set(ref) != {'source_id', 'source_version'}
