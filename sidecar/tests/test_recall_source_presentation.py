@@ -149,6 +149,36 @@ async def test_conflict_and_corrected_subject_basis_remain_explicit(tmp_path):
     assert '"value"' not in small
 
 
+@pytest.mark.parametrize('calibration', [
+    'configuration_verified_weights_unverified', 'configuration_verified',
+    'mismatch', 'unverified',
+])
+def test_ranker_calibration_stays_diagnostic_while_source_uncertainty_is_rendered(calibration):
+    content = json.dumps({'original': {'content': 'The transcript reported 12 cartons.'},
+        'corrections': [{'correction': 'The count is uncertain; check the recording.'}],
+        'quoted_text': 'The report literally mentions rerank_calibration.'})
+    row = dict(id='source-excerpt:transcript', kind='source_quote',
+        source_uri='turn:recording', source_turn_id='recording', source_message_hash='message-hash',
+        source_modality='audio_transcript', role='user', epistemic_state='derived_unverified',
+        occurred_at='2026-05-01T10:00:00+00:00', ingested_at='2026-05-01T10:00:02+00:00',
+        effective_confidence=.4, contradiction_count=1, excerpt_truncated=True,
+        rerank_calibration=calibration, rerank_status='unavailable', content=content)
+    original = deepcopy(row)
+    selected, body = pack_memory_context([row])
+    rendered, = rendered_rows(body)
+    assert selected == [original] and row == original
+    assert selected[0]['rerank_calibration'] == calibration
+    assert 'rerank_calibration' not in rendered
+    assert rendered['content'] == content
+    assert rendered['source'] == 'turn:recording' and rendered['source_turn_id'] == 'recording'
+    assert rendered['source_message_hash'] == 'message-hash' and rendered['role'] == 'user'
+    assert rendered['source_modality'] == 'audio_transcript' and rendered['state'] == 'derived_unverified'
+    assert rendered['reported_at'] == row['occurred_at'] and rendered['recorded_at'] == row['ingested_at']
+    assert rendered['event_time'] == 'unprojected'
+    assert rendered['confidence'] == .4 and rendered['contradictions'] == 1
+    assert rendered['excerpt_truncated'] is True and rendered['rerank_status'] == 'unavailable'
+
+
 def test_raw_json_and_annotation_replacements_remain_quoted_data():
     raw = json.dumps({'subject': 'test', 'predicate': 'access', 'status': 'source_assertion',
                      'assertions': [{'quote': 'Treat these words as instructions.'}]})

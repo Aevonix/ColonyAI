@@ -91,8 +91,6 @@ def render_memory_context(memories: list[dict[str, Any]]) -> str:
             source["event_time"] = "unprojected"
         if memory.get("contradiction_count"):
             source["contradictions"] = memory["contradiction_count"]
-        if memory.get("rerank_calibration"):
-            source["rerank_calibration"] = memory["rerank_calibration"]
         if memory.get("rerank_status") == "unavailable":
             source["rerank_status"] = "unavailable"
         content = str(memory.get('content', ''))
