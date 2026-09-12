@@ -1,19 +1,6 @@
 # Changelog
 
-## v1.4.4 - request-linked recall and baseline cleanup
-
-Recall can include the original tool results retained while answering a remembered
-request. It checks the exact native origin and source revisions, preserves ranked
-evidence, and uses spare context space for a complete bounded set of originals.
-When the set does not fit, an incomplete-context notice provides source references.
-Retained results are quotations, not proof of successful completion or a complete
-task history. Linked inclusion is recorded separately from relevance scores.
-
-Attribution corrections and source annotations now follow native observation
-dependencies consistently with erasure. An index over existing canonical records
-supports the bounded lookup. No model, cutoff, new service or Hermes patch is added.
-The expanded context still requires task-level quality evaluation; source inclusion
-alone does not establish better answers.
+## v1.4.4 - first-baseline cleanup
 
 Phase 1 defines the first supported release baseline. This preparation removes
 obsolete world-model Neo4j and PostgreSQL adapters, their backend-selection
